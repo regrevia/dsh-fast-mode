@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
      * `dicts.get(ns).get(locale)?.[key]` (`dsh-client-locale/lib/client.js`
      * lookup) — and falls back to returning the key itself. A nested
      * `{ menu: { speed: … } }` therefore never resolves `'menu.speed'`: the chip
-     * painted raw keys (`menu.headOff`, `gears.safe`) instead of words. Flat
+     * painted raw keys (`menu.headOff`, `menu.effort`) instead of words. Flat
      * keys make the lookup hit.
      *
      * Chinese is registered under `zh` *and* `zh-CN`: the active locale may be
@@ -218,7 +218,7 @@ window.__ModuleLoader__.load({
       pending: undefined,
       /**
        * `undefined` while closed. Otherwise the fixed-position anchor of the
-       * gear menu: `{right, bottom}` in pixels, or `'dock'` when the chip has no
+       * panel: `{right, bottom}` in pixels, or `'dock'` when the chip has no
        * measurable box (tests, a detached node).
        */
       menu: undefined,

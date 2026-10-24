@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Fast Mode",
-    "description": "Adaptive reasoning effort per step plus gear-based parallel tool batching — cuts wall-clock time on multi-step tasks using only the levels the current route actually declares."
+    "description": "Same thinking effort, fewer round trips: adaptive parallel tool fan-out, output discipline, and a cancellable stall guard. Never changes reasoning effort."
   }
 }
