@@ -200,6 +200,7 @@ test('the directive warns once, respects the cooldown, then stops and reports on
 
 test('a turn that runs past the step budget is told to stop and report', () => {
   const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 30, finishLineSteps: 0 })
   noteTurn(state, 's1')
   for (let i = 0; i < AUTO_LIMITS.turnStepBudget; i += 1) cleanStep(state, 's1')
   noteStep(state, 's1')
@@ -309,4 +310,59 @@ test('without the late policy the scheduler never emits the compression reminder
   noteTurn(state, 's1')
   for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps + 2; step += 1) cleanStep(state, 's1', 1)
   assert.equal(autoSchedule(state, 's1').directive, undefined)
+})
+
+test('the finish line fires once at its step and never again in the same turn', () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 30, finishLineSteps: 5 })
+  noteTurn(state, 's1')
+
+  for (let step = 0; step < 4; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'nothing before the line')
+
+  cleanStep(state, 's1', 1)
+  const line = autoSchedule(state, 's1')
+  assert.equal(line.directive?.kind, 'finish-line')
+  assert.match(line.directive.text, /finish line/)
+  assert.match(line.directive.text, /fix what it reports/)
+
+  // The reminder is one-shot: the turn may run on, but not with a second line.
+  for (let step = 0; step < AUTO_LIMITS.directiveCooldown + 2; step += 1) cleanStep(state, 's1', 1)
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'finish-line')
+})
+
+test('the soft finish line fires at step 10 by default, before any hard budget', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  let seen
+  for (let step = 1; step <= AUTO_LIMITS.finishLineSteps; step += 1) {
+    cleanStep(state, 's1')
+    seen = seen ?? autoSchedule(state, 's1').directive?.kind
+  }
+  assert.equal(seen, 'finish-line', 'the default policy is the measured one, step 10')
+  assert.equal(autoSchedule(state, 's1').directive?.kind, undefined, 'and only once per turn')
+})
+
+test('the stop-and-report budget comes from the policy, not from the constant', () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 8, finishLineSteps: 0 })
+  noteTurn(state, 's1')
+
+  let kind
+  for (let step = 1; step <= 8 && kind === undefined; step += 1) {
+    cleanStep(state, 's1', 1)
+    kind = autoSchedule(state, 's1').directive?.kind
+  }
+  assert.equal(kind, 'stop-and-report')
+
+  // The default stays 30: a policy that says nothing keeps the constant.
+  const other = createAutoState()
+  notePolicy(other, 's2', { lateDiscipline: false, finishLineSteps: 0 })
+  noteTurn(other, 's2')
+  let seen
+  for (let step = 1; step <= AUTO_LIMITS.turnStepBudget; step += 1) {
+    cleanStep(other, 's2', 1)
+    seen = seen ?? autoSchedule(other, 's2').directive?.kind
+  }
+  assert.equal(seen, 'stop-and-report')
 })

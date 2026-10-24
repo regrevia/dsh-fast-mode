@@ -54,6 +54,8 @@ export const AUTO_LIMITS = Object.freeze({
   noProgressStop: 12,
   /** Steps in one turn before the same stop-and-report fires. */
   turnStepBudget: 30,
+  /** Steps into a turn where the soft finish line asks for the report (0 = off). */
+  finishLineSteps: 10,
   /** How many recent call durations the p90 is taken over. */
   waitWindow: 32,
   /** Steps between two directives, so the reminder cannot become the noise. */
@@ -103,11 +105,19 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
   entry.lateDiscipline = policy?.lateDiscipline === true
+  entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 4)
+  entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
+}
+
+/** A whole step count, or `fallback` when the value is not a usable number. */
+function stepCount(value, fallback, min) {
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(min, Math.floor(n)) : fallback
 }
 
 /** @returns {{sessions: Map<string, object>}} */
@@ -157,6 +167,12 @@ function entryOf(state, agent) {
     lateDiscipline: false,
     /** One compression reminder per turn, never more. */
     disciplineSent: false,
+    /** Hard stop: the step count that ends the turn with "report now". */
+    turnStepBudget: AUTO_LIMITS.turnStepBudget,
+    /** Soft stop: one "no more scope" reminder at this step, 0 = off. */
+    finishLineSteps: AUTO_LIMITS.finishLineSteps,
+    /** One finish-line reminder per turn, never more. */
+    finishLineSent: false,
   }
   state.sessions.set(key, entry)
   if (state.sessions.size > AUTO_SESSIONS) {
@@ -182,6 +198,7 @@ export function noteTurn(state, agent) {
   entry.stepArgs.clear()
   entry.stopped = false
   entry.disciplineSent = false
+  entry.finishLineSent = false
   entry.entryWidth = undefined
   entry.pendingWidth = undefined
 }
@@ -386,7 +403,25 @@ function directiveFor(entry, stats) {
       summary: 'auto: compress output for the rest of the turn',
     }
   }
-  if (stats.noProgress >= AUTO_LIMITS.noProgressStop || stats.turnSteps >= AUTO_LIMITS.turnStepBudget) {
+  if (entry.finishLineSteps > 0 && !entry.finishLineSent && stats.turnSteps >= entry.finishLineSteps) {
+    // Soft stop: the tail of a long turn is where the wall clock and the
+    // correctness both go wrong — the model keeps adding scope and re-verifying
+    // what already passes. One reminder at the finish line ends the turn on the
+    // artifact it already has instead of cutting it off mid-edit like the hard
+    // budget does.
+    entry.finishLineSent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'finish-line'
+    return {
+      kind: 'finish-line',
+      text: 'Auto schedule: finish line. From here, stop adding scope: no new features, no rewrites, no '
+        + 're-reading your own files, and no second run of a check that already passed. Run only the '
+        + 'deliverable\'s own check that is still failing, fix what it reports, then report in a few lines.',
+      summary: 'auto: finish line, stop adding scope',
+    }
+  }
+  const budget = entry.turnStepBudget > 0 ? entry.turnStepBudget : AUTO_LIMITS.turnStepBudget
+  if (stats.noProgress >= AUTO_LIMITS.noProgressStop || stats.turnSteps >= budget) {
     if (entry.stopped) return undefined
     kind = 'stop-and-report'
   } else if (stats.noProgress >= AUTO_LIMITS.noProgressWarn) {
