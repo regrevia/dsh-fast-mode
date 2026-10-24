@@ -70,7 +70,8 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'benchmarkFile', 'enabled', 'gear', 'metrics', 'metricsFile', 'outputDiscipline', 'parallel', 'sessions',
+    'benchmarkFile', 'enabled', 'gear', 'metrics', 'metricsFile', 'outputDiscipline', 'parallel',
+    'reassertAfterCompaction', 'sessions', 'stallGuard', 'toolTimeoutMs',
   ])
 
   // The switch, the gear and the fan-out are the form. They must be volatile:
@@ -87,7 +88,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   // Measurement paths are composition knobs, like `debugFile`: they are read at
   // load and deliberately stay out of the form. Changing where the file goes is
   // an edit in cordis.patch.yml, not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'outputDiscipline']) {
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'outputDiscipline', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

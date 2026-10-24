@@ -73,6 +73,9 @@ import {
   stableKey,
 } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
+import { buildConflictMessage, buildReassertMessage } from './src/notices.js'
+import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
+import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
 import { createRecorder } from './src/metrics.js'
 import { choiceFor } from './src/state.js'
 
@@ -88,9 +91,39 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.8.0'
+export const VERSION = '0.9.0'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
+
+/**
+ * Insert notices after the last message the step claims to be answering.
+ *
+ * Appending at the end works but reads as a continuation of the newest message;
+ * the post-compaction reminder is more legible immediately after the user
+ * message it belongs to. Falls back to appending when nothing is claimed (a
+ * background or scheduled turn).
+ *
+ * @param {unknown} messages - `decision.messages`.
+ * @param {unknown} claimed - `payload.messages`.
+ * @param {object[]} notices
+ * @returns {object[]}
+ */
+function insertAfterClaimed(messages, claimed, notices) {
+  const list = Array.isArray(messages) ? messages : []
+  if (notices.length === 0) return list
+  const known = Array.isArray(claimed) ? claimed : []
+  let index = -1
+  if (known.length > 0) {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (known.includes(list[i])) {
+        index = i
+        break
+      }
+    }
+  }
+  if (index < 0) return [...list, ...notices]
+  return [...list.slice(0, index + 1), ...notices, ...list.slice(index + 1)]
+}
 
 /** @param {string} file @param {string} line */
 function appendDebug(file, line) {
@@ -243,9 +276,39 @@ export function apply(ctx, rawConfig) {
   // sessions that ran *without* fast mode measured by the same code, and a
   // disabled plugin that records nothing cannot answer the question it exists
   // for. This hook observes; it never changes a request.
-  if (metrics.enabled) {
-    ctx.on('session/event', (session, event) => metrics.record(session, event))
+  //
+  // The same listener remembers the compactions, so the two things that read the
+  // event stream are read in one place and in one order.
+  const compacted = new Set()
+  /**
+   * @param {{id?: string}} session
+   * @param {{type?: string, data?: object}} event
+   */
+  const trackCompaction = (session, event) => {
+    try {
+      if (!event || event.type !== 'compaction/end') return
+      const payload = event.data && typeof event.data === 'object' ? event.data : event
+      if (payload.error) return
+      const sid = session && typeof session.id === 'string' ? session.id : undefined
+      if (!sid) return
+      // Bounded: a long-lived process sees thousands of sessions, and only the
+      // next step of a just-compacted one needs the flag.
+      if (compacted.size >= 200) compacted.delete(compacted.values().next().value)
+      compacted.add(sid)
+    } catch {
+      // A reminder that cannot be scheduled must not affect the event stream.
+    }
   }
+  ctx.on('session/event', (session, event) => {
+    if (metrics.enabled) {
+      try {
+        metrics.record(session, event)
+      } catch {
+        // Measurement is best-effort; the event belongs to the caller.
+      }
+    }
+    trackCompaction(session, event)
+  })
 
   // Experiment assignment, shipped inert: with no file there is no experiment
   // and the configured gear is the only stance.
@@ -301,6 +364,79 @@ export function apply(ctx, rawConfig) {
   /** Route sources already announced, and parallel caps already warned about. */
   const announced = new Set()
   const warnedCaps = new Set()
+
+  /**
+   * Plugins that already do part of this job. Two probes, both cheap: the
+   * profile's install record (catches an installed-but-disabled peer, which is a
+   * conflict the user is about to re-enable) and the live `tools` registry
+   * (catches an ops wiring with no package entry). A conflict is announced, not
+   * enforced: silently disabling ourselves because somebody installed an
+   * overlapping plugin would be the worst of both worlds.
+   */
+  const peers = new Set(
+    detectPeerPlugins(join(homedir(), '.dsh', 'profiles', process.env.DSH_PROFILE || 'desktop')),
+  )
+  if (opsToolsLive(ctx)) peers.add('dsh-ops')
+  let conflictPending = peers.size > 0
+  if (peers.size > 0) {
+    ctx.logger?.warn?.(
+      '%s another installed plugin duplicates part of fast mode (%s); enable only one — '
+        + 'remove dsh-batch-tool-calls / dsh-ops, or leave fast mode switched off',
+      TAG, [...peers].join(', '),
+    )
+    if (initial.debug) appendDebug(initial.debugFile, `conflict v${VERSION}: peers=${[...peers].join(',')}`)
+  }
+
+  // The stall guard: the one hard bound on how long a single tool call may run.
+  // Prompt text can only ask the model to bound its own commands; this is what
+  // makes an unbounded call cost a step instead of the whole turn.
+  let stalls = 0
+  const stallGuard = createStallGuard({
+    budgetFor: (exec) => {
+      const agent = agentKey(exec?.agent)
+      return stallBudgetFor(configFor(agent === GLOBAL_AGENT ? undefined : agent))
+    },
+    onStall: (info) => {
+      stalls += 1
+      ctx.logger?.warn?.(
+        '%s stall guard cancelled %s after %d ms (budget %d ms)',
+        TAG, info.name, info.elapsedMs, info.budgetMs,
+      )
+      if (initial.debug) {
+        appendDebug(
+          initial.debugFile,
+          `stall v${VERSION}: ${info.name} cancelled at ${info.elapsedMs}ms budget=${info.budgetMs}ms total=${stalls}`,
+        )
+      }
+    },
+  })
+  ctx.on('tools/execute', stallGuard)
+
+  // The transcript's two notices: the post-compaction reminder and the one-time
+  // conflict announcement. Both are `notice`-form `source: plugin` messages, so
+  // the UI folds them instead of attributing them to the user.
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
+    if (!decision || decision.kind !== 'enter') return decision
+    try {
+      const sid = agentKey(payload?.agent)
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      if (!cfg.enabled) return decision
+      const notices = []
+      if (conflictPending) {
+        conflictPending = false
+        notices.push(buildConflictMessage([...peers]))
+      }
+      if (compacted.delete(sid) && cfg.reassertAfterCompaction !== false) {
+        notices.push(buildReassertMessage(cfg))
+      }
+      if (notices.length === 0) return decision
+      return { ...decision, messages: insertAfterClaimed(decision.messages, payload?.messages, notices) }
+    } catch {
+      // Never let a reminder change the step it was meant to help.
+      return decision
+    }
+  })
 
   // A gear above `safe` asks the model for wider steps. The harness schedules
   // same-message calls concurrently, so this is the one lever that raises real

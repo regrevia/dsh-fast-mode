@@ -36,6 +36,21 @@ Batching rules:
 - More input tokens per step is the intended trade for fewer round trips; do not re-narrow steps to save tokens.`
 
 /**
+ * The third lever: keep a step from turning into minutes of waiting.
+ *
+ * Round trips and visible tokens explain a healthy step; they do not explain a
+ * step that sat in one tool call for four minutes. That loss is almost always
+ * self-inflicted, and it is the one kind the model can avoid without being
+ * faster at anything: background the process, bound the command, write the
+ * script to a file instead of pasting a heredoc that arrives malformed.
+ */
+const STALL_RULES = `Bounded calls:
+- Never start a server, watcher, tail, or REPL in the foreground: use \`run_in_background: true\` (or \`nohup … &\`) and read it in a later step.
+- Prefer a narrow probe (one path, one pattern, head/tail, \`--max-count\`) to a full sweep, and give anything that could block an explicit timeout.
+- Write long, quoted, or multi-line commands to a file and run that file instead of pasting a heredoc: malformed arguments cost the whole round trip.
+- After a cancelled or malformed call, change the command before retrying; the same call fails the same way.`
+
+/**
  * Per-gear fan-out wording. The number is substituted from the resolved
  * `parallel`, so the text never promises a different count than the config.
  */
@@ -102,6 +117,7 @@ export function buildGuidance(config) {
     + ' The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
   if (PREFETCH_GEARS[config.gear] === true && parallel > 1) fanout += ' ' + PREFETCH
   parts.push(fanout)
+  if (config.stallGuard !== false) parts.push(STALL_RULES)
   const discipline = config.discipline ?? 'light'
   if (discipline === 'full') parts.push(OUTPUT_FULL)
   else if (discipline === 'light') parts.push(OUTPUT_LIGHT)
