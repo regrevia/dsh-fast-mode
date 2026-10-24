@@ -712,7 +712,10 @@ test('a compacted session is reminded on its next step, in its own conversation 
   const after = await step(ctx, { claimed })
   const notice = after.out.messages[2]
   assert.equal(notice.source.form, 'notice')
-  assert.equal(notice.source.plugin, 'fast-mode')
+  // v4 admission: a producer-owned kind, and no retired `plugin` field — a bare
+  // `plugin` kind makes the session encoder throw and fails the whole turn.
+  assert.equal(notice.source.kind, 'plugin:fast-mode')
+  assert.equal(Object.hasOwn(notice.source, 'plugin'), false)
   assert.match(notice.content[0].text, /up to 6 independent calls/)
   assert.deepEqual(after.out.messages.map(m => m.id), ['sys', 'u1', notice.id, 'last'], 'the reminder sits after the message it belongs to')
 

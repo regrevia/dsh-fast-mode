@@ -17,16 +17,62 @@
  *    can get two cancellations of the same call. Saying so once, in the
  *    conversation, is more useful than a log line nobody reads.
  *
- * Both are `source: { kind: 'plugin' }` notices, which is what makes the Web UI
- * render them as a collapsed system line instead of as something the user
- * said. `summary` is capped at the host's 120-character notice limit.
+ * Both are `source: { kind: 'plugin:fast-mode' }` notices, which is what makes
+ * the Web UI render them as a collapsed system line instead of as something the
+ * user said. `summary` is capped at the host's 120-character notice limit.
+ *
+ * Session format v4 retired the bare `kind: 'plugin'` + `plugin` pair: a plugin
+ * is now identified by its own `plugin:<name>` kind, which is exactly what DSH's
+ * own v3→v4 migration derives for rows this plugin wrote earlier, so both
+ * generations read back under one shape. Writing the retired pair makes the
+ * v4 encoder throw `SessionFormatError: format v4 message requires a
+ * producer-owned source kind`, which the host surfaces as a failed turn every
+ * time a post-compaction reminder is injected.
  *
  * @module dsh-fast-mode/notices
  */
 import { randomUUID } from 'node:crypto'
 
 /** The `source` every message from this plugin carries. */
-export const PLUGIN_SOURCE = Object.freeze({ kind: 'plugin', plugin: 'fast-mode' })
+export const PLUGIN_SOURCE = Object.freeze({ kind: 'plugin:fast-mode' })
+
+/**
+ * The v4 admission rule, mirrored from the released codec.
+ *
+ * `dsh-session-format-v3-to-v4` refuses a message whose `source.kind` is empty
+ * or exactly `'plugin'` (`format v4 message requires a producer-owned source
+ * kind`). A plugin is identified by `plugin:<name>` now — the same kind that
+ * migration derives for rows written by older versions of this plugin.
+ *
+ * @param {unknown} source - candidate message source.
+ * @returns {boolean} whether the v4 encoder will accept it.
+ */
+export function isProducerOwnedSource(source) {
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) return false
+  const kind = /** @type {{kind?: unknown}} */ (source).kind
+  return typeof kind === 'string' && kind.length > 0 && kind !== 'plugin'
+}
+
+/**
+ * Refuse a shape the encoder would reject **before** the host sees it.
+ *
+ * The failure this guards against is expensive: the encoder throws while
+ * persisting the event, outside any handler of ours, so a bad `source` takes
+ * down the whole turn rather than the notice. Failing here instead means the
+ * caller's `try/catch` drops the notice and the step proceeds untouched.
+ *
+ * @param {unknown} source - the source about to be attached to a message.
+ * @returns {object} the same source, when it is admissible.
+ */
+function assertProducerOwnedSource(source) {
+  if (!isProducerOwnedSource(source)) {
+    throw new Error(
+      'dsh-fast-mode: refusing to emit a message whose source is not producer-owned; '
+        + 'the v4 encoder only accepts `plugin:<name>` and throws on a bare `plugin`',
+    )
+  }
+  return /** @type {object} */ (source)
+}
 
 /** The host truncates a notice summary at this many characters. */
 export const SUMMARY_MAX_CHARS = 120
@@ -55,11 +101,12 @@ function summaryOf(text) {
  * @returns {object} a frozen `UserMessage`.
  */
 export function createNoticeMessage(text, summary) {
+  const source = assertProducerOwnedSource({ ...PLUGIN_SOURCE, form: 'notice', summary: summary ?? summaryOf(text) })
   return deepFreeze({
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { ...PLUGIN_SOURCE, form: 'notice', summary: summary ?? summaryOf(text) },
+    source,
   })
 }
 
