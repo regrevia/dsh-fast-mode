@@ -37,19 +37,44 @@ test('a fresh session starts at the base width and the floor budget', () => {
   assert.equal(schedule.stats.turnSteps, 0)
 })
 
-test('width widens with consecutive clean multi-call steps, and only inside a turn', () => {
+test('a wide read-only step widens the very next step, without waiting for a second one', () => {
   const state = createAutoState()
-  cleanStep(state, 's1')
-  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelBase)
+  cleanStep(state, 's1', 3)
+  noteStep(state, 's1')
+  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
+  assert.equal(autoSchedule(state, 's1').stats.lastStepReadOnly, true)
+})
 
-  cleanStep(state, 's1')
+test('two clean read-only calls widen on the second step, and one call never does', () => {
+  const state = createAutoState()
+  cleanStep(state, 's1', 2)
+  // One observed read step is not yet "two clean read steps": stay native.
+  assert.equal(autoSchedule(state, 's1').parallel, 1)
+
+  cleanStep(state, 's1', 2)
   assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
 
-  // Fewer than two calls in the last step: widen less far.
+  // Single-call steps are the shape where fan-out has nothing to merge: the
+  // session is left native (width 1 = no guidance at all) instead of being
+  // asked for a wider block it cannot use.
   const quiet = createAutoState()
   cleanStep(quiet, 's1', 1)
   cleanStep(quiet, 's1', 1)
-  assert.equal(autoSchedule(quiet, 's1').parallel, 6)
+  assert.equal(autoSchedule(quiet, 's1').parallel, 1)
+})
+
+test('a step containing a state-changing call widens on the slower schedule', () => {
+  const state = createAutoState()
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'read', argsKey: 'a', chars: 10 })
+  noteTool(state, 's1', { name: 'read', argsKey: 'b', chars: 10 })
+  noteTool(state, 's1', { name: 'write', argsKey: 'c', chars: 10 })
+  assert.equal(autoSchedule(state, 's1').stats.lastStepReadOnly, false)
+  // A write in the step means the calls were not independent: stay native.
+  assert.equal(autoSchedule(state, 's1').parallel, 1)
+
+  cleanStep(state, 's1', 2)
+  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
 })
 
 test('a new turn resets the per-turn counters but keeps what was tried', () => {
@@ -61,7 +86,8 @@ test('a new turn resets the per-turn counters but keeps what was tried', () => {
   noteTurn(state, 's1')
   const schedule = autoSchedule(state, 's1')
   assert.equal(schedule.stats.turnSteps, 0)
-  assert.equal(schedule.parallel, AUTO_LIMITS.parallelBase)
+  // The previous turn ended in a wide read block, so the new request keeps it.
+  assert.equal(schedule.parallel, AUTO_LIMITS.parallelMax)
   // Session-level memory survives: the first sighting was progress, the second
   // identical call is not, even in a fresh turn.
   repeatCall(state, 's1')
@@ -76,7 +102,7 @@ test('repeated identical calls narrow the width', () => {
   for (let i = 0; i < 4; i += 1) repeatCall(state, 's1')
   const schedule = autoSchedule(state, 's1')
   assert.equal(schedule.stats.noProgress, 3, 'only the first sighting is progress')
-  assert.equal(schedule.parallel, AUTO_LIMITS.parallelMin)
+  assert.equal(schedule.parallel, 1)
 })
 
 test('a changed result size counts as progress; an identical rerun does not', () => {
@@ -107,7 +133,7 @@ test('errors narrow the width even when calls keep changing', () => {
   for (let i = 0; i < 3; i += 1) {
     noteTool(state, 's1', { name: 'shell', argsKey: `e-${i}`, isError: true, chars: 5 })
   }
-  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMin)
+  assert.equal(autoSchedule(state, 's1').parallel, 1)
 })
 
 test('the stall budget follows the recent p90, clamped to 2-5 minutes', () => {
@@ -205,7 +231,7 @@ test('strange input degrades to no opinion instead of throwing', () => {
   noteTool(state, 's1', { name: '', argsKey: 7, chars: Number.NaN, durationMs: -1 })
   noteTool(state, 's1', 'not an object')
   const schedule = autoSchedule(state, undefined)
-  assert.equal(schedule.parallel, AUTO_LIMITS.parallelBase)
+  assert.equal(schedule.parallel, 1)
   assert.equal(schedule.stallBudgetMs, AUTO_LIMITS.stallFloorMs)
   assert.equal(state.sessions.has('__global__'), true)
 })
@@ -226,4 +252,30 @@ test('the limits themselves stay in the range the docs promise', () => {
   assert.ok(AUTO_LIMITS.stallFloorMs >= 60_000)
   assert.ok(AUTO_LIMITS.stallCeilMs >= AUTO_LIMITS.stallFloorMs)
   assert.ok(AUTO_LIMITS.noProgressWarn < AUTO_LIMITS.noProgressStop)
+})
+
+test('a read-only session stays wide across the turn boundary', () => {
+  const state = createAutoState()
+  cleanStep(state, 's1', 3)
+  cleanStep(state, 's1', 3)
+  noteStep(state, 's1')
+  assert.equal(autoSchedule(state, 's1').stats.readOnlyStreak >= 2, true)
+  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
+
+  noteTurn(state, 's1')
+  noteStep(state, 's1')
+  assert.equal(autoSchedule(state, 's1').stats.turnSteps, 1)
+  assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
+})
+
+test('a shell-writing streak does not make the next turn start wide', () => {
+  const state = createAutoState()
+  for (let step = 0; step < 3; step += 1) {
+    noteStep(state, 's1')
+    noteTool(state, 's1', { name: 'bash', argsKey: `cmd-${step}`, chars: 10 })
+    noteTool(state, 's1', { name: 'read', argsKey: `read-${step}`, chars: 10 })
+  }
+  noteTurn(state, 's1')
+  // Mixed read/write steps are not a fan-out shape: the next turn stays native.
+  assert.equal(autoSchedule(state, 's1').parallel, 1)
 })

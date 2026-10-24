@@ -320,7 +320,7 @@ test('debug writes one line per request with the schedule', async () => {
     const requests = lines.filter(line => / step=/.test(line))
     assert.equal(requests.length, 1, 'one line per request, no per-hook noise')
     assert.match(requests[0], /step=2 gear=auto effort=medium \(unchanged\)/)
-    assert.match(requests[0], /parallel=4/)
+    assert.match(requests[0], /parallel=1/)
     assert.match(requests[0], /route=company\/deepseek-v4\.1-flash/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
