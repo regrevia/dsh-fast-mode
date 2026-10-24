@@ -103,8 +103,11 @@ function entryOf(state, agent) {
     calls: 0,
     stepCalls: 0,
     stepUnsafe: 0,
+    stepArgs: new Set(),
     lastStepCalls: 0,
     lastStepReadOnly: false,
+    /** True when every call in the last step read a different target. */
+    lastStepDistinct: false,
     readOnlyStreak: 0,
     errors: 0,
     /** @type {Map<string, {chars: number, errored: boolean}>} */
@@ -136,6 +139,7 @@ export function noteTurn(state, agent) {
   entry.turnSteps = 0
   entry.stepCalls = 0
   entry.stepUnsafe = 0
+  entry.stepArgs.clear()
   entry.stopped = false
 }
 
@@ -154,10 +158,16 @@ export function noteStep(state, agent) {
   if (entry.stepCalls > 0) {
     entry.lastStepCalls = entry.stepCalls
     entry.lastStepReadOnly = entry.stepUnsafe === 0
+    // Distinct read targets are the programmatic definition of "these calls can
+    // run together": no two of them touched the same path, so none can depend
+    // on another's result. Overlapping targets are the shape that looks batched
+    // but is really a chain.
+    entry.lastStepDistinct = entry.lastStepReadOnly && entry.stepArgs.size === entry.stepCalls
     entry.readOnlyStreak = entry.lastStepReadOnly ? entry.readOnlyStreak + 1 : 0
   }
   entry.stepCalls = 0
   entry.stepUnsafe = 0
+  entry.stepArgs.clear()
 }
 
 /**
@@ -184,6 +194,7 @@ export function noteTool(state, agent, observation) {
 
   entry.calls += 1
   entry.stepCalls += 1
+  if (argsKey.length > 0) entry.stepArgs.add(argsKey)
   if (!SAFE_CALLS.has(name)) entry.stepUnsafe += 1
   if (Number.isFinite(obs.durationMs) && obs.durationMs >= 0) {
     entry.waits.push(Number(obs.durationMs))
@@ -251,7 +262,11 @@ export function autoSchedule(state, agent) {
     parallel = AUTO_LIMITS.parallelBase
   } else if (entry.noProgress >= 3 || entry.errors >= 3) {
     parallel = 1
-  } else if (entry.readOnlyStreak >= 2) {
+  } else if (entry.lastStepDistinct && entry.lastStepCalls >= 2) {
+    // The strongest local signal: the last step was already a block of
+    // independent reads. Keep it wide, whichever step of the turn this is.
+    parallel = AUTO_LIMITS.parallelMax
+  } else if (entry.readOnlyStreak >= 2 && entry.lastStepCalls >= 2) {
     // Two consecutive steps of pure reads that batched cleanly: this session is
     // doing read-heavy work, so keep the block wide — including across the turn
     // boundary, where the old rule fell back to the base width for no reason.
@@ -263,10 +278,11 @@ export function autoSchedule(state, agent) {
     parallel = AUTO_LIMITS.parallelMax
   } else if (entry.turnSteps >= AUTO_LIMITS.widenAfterSteps && entry.lastStepCalls >= 2) {
     parallel = AUTO_LIMITS.parallelMax
-  } else if (entry.turnSteps === 0 && entry.lastStepReadOnly && entry.lastStepCalls >= 2) {
-    // Cross-turn momentum: the previous turn ended in a wide read block, so the
-    // next request starts wide instead of re-learning it from scratch.
-    parallel = AUTO_LIMITS.parallelMax
+  } else if (entry.turnSteps === 0) {
+    // A new request whose history shows no parallel shape stays native: the
+    // whole guidance section is dropped, so a shell-heavy or write-bound turn
+    // pays neither the prompt tax nor a batch instruction it cannot use.
+    parallel = 1
   }
 
   const stats = {
@@ -277,6 +293,7 @@ export function autoSchedule(state, agent) {
     calls: entry.calls,
     lastStepCalls: entry.lastStepCalls,
     lastStepReadOnly: entry.lastStepReadOnly,
+    lastStepDistinct: entry.lastStepDistinct,
     readOnlyStreak: entry.readOnlyStreak,
     p90WaitMs: p90,
     stallBudgetMs,

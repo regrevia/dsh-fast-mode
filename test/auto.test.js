@@ -48,10 +48,12 @@ test('a wide read-only step widens the very next step, without waiting for a sec
 test('two clean read-only calls widen on the second step, and one call never does', () => {
   const state = createAutoState()
   cleanStep(state, 's1', 2)
-  // One observed read step is not yet "two clean read steps": stay native.
+  // A step is only visible at the next boundary: nothing snapshotted yet.
   assert.equal(autoSchedule(state, 's1').parallel, 1)
 
-  cleanStep(state, 's1', 2)
+  // The boundary sees two reads of two distinct targets: that is the parallel
+  // shape already, so it goes wide without waiting for a second clean step.
+  noteStep(state, 's1')
   assert.equal(autoSchedule(state, 's1').parallel, AUTO_LIMITS.parallelMax)
 
   // Single-call steps are the shape where fan-out has nothing to merge: the
