@@ -55,7 +55,7 @@ Same model (`deepseek-v4.1-flash`), same route, same `reasoningEffort: medium`; 
 
 **All 40 pairs: median speedup 0.96×, CI 0.80–1.14×, 19/40 pairs faster.** In other words this version does **not** prove a universal win; the reproducible gains are on "many independent reads" (t2/t5/t6, 1.1–1.3×), while summarization and auditing shapes are slower.
 
-Why "accelerate only the parallel shape" has not fully landed yet: the scheduler's evidence comes from calls that have **already happened**, and these eight tasks are single-turn — they see only the 4-wide probe of a fresh session before they finish. In multi-turn conversations the second request inherits the first turn's shape; a single-turn task never gets that chance.
+Why "accelerate only the parallel shape" has not fully landed yet: the scheduler's evidence comes from calls that have **already happened**, and these eight tasks are single-turn — they saw only the 4-wide probe of a fresh session before they finished. 1.3.0 removes that probe: the shape is read from the request's own wording instead.
 
 Method, raw numbers and failure modes: [BENCHMARK.md](BENCHMARK.md).
 
@@ -83,7 +83,9 @@ The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded e
 
 ## Limits and next step
 
-There are only two programmatic signals for "is this step worth accelerating" today: whether the last step's calls were all read-only with pairwise-distinct targets, and how many read-only steps in a row. The next step is to make **the shape of the incoming request** a signal too (how many independent files/directories it names) and to pick the width online (bandit), so single-turn tasks can go wide on the first request instead of paying for a probe.
+There are three programmatic signals now: the request's own wording (serial / fan-out / shell, see `src/shape.js`), whether the last step's calls were all read-only with pairwise-distinct targets, and how many read-only steps in a row. The first lets a single-turn task choose its width on the very first request.
+
+Online selection (UCB / Thompson) is **not** in this version. The blocker is not networking — a bandit is local arithmetic and adds no request and no round trip; its cost is negligible. The blocker is reward noise: across our paired runs, within-task variance swamps the width effect, and feeding that to UCB would learn jitter, not policy. Once request-shape classification filters for genuinely wide samples, a discounted Thompson sampler (Gaussian prior, separate posteriors for the fan-out and unknown contexts) is the design to try — not a global UCB.
 
 [Measurements](BENCHMARK.md) · [Reference](docs/REFERENCE.en.md) · [Changelog](CHANGELOG.md) · [中文](README.md)
 
