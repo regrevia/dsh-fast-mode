@@ -3,7 +3,8 @@
  * answered with numbers instead of a feeling.
  *
  * The harness already reports what this needs, one event at a time: `step/start`
- * opens a step, `assistant/message` carries the upstream `usage`, `tool/call`
+ * opens a step, `assistant/chunk` marks the first streamed token (the real
+ * time-to-first-token); `assistant/message` carries the upstream `usage`, `tool/call`
  * and `tool/result` count the work inside the step, `step/end` closes it. This
  * module folds that feed into one JSON line per step and appends it to a file.
  *
@@ -21,7 +22,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /** The measurement format. Bumped when a field changes meaning. */
-export const METRICS_VERSION = 1
+export const METRICS_VERSION = 2
 
 /**
  * The step events this recorder folds. Anything else on the session feed
@@ -29,6 +30,7 @@ export const METRICS_VERSION = 1
  */
 const STEP_START = 'step/start'
 const STEP_END = 'step/end'
+const ASSISTANT_CHUNK = 'assistant/chunk'
 const ASSISTANT = 'assistant/message'
 const TOOL_CALL = 'tool/call'
 const TOOL_RESULT = 'tool/result'
@@ -55,6 +57,17 @@ const stepKey = (sid, turn, step) => `${sid}\u0000${String(turn)}\u0000${String(
  *
  * @param {any} event
  */
+/**
+ * What kind of token opened the stream. A reasoning delta means the model started
+ * thinking before it wrote anything, which is the common case on this route.
+ *
+ * @param {any} chunk
+ */
+const chunkKind = (chunk) => {
+  if (!chunk || typeof chunk !== 'object') return 'unknown'
+  return typeof chunk.type === 'string' ? chunk.type : 'unknown'
+}
+
 const payloadOf = (event) => {
   const data = event && typeof event === 'object' ? event.data : undefined
   return data && typeof data === 'object' ? data : (event ?? {})
@@ -110,6 +123,14 @@ export function createRecorder(options = {}) {
     }
   }
 
+  // `assistant/chunk` is persisted with only the chunk — no turn, no step — so a
+  // chunk cannot name its own step. One session runs one step at a time, so the
+  // step that session last opened is the step the chunk belongs to.
+  /** @type {Map<string, string>} */
+  const open = new Map()
+  /** @type {Map<string, {time: number, kind: string}>} */
+  const pendingChunk = new Map()
+
   const write = (row) => {
     if (!on) return
     prepare()
@@ -132,6 +153,8 @@ export function createRecorder(options = {}) {
       started: time,
       first: undefined,
       last: undefined,
+      chunkFirst: undefined,
+      chunkKind: undefined,
       input: 0,
       output: 0,
       reasoning: 0,
@@ -195,6 +218,41 @@ export function createRecorder(options = {}) {
         const { key, entry } = accum(sid, data, time)
         entry.started = time
         steps.set(key, entry)
+        open.set(sid, key)
+        const early = pendingChunk.get(sid)
+        if (early) {
+          entry.chunkFirst = early.time
+          entry.chunkKind = early.kind
+          pendingChunk.delete(sid)
+        }
+        return
+      }
+
+      // The first streamed chunk is the only honest time-to-first-token. The
+      // `assistant/message` event is appended when the message is *committed*,
+      // i.e. after the whole generation finished — measuring TTFT from it made
+      // `ttftMs === llmMs` on every one of 2317 measured steps, which is how
+      // this tap was found to be lying.
+      if (kind === ASSISTANT_CHUNK) {
+        // The durable feed appends the chunk alone — no turn, no step — so a chunk
+        // cannot name its own step. One session runs one step at a time, so the
+        // step that session last opened is the step the chunk belongs to.
+        const chunkType = chunkKind(data.chunk)
+        // `block-start`/`block-end` are framing markers, not tokens: counting one
+        // as the first token would report a TTFT no text ever followed.
+        if (!chunkType.endsWith('-delta')) return
+        const key = open.get(sid)
+        const entry = key === undefined ? undefined : steps.get(key)
+        if (!entry) {
+          // The live stream can arrive a few milliseconds before the durable
+          // `step/start`; hold the first token until the step exists.
+          if (!pendingChunk.has(sid)) pendingChunk.set(sid, { time, kind: chunkType })
+          return
+        }
+        if (entry.chunkFirst === undefined) {
+          entry.chunkFirst = time
+          entry.chunkKind = chunkType
+        }
         return
       }
 
@@ -233,6 +291,7 @@ export function createRecorder(options = {}) {
       const key = stepKey(sid, data.turn, data.step)
       const entry = steps.get(key)
       steps.delete(key)
+      if (open.get(sid) === key) open.delete(sid)
       if (!entry) return
       const label = labels.get(sid)
       write({
@@ -245,9 +304,14 @@ export function createRecorder(options = {}) {
         gear: label ? label.gear : 'unknown',
         effort: label ? label.effort : undefined,
         route: label ? label.route : undefined,
-        // First token, and the whole model call: `step/start` to the last
-        // assistant message. Both in milliseconds.
-        ttftMs: span(entry.started, entry.first),
+        // `ttftMs` is queue + prefill: `step/start` to the first streamed chunk.
+        // `decodeMs` is the generation window that follows it. `llmMs` stays the
+        // whole call, so old comparisons keep their meaning.
+        ttftMs: entry.chunkFirst === undefined || span(entry.started, entry.chunkFirst) === undefined
+          ? undefined
+          : Math.max(0, span(entry.started, entry.chunkFirst)),
+        decodeMs: entry.chunkFirst === undefined ? undefined : span(entry.chunkFirst, entry.last),
+        firstChunk: entry.chunkKind,
         llmMs: entry.first === undefined ? undefined : span(entry.started, entry.last),
         stepMs: span(entry.started, time),
         calls: entry.calls,
@@ -313,6 +377,7 @@ export function summarise(rows) {
     const llm = numbers(row => row.llmMs)
     const step = numbers(row => row.stepMs)
     const ttft = numbers(row => row.ttftMs)
+    const decode = numbers(row => row.decodeMs)
     const output = numbers(row => row.output)
     const input = numbers(row => row.input)
     const calls = numbers(row => row.calls)
@@ -329,6 +394,14 @@ export function summarise(rows) {
       stepMsP50: percentile(step, 0.5),
       stepMsP90: percentile(step, 0.9),
       ttftMsP50: percentile(ttft, 0.5),
+      ttftMsP90: percentile(ttft, 0.9),
+      ttftMsMean: mean(ttft),
+      decodeMsP50: percentile(decode, 0.5),
+      // Queue + prefill as a share of the whole model call: the part a serving
+      // tier could remove and decode cannot.
+      prefillShare: (mean(ttft) === undefined || mean(llm) === undefined || mean(llm) === 0)
+        ? undefined
+        : Math.round((mean(ttft) / mean(llm)) * 1000) / 1000,
       outputPerStep: mean(output),
       inputPerStep: mean(input),
       outputPerSession: sessions.size === 0 ? undefined

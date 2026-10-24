@@ -47,6 +47,7 @@
  * metrics journal is therefore evidence — it records the effort the request
  * carried, not one this plugin chose.
  */
+import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -69,6 +70,7 @@ import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
 import { createRecorder } from './src/metrics.js'
 import { choiceFor } from './src/state.js'
+import { buildShellParallelTool } from './src/parallel.js'
 
 /**
  * The settings-page schema. Re-exported from here because the Loader reads
@@ -392,6 +394,48 @@ export function apply(ctx, rawConfig) {
     },
   })
   ctx.on('tools/execute', stallGuard)
+
+  // The durable session feed carries no streaming tokens — `assistant/chunk` is
+  // live-only, which is why the first version of the journal reported
+  // `ttftMs === llmMs` on all 2317 steps. The live attempt feed is the only
+  // honest source of first-token arrival: chunk frames carry `time` and an
+  // `attemptId` whose prefix is the session. They carry no turn or step, so the
+  // recorder attributes them to the step that session has open.
+  ctx.on('agent/assistant-stream', (payload) => {
+    if (!metrics.enabled) return
+    const frame = payload && payload.frame
+    if (!frame || frame.type !== 'chunk' || typeof frame.attemptId !== 'string') return
+    const cut = frame.attemptId.lastIndexOf(':')
+    if (cut <= 0) return
+    try {
+      metrics.record({ id: frame.attemptId.slice(0, cut) }, {
+        type: 'assistant/chunk',
+        time: frame.time,
+        data: { chunk: frame.chunk },
+      })
+    } catch {
+      // A measurement must never disturb the stream it observes.
+    }
+  }, { global: true })
+
+  // The one place the harness leaves concurrency on the table. Tool calls are
+  // scheduled by `isConcurrencySafe`, and `bash` is not parallel-safe — measured:
+  // six one-second commands in a single block take 6.3 s of tool time — so shell
+  // work never overlaps, no matter how the model batches it. This tool is the
+  // missing primitive: one call, a bounded pool inside, every result back. It is
+  // registered only while fast mode is on, so the native path pays no schema tax.
+  if (initial.enabled) {
+    try {
+      ctx.inject(['tools'], (toolCtx) => {
+        toolCtx.effect(
+          () => toolCtx.tools.register(buildShellParallelTool({ spawn, logger: ctx.logger })),
+          'dsh-fast-mode: shell_parallel tool',
+        )
+      })
+    } catch (error) {
+      ctx.logger?.warn?.('%s could not register shell_parallel: %s', TAG, String(error?.message ?? error))
+    }
+  }
 
   // The transcript's two notices: the post-compaction reminder and the one-time
   // conflict announcement. Both are `notice`-form `source: plugin` messages, so

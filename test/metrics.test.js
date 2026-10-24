@@ -27,7 +27,10 @@ function step(recorder, sid, { turn = 0, step: index = 1, start, ttft, end, usag
   for (let error = 0; error < errors; error += 1) {
     recorder.record(target, { type: 'tool/result', turn, step: index, time: start + 6, error: 'boom' })
   }
-  if (usage) recorder.record(target, { type: 'assistant/message', turn, step: index, time: ttft, usage })
+  // The stream opens at `ttft` (one chunk), the message is committed at `end`:
+  // exactly the order the harness emits them in.
+  if (usage) recorder.record(target, { type: 'assistant/chunk', turn, step: index, time: ttft, chunk: { type: 'text-delta', text: 'x' } })
+  if (usage) recorder.record(target, { type: 'assistant/message', turn, step: index, time: end, usage })
   recorder.record(target, { type: 'step/end', turn, step: index, time: end })
 }
 
@@ -61,8 +64,10 @@ test('one step produces exactly one row', () => withTempFile((file) => {
   assert.equal(row.gear, 'fast')
   assert.equal(row.effort, 'low')
   assert.equal(row.route, 'p/m')
-  assert.equal(row.ttftMs, 600)
-  assert.equal(row.llmMs, 600)
+  assert.equal(row.ttftMs, 600, 'queue + prefill: step start to the first chunk')
+  assert.equal(row.decodeMs, 400, 'the generation window after the first chunk')
+  assert.equal(row.firstChunk, 'text-delta')
+  assert.equal(row.llmMs, 1000, 'the whole call is unchanged')
   assert.equal(row.stepMs, 1000)
   assert.equal(row.input, 300)
   assert.equal(row.output, 50)
@@ -75,12 +80,15 @@ test('two assistant messages in one step: first token is the first, cost is the 
   const recorder = createRecorder({ file })
   const target = session('s1')
   recorder.record(target, { type: 'step/start', turn: 1, step: 2, time: 1000 })
+  recorder.record(target, { type: 'assistant/chunk', turn: 1, step: 2, time: 1500, chunk: { type: 'reasoning-delta', text: '…' } })
   recorder.record(target, { type: 'assistant/message', turn: 1, step: 2, time: 1500, usage: { inputTokens: 100, outputTokens: 10 } })
   recorder.record(target, { type: 'assistant/message', turn: 1, step: 2, time: 3000, usage: { inputTokens: 100, outputTokens: 20 } })
   recorder.record(target, { type: 'step/end', turn: 1, step: 2, time: 3200 })
 
   const [row] = readRows(file)
   assert.equal(row.ttftMs, 500, 'first token: the step waited 500 ms for it')
+  assert.equal(row.firstChunk, 'reasoning-delta', 'thinking before writing is still a first token')
+  assert.equal(row.decodeMs, 1500)
   assert.equal(row.llmMs, 2000, 'generation: to the last message, not the first')
   assert.equal(row.output, 30, 'usage of both messages in the step is summed')
   assert.equal(row.assistantMessages, 2)
@@ -94,6 +102,36 @@ test('a step with no assistant message has no token latency, only wall clock', (
   assert.equal(row.ttftMs, undefined)
   assert.equal(row.llmMs, undefined)
   assert.equal(row.stepMs, 400)
+}))
+
+test('a persisted chunk names no turn or step: it belongs to the open step, and framing markers are not tokens', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  const target = session('alpha')
+  recorder.record(target, { type: 'step/start', turn: 3, step: 2, time: 1000 })
+  // Real shape, measured: the durable feed appends the chunk alone.
+  recorder.record(target, { type: 'assistant/chunk', time: 1100, data: { chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } } })
+  recorder.record(target, { type: 'assistant/chunk', time: 1400, data: { chunk: { type: 'reasoning-delta', index: 0, text: 'hm' } } })
+  recorder.record(target, { type: 'assistant/message', turn: 3, step: 2, time: 2000, usage: { outputTokens: 5 } })
+  recorder.record(target, { type: 'step/end', turn: 3, step: 2, time: 2000 })
+  const row = JSON.parse(readFileSync(file, 'utf8').trim())
+  assert.equal(row.turn, 3)
+  assert.equal(row.step, 2)
+  assert.equal(row.ttftMs, 400, 'TTFT is step start to the first delta, not to the block marker')
+  assert.equal(row.decodeMs, 600)
+  assert.equal(row.firstChunk, 'reasoning-delta')
+}))
+
+test('a first token that beats step/start is kept and never reported as a negative TTFT', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  const target = session('races')
+  recorder.record(target, { type: 'assistant/chunk', time: 980, data: { chunk: { type: 'text-delta', text: 'x' } } })
+  recorder.record(target, { type: 'step/start', turn: 1, step: 1, time: 1000 })
+  recorder.record(target, { type: 'assistant/message', turn: 1, step: 1, time: 1600, usage: { outputTokens: 4 } })
+  recorder.record(target, { type: 'step/end', turn: 1, step: 1, time: 1600 })
+  const row = JSON.parse(readFileSync(file, 'utf8').trim())
+  assert.equal(row.ttftMs, 0)
+  assert.equal(row.firstChunk, 'text-delta')
+  assert.equal(row.llmMs, 600)
 }))
 
 test('errors inside a step are counted, and the row still lands', () => withTempFile((file) => {
