@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1
+
+0.5.0 shipped a settings switch that could not be switched. Two defects, both
+about how the `settings` service treats a schema field:
+
+- **The three form fields were not `.volatile()`.** `settings.describe()` projects
+  a Config through `volatileForm`, which keeps only nodes carrying
+  `meta.volatile`; with none, the whole entry disappeared from the form — so
+  there was no settings page, the composer chip read it as "absent" and stayed
+  greyed out, and `settings.update()` would have refused the write with
+  `Config field "enabled" is not volatile`. `enabled`, `gear` and `parallel` are
+  now declared volatile, which is also what lets an edit land on a running fiber
+  without remounting the plugin.
+- **A volatile field is a reference, not a value.** The Loader hands a running
+  plugin a frozen `{get()}` reference so it can swap the value in place;
+  `config.enabled === true` would therefore have been false with the switch on.
+  `resolveConfig` now dereferences at that single boundary (and still accepts a
+  plain config object), and the module documents the protocol.
+
+Tests 80: the schema now has to prove every form field is volatile, and that a
+reference from the Loader reads as an armed switch.
+
 ## 0.5.0
 
 Fast mode becomes something you switch, not something an install decides for you.

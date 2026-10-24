@@ -10,6 +10,11 @@
  *   why the on/off switch and the gear selector exist there without a line of
  *   client code.
  *
+ * Every declared field is `.volatile()`: that is what makes it appear in the
+ * generated form *and* what lets an edit reach a running fiber instead of
+ * forcing a remount. A non-volatile declaration is invisible here — `describe()`
+ * drops it from the form and `update()` refuses the path with "is not volatile".
+ *
  * Only the fields that belong on a settings page are declared. Every other
  * knob (`floor`, `ladder`, `aliases`, `deepAfter`, `slowMs`, `bigChars`,
  * `window`, `holdTools`, `escalateAfterStep`, `discoverTimeoutMs`,
@@ -40,11 +45,13 @@ export const Config = z.object({
   enabled: z
     .boolean()
     .default(false)
+    .volatile()
     .description('开启 Fast 模式 / Turn fast mode on. 关闭时不改写档位、不注入提示词。'),
 
   gear: z
     .union(GEAR_NAMES.map(name => z.const(name)))
     .default('fast')
+    .volatile()
     .description(
       '档位 / Gear: safe < fast < turbo < max. 越高越早允许降档，模型侧并行目标 4/6/8 次调用；档位只抬高并行上限，不改变最低档位。',
     ),
@@ -54,6 +61,7 @@ export const Config = z.object({
     .step(1)
     .min(1)
     .max(8)
+    .volatile()
     .description(
       '并行上限 / Parallel ceiling: 覆盖档位默认的每步并行目标（1 表示不注入批量提示）。',
     ),

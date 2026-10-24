@@ -390,13 +390,54 @@ export function resolvePlan(declared, config) {
 }
 
 /**
+ * The shared symbol a volatile config reference is written through.
+ *
+ * Read from the global registry rather than imported: the reference protocol is
+ * identified by this symbol precisely so that two copies of the library agree.
+ */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/**
+ * Whether a config value is a live reference instead of plain data.
+ *
+ * @param {unknown} value
+ */
+export function isVolatileRef(value) {
+  return typeof value === 'object' && value !== null && VOLATILE_WRITE in value
+    && typeof (/** @type {any} */ (value).get) === 'function'
+}
+
+/**
+ * Read the current value out of a volatile config field.
+ *
+ * A field the schema marks `.volatile()` reaches a running plugin as a frozen
+ * reference, not as its value: the Loader swaps the value inside the reference
+ * so a settings edit lands without remounting the plugin. Every other field is
+ * plain data, so this is a no-op for them.
+ *
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+export function plainConfigValue(value) {
+  return /** @type {any} */ (isVolatileRef(value) ? /** @type {any} */ (value).get() : value)
+}
+
+/**
  * Normalise plugin config. Every field arrives from a loader patch, so a typo
  * must degrade to the default rather than to "no limit".
+ *
+ * Volatile fields are unwrapped here, at the single boundary every read passes
+ * through: comparing `enabled === true` against a reference would be false even
+ * when the switch is on.
  *
  * @param {object} [raw]
  */
 export function resolveConfig(raw) {
-  const config = raw ?? {}
+  const source = plainConfigValue(raw) ?? {}
+  const config = /** @type {Record<string, unknown>} */ (Object.fromEntries(
+    Object.entries(source).map(([key, value]) => [key, plainConfigValue(value)]),
+  ))
   const gearName = normaliseGear(config.gear)
   const gear = GEARS[gearName]
   const configured = Array.isArray(config.ladder)

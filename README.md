@@ -50,6 +50,8 @@
 - **实心黑** = 开启，hover 提示里带当前档位；
 - **灰掉不可点** = 这层配置只读，或本 profile 里没有声明这个插件条目 —— hover 提示会写明是哪一种，不会假装切换成功。
 
+设置页的这三个字段都声明了 `.volatile()`：`settings` 只会把 volatile 字段投影进表单，也只允许改 volatile 字段（否则 `describe` 里整个条目直接消失、`update` 报 `is not volatile`）。代价是这些字段传到插件里是**引用**而不是值——Loader 靠原地替换引用来让改动落到正在运行的 fiber 上，插件侧在 `resolveConfig` 一处统一解引用。
+
 它注册在 `conversation.input.activity`（模型选择器右侧、停止按钮左侧），**不占用** `conversation.input.model`，所以永远不会遮住宿主自己的模型选择器。点击是乐观更新 + 回读校验：写失败会把图标退回原状，并在提示里给出错误原因。
 
 开启后的默认档位是 `fast`（档位 2），也就是上面三件事全开；想完全回到 v0.3.0 那种"不注入任何提示、只在干净连击后降档"的静默行为，用 `gear: safe`。
@@ -123,7 +125,7 @@
 
 **已实测**：在 DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop` 上，把插件管理器的安装目标填成 `github:regrevia/dsh-fast-mode`，它拉下 tarball 并直接生效（`application: applied`，无 warning），profile 里记录为 `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`。0.4.0 无客户端半时就这样跑通；0.5.0 多了客户端半（闪电），重装后同样 applied，只是**必须重载一次页面 / 重启应用**才会看到图标 —— 宿主只在启动时扫描 `dsh.client` 声明。
 
-同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.5.0` 这类 npm spec，用上面的 `github:` 形式。
+同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.5.1` 这类 npm spec，用上面的 `github:` 形式。
 
 方式 B / C 需要在 profile 的 `cordis.patch.yml` 里插入插件行（方式 A 会自己写）：
 
@@ -289,7 +291,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 ## 开发与测试
 
 ```bash
-npm test        # 78 个测试，无网络、不需要 harness
+npm test        # 80 个测试，无网络、不需要 harness
 ```
 
 策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（写错退回 `safe`）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），最后一组把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端）：证明 bundle 能解析、只 require `react`、空心画得出来、点击只发一次带 revision 的 `settings/update`、被拒时回滚并在提示里给出原因、只读层和"没有这个条目"都渲染成不可点。另一组用 schemastery 真实校验 schema：默认 `enabled: false`、四个档位名都能过、`gear: warp` 会当场报错、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
