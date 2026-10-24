@@ -91,6 +91,26 @@ export const Config = z.object({
       'shell_parallel 工具 / Shell fan-out tool: 注册一个单次调用内跑多个独立 shell 作业的工具。默认关闭——2026-10-24 实测：模型本来就会用 `&` + `wait` 把独立命令并行起来（6 个 5 秒作业 5.1 秒跑完），而多一个工具反而诱发“再复核一遍”的额外步骤，同一 fixture 墙钟从 9.1 秒涨到 16–26 秒。需要时再打开。',
     ),
 
+  stepBudget: z
+    .number()
+    .step(1)
+    .min(4)
+    .max(80)
+    .default(30)
+    .description(
+      '单轮步数预算 / Steps per turn: 到达后调度器提醒一次「停止扩大范围、跑一次验证、直接报告」。长任务的墙钟几乎全是步数 × 每步固定成本（首字延迟 + 输出解码），跑飞的一轮常常 40–80 步。默认 30。',
+    ),
+
+  finishLineSteps: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(80)
+    .default(10)
+    .description(
+      '收尾线 / Finish line: 第 N 步提醒一次「别再扩大范围、不重跑已通过的检查，只修还在报的错，然后报告」；0 = 关闭。默认 10：7 家族 14 对 ABBA 里中位 1.86×、输出 −52%、正确性零损失，且第 4 步以内结束的任务完全不受影响。',
+    ),
+
   guidance: z
     .boolean()
     .default(true)

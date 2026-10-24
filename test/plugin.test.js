@@ -588,7 +588,7 @@ test('the turn boundary resets the step budget instead of spending it for the se
     const { out } = await step(ctx)
     noticed += noticesOf(out).length
   }
-  assert.equal(noticed, 1, '30 steps in one turn produce the stop notice once')
+  assert.equal(noticed, 2, 'the finish line and the stop notice each fire exactly once')
 
   // A new turn starts with a fresh budget, not a spent one.
   ctx.fire('session/event', { id: 'session-1' }, { type: 'turn/start' })
@@ -601,7 +601,7 @@ test('the turn boundary resets the step budget instead of spending it for the se
     const result = await step(ctx)
     again += noticesOf(result.out).length
   }
-  assert.equal(again, 1, 'the budget applies per turn, so the next long turn is caught too')
+  assert.equal(again, 2, 'the budget applies per turn, so the next long turn is caught too')
 })
 
 test('the third lever is wired: the stall guard, the compaction reminder, the peer probe', () => {

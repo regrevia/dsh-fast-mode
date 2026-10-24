@@ -183,3 +183,14 @@ test('no shipped module constructs a thinking-level field', async () => {
     assert.doesNotMatch(code, /\bdecideEffort\b/, `${file} must not resurrect the effort policy`)
   }
 })
+
+test('the step knobs reach the policy, and off-gear keeps them out of the way', () => {
+  const auto = resolveConfig({ enabled: true, gear: 'auto' })
+  assert.equal(auto.stepBudget, 30, 'the hard budget defaults to the measured constant')
+  assert.equal(auto.finishLineSteps, 10, 'the finish line defaults to the measured step 10')
+
+  const tuned = resolveConfig({ enabled: true, gear: 'auto', stepBudget: 12, finishLineSteps: 7 })
+  assert.equal(tuned.stepBudget, 12)
+  assert.equal(tuned.finishLineSteps, 7,
+    'a policy reminder is only useful with a scheduler, so a fit gear still carries it')
+})

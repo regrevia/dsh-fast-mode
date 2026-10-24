@@ -202,6 +202,12 @@ export function resolveConfig(raw, overrides) {
         : 'off',
     /** `outputDiscipline: 'late'` — compress from step 4 on, via the scheduler. */
     lateDiscipline: gear.directive && config.outputDiscipline === 'late',
+    /** Hard stop after this many steps in one turn (scheduler directive). */
+    stepBudget: gear.directive ? Math.floor(number(config.stepBudget, 30, { positive: true })) : 30,
+    /** One "stop adding scope" reminder at this step; 0 = off. */
+    finishLineSteps: gear.directive
+      ? Math.max(0, Math.floor(number(config.finishLineSteps, 10)))
+      : 0,
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative
