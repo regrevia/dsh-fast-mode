@@ -44,16 +44,16 @@ Same model (`deepseek-v4.1-flash`), same route, same `reasoningEffort: medium`; 
 
 | Task (shape) | Wall: off → on | Speedup | 95 % CI |
 |---|---|---|---|
-| t1: summarize 8 files | 8.6 s → 11.3 s | 0.78× | 0.43–1.30 |
-| t2: count markers across 40 independent files | 7.2 s → 6.4 s | 1.14× | 0.93–1.24 |
-| t3: per-directory sums, shell-heavy | 5.0 s → 6.5 s | 0.81× | 0.53–1.20 |
-| t4: audit 12 modules into a report | 8.7 s → 13.1 s | 0.71× | 0.55–1.21 |
-| t5: hot symbols across 12 modules × 5 files | 13.9 s → 12.2 s | 1.14× | 0.90–1.82 |
-| t6: sum 24 log files by level | 5.7 s → 5.2 s | 1.28× | 0.68–1.59 |
-| t7: follow an 18-node dependency chain (serial) | 4.6 s → 5.6 s | 0.98× | 0.38–1.51 |
-| t8: duplicate deps across 16 manifests | 6.8 s → 6.0 s | 1.04× | 0.68–1.27 |
+| t1: 8 files summarised | 14.9 s → 8.8 s | 1.86× | 0.86–3.77 |
+| t2: 40 independent files counted | 5.8 s → 6.0 s | 0.98× | 0.82–1.34 |
+| t3: 6 directories summed (shell-heavy) | 8.5 s → 6.6 s | 1.77× | 0.41–2.19 |
+| t4: 12 modules audited | 9.1 s → 11.0 s | 1.03× | 0.55–1.19 |
+| t5: 12 modules × 5 files, hot symbol | 6.8 s → 7.6 s | 1.07× | 0.43–1.35 |
+| t6: 24 log files totalled by level | 8.7 s → 5.6 s | 1.43× | 1.00–2.57 |
+| t7: 18-node dependency chain (serial) | 4.4 s → 4.3 s | 1.06× | 0.76–1.30 |
+| t8: 16 manifests, duplicate deps | 6.9 s → 5.4 s | 1.29× | 0.98–1.61 |
 
-**All 40 pairs: median speedup 0.96×, CI 0.80–1.14×, 19/40 pairs faster.** In other words this version does **not** prove a universal win; the reproducible gains are on "many independent reads" (t2/t5/t6, 1.1–1.3×), while summarization and auditing shapes are slower.
+**All 43 pairs: median speedup 1.09×, CI 1.03–1.33×, 30/43 pairs faster, mean 1.26×, mean steps 5.5 → 4.7.** Gains concentrate on "gather the known target set in one block" and "independent shell jobs in one block" (t1 1.86×, t3 1.77×, t6 1.43×, t8 1.29×); t2/t4/t7 are deliberate no-op controls (aggregate, serial, must-be-serial) at about 1.0×. The CI no longer crosses 1, but with 5–8 pairs per task treat the direction as credible and the per-task multiple as approximate.
 
 Why "accelerate only the parallel shape" has not fully landed yet: the scheduler's evidence comes from calls that have **already happened**, and these eight tasks are single-turn — they saw only the 4-wide probe of a fresh session before they finished. 1.3.0 removes that probe: the shape is read from the request's own wording instead.
 

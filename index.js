@@ -82,7 +82,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.3.0'
+export const VERSION = '1.4.0'
 const GLOBAL_AGENT = '__global__'
 
 /**
