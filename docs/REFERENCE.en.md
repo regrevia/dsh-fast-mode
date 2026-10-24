@@ -8,13 +8,13 @@ Speed comes from three things only: fewer round trips, less narration, less tool
 
 ## Interaction details: the bolt switch and which conversation it applies to
 
-- **One icon, no dropdown.** The conversation input's activity slot (`conversation.input.activity`) holds a single bolt button: hollow when off, filled when on. Clicking it opens the panel. There is no gear selector, no caret, no second-level "choose a gear" menu.
-- **The panel answers one question: is this conversation on.** It is 196 px wide and contains a title, one switch, a scope line ("This conversation only"), one live scheduling line, and two lines of fine print (effort is unchanged; what makes it faster).
+- **One icon, and it is the switch.** The conversation input's activity slot (`conversation.input.activity`) holds a single bolt button: hollow when off, filled when on. One click toggles it, another click toggles back. There is no gear selector, no caret, no second-level "choose a gear" menu, and no popover.
+- **The button answers one question: is this conversation on.** `aria-pressed` is the state, and the tooltip spells out "this conversation · effort unchanged · click to turn off". What makes the mode faster, where the speed comes from, and the per-call ceiling live in the plugin description (`meta.description` and the config descriptions), not in the composer.
 - **The live line quotes the number being enforced**, not an adjective:
   - on, with a guard ceiling: `Automatic · parallel 2–8 · one call ≤ 2 min`
   - on, with the guard disabled (`stallGuard: false`, or a negative `toolTimeoutMs`): `Automatic · parallel 2–8 · calls unbounded`
   - off: `Off · the harness behaves exactly as shipped`
-- **The panel can only quote the config it can read.** It reads `stallGuard` and `toolTimeoutMs` from `settings/describe`, uses an explicit positive value when present, and otherwise falls back to the `auto` starting point of 120 seconds. It cannot see an experiment assignment's per-session override (that happens on the host request path), and it cannot see the live width the scheduler computed for this session — width is host-side state that changes per step. So the line states the 2–8 range, not "6 lanes right now".
+- **The button writes only what it knows.** One click writes `enabled`, `gear` (always `auto`), and this conversation's entry in the `sessions` column, carrying the revision it read. It never writes thinking effort and never writes the parallel width: width is host-side state that changes per step, so the UI does not pretend to display it.
 - **Write path.** Flipping the switch sends one `settings/update` carrying `enabled`, `gear` and `sessions` together, with the `revision` it read; it updates optimistically and polls briefly to confirm. A refusal (stale revision, read-only profile) rolls all of it back and shows the reason, so the button never becomes a dead control; a failed read shows the error and a click retries. The `gear` it writes is always the constant `auto`.
 
 ## How it works
@@ -261,7 +261,7 @@ When the experiment file (default `~/.dsh/fast-mode-bench.json`) exists with `en
 - unknown names are filtered out with a single warning; a broken file is reported once and treated as absent;
 - edits take effect within a second (1 s TTL), with no restart.
 
-On the request path the assignment **outranks** the panel's per-conversation switch — which is why you should not touch the switch during an experiment: the panel shows your last choice, while the request may run the assigned arm. This is also one reason the panel only quotes the config it can read.
+On the request path the assignment **outranks** the per-conversation switch — which is why you should not touch the switch during an experiment: the button shows your last choice, while the request may run the assigned arm.
 
 ### The report: `dsh-fast-mode-report`
 
@@ -297,7 +297,7 @@ How the file and the metrics work together: `start`, run tasks, use `status` to 
 
 - **Observe, do not rewrite.** `tools/pre-execute` / `tools/post-execute` are pure observers (start time, call result), and `agent/request` returns the request unchanged. Beyond the guidance section and two producer-owned notices (the post-compaction reminder and a scheduler directive), the plugin writes nothing into the conversation.
 - **Model and effort are not writable.** There is no assignment to `reasoningEffort` anywhere in the source; a test scans for it so it cannot come back unnoticed.
-- **Settings are changed only by the panel, and only with a revision.** There is no background path that silently edits config; a conflicting write fails and rolls back.
+- **Settings change only through that click, and only with a revision.** There is no background path that silently edits config; a conflicting write fails and rolls back, and the reason appears in the tooltip.
 - **Metrics stay local.** Only `metricsFile` is written; `--lan` is the sole network path, read-only, and needs an explicit token.
 - **The guard changes only the signal.** The caller's original signal is restored in `finally`, and the body's rejection after a lost race is swallowed rather than surfacing as an unhandled rejection.
 
@@ -315,7 +315,7 @@ How the file and the metrics work together: `start`, run tasks, use `status` to 
 
 **The guard only sees shell-class tools.** A hung non-shell call (say, a custom tool whose promise never resolves) is outside its scope. Exempt tools are deliberately unbounded — waiting for a user or a background job is supposed to wait.
 
-**The panel cannot show live width.** It states the 2–8 range and the ceiling it can read; the width the host computed for a given conversation appears only in the guidance section and the debug log.
+**The client cannot show live width.** It states 2–8 only in the plugin description; the width the host computed for a given conversation appears only in the guidance section and the debug log.
 
 **The `turnSteps` counting caveat.** It resets on every `turn/start`, so the 30-step stop line constrains a single turn; what survives across turns is the scheduler memory, not a spent step budget.
 
@@ -334,7 +334,7 @@ Module layout:
 - `src/metrics.js`: JSONL metrics and summaries;
 - `src/benchmark.js`: per-session hash assignment;
 - `src/peers.js`: conflicting-plugin detection;
-- `client.js`: the bolt chip and the panel.
+- `client.js`: the bolt switch (no popover) and the per-conversation write.
 
 Run the tests:
 

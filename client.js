@@ -27,18 +27,19 @@
  * Three independent defences now: `unwrap()` handles the envelope, every remote
  * call has a deadline so a pending bridge shows an error instead of hanging on
  * "loading", and the chip is *never* `disabled` — a click while the
- * configuration is unknown re-reads it, and an unreadable configuration opens
- * the menu with the reason spelled out. Nothing is hidden behind a tooltip that
- * cannot show.
+ * configuration is unknown re-reads it, and an unreadable configuration states
+ * the reason in the tooltip. Nothing is hidden behind a tooltip that cannot show.
  *
- * ## The panel
+ * ## The switch
  *
- * One switch and one honest sentence. Fast mode has no gears to choose any
- * more: it always runs at the thinking effort the user picked (that is the
- * contract), and the scheduler decides the rest per step, so a picker would be
- * offering choices that no longer exist. The panel therefore shows the switch,
- * what the scheduler is currently allowed to do, and the two reasons the mode
- * can be faster without being shallower.
+ * The bolt is the switch, not a door. Fast mode has no gears to choose any more:
+ * it always runs at the thinking effort the user picked (that is the contract),
+ * and the scheduler decides the rest per step, so a popover would only offer
+ * choices that no longer exist. One click flips the mode for this conversation
+ * only; the choice is written into the per-session column, so a restart, a
+ * reopened conversation, or a second tab comes back to the same state. The
+ * explanation of what the mode does lives in the plugin description instead of
+ * in a popover.
  *
  * Failure containment, because a UI half must never take the composer down:
  * every remote call is awaited inside a try/catch, an unreadable configuration
@@ -75,8 +76,8 @@ window.__ModuleLoader__.load({
      * `dsh-client-locale` resolves a key by indexing the dictionary flat —
      * `dicts.get(ns).get(locale)?.[key]` (`dsh-client-locale/lib/client.js`
      * lookup) — and falls back to returning the key itself. A nested
-     * `{ menu: { speed: … } }` therefore never resolves `'menu.speed'`: the chip
-     * painted raw keys (`menu.headOff`, `menu.effort`) instead of words. Flat
+     * `{ chip: { speed: … } }` therefore never resolves `'chip.speed'`: the chip
+     * painted raw keys instead of words. Flat
      * keys make the lookup hit.
      *
      * Chinese is registered under `zh` *and* `zh-CN`: the active locale may be
@@ -85,54 +86,28 @@ window.__ModuleLoader__.load({
     const zh = {
       'chip.on': 'Fast 模式已开启',
       'chip.off': 'Fast 模式已关闭',
-      'chip.titleOn': 'Fast 模式：已开启 · 自动调度，思考强度不变。点击进入设置',
+      'chip.titleOn': 'Fast 模式：已开启 · 仅本会话 · 思考强度不变，点击关闭',
       'chip.titleOff': 'Fast 模式：已关闭 · 点击开启',
       'chip.titleLoading': 'Fast 模式：正在读取配置，点击重试',
       'chip.readonly': 'Fast 模式配置为只读，无法从这里切换',
       'chip.error': 'Fast 模式配置读取失败：{error}',
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
-      'menu.title': 'Fast 模式',
-      'menu.open': '打开 Fast 模式设置',
-      'menu.on': '已开启',
-      'menu.off': '已关闭',
-      'menu.switchOn': '已开启，点击关闭',
-      'menu.switchOff': '已关闭，点击开启',
-      'menu.busy': '写入中…',
-      'menu.scope': '仅本会话生效',
-      'menu.auto': '自动调度 · 并行 2–8 · 单次调用 ≤ {minutes} 分',
-      'menu.autoOff': '已关闭 · 完全回到原生行为',
-      'menu.autoOpen': '自动调度 · 并行 2–8 · 单次调用不限时',
-      'menu.effort': '思考强度保持你选的档，不因开启而降低。',
-      'menu.mechanism': '更快来自：更宽的工具并行、更少过程文字、自动打断卡住的调用。',
     }
 
     const en = {
       'chip.on': 'Fast mode is on',
       'chip.off': 'Fast mode is off',
-      'chip.titleOn': 'Fast mode: on · automatic scheduling, thinking effort unchanged. Click for settings',
+      'chip.titleOn': 'Fast mode: on · this conversation · thinking effort unchanged, click to turn off',
       'chip.titleOff': 'Fast mode: off · click to turn on',
       'chip.titleLoading': 'Fast mode: reading configuration. Click to retry',
       'chip.readonly': 'Fast mode configuration is read-only',
       'chip.error': 'Fast mode configuration unavailable: {error}',
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
-      'menu.title': 'Fast mode',
-      'menu.open': 'Open fast mode settings',
-      'menu.on': 'On',
-      'menu.off': 'Off',
-      'menu.switchOn': 'On, click to turn off',
-      'menu.switchOff': 'Off, click to turn on',
-      'menu.busy': 'Writing…',
-      'menu.scope': 'This conversation only',
-      'menu.auto': 'Automatic · parallel 2–8 · one call ≤ {minutes} min',
-      'menu.autoOff': 'Off · the harness behaves exactly as shipped',
-      'menu.autoOpen': 'Automatic · parallel 2–8 · calls unbounded',
-      'menu.effort': 'Thinking effort stays exactly what you chose.',
-      'menu.mechanism': 'Faster because: wider tool batching, less narration, bounded calls.',
     }
 
     const CSS = [
-      // The chip: one icon, nothing else. Clicking it opens the panel; the
-      // on/off switch lives inside the panel, not next to the bolt.
+      // The chip: one icon, nothing else. It is the switch: clicking it turns
+      // fast mode on or off for this conversation.
       '.fm-chip{display:inline-flex;align-items:center;min-width:0;flex:none;position:relative}',
       '.fm-chip__button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;',
       'width:28px;height:28px;padding:0;margin:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;',
@@ -141,49 +116,10 @@ window.__ModuleLoader__.load({
       '.fm-chip__button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));',
       'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
       '.fm-chip__button[data-on="true"]{color:var(--dsw-alias-label-primary,#141414)}',
-      '.fm-chip__button[data-open="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(77,107,254,.12))}',
       '.fm-chip__button[data-busy="true"]{opacity:.55;cursor:progress}',
       '.fm-chip__button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
       '.fm-chip__button svg{display:block;flex:none}',
-      // The panel. Narrow on purpose, and laid out as a three-column table so
-      // the two numbers have a labelled home: the earlier version printed
-      // `1.6× · 1.5×` with no header, so nothing said which one was the speed
-      // and which one was the token cost.
-      '.fm-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:196px;padding:6px;',
-      'border-radius:12px;background:var(--dsw-alias-bg-elevated,#fff);',
-      'border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.08));box-shadow:0 10px 30px rgba(0,0,0,.18);',
-      'font:inherit;color:var(--dsw-alias-label-primary,#141414);text-align:left}',
-      '.fm-menu--dock{left:50%;bottom:104px;transform:translateX(-50%)}',
-      '.fm-menu__head{display:flex;align-items:center;gap:8px;padding:4px 6px 7px}',
-      '.fm-menu__title{flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;letter-spacing:.02em;',
-      'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      // The switch: a real control, so the state reads without a sentence.
-      '.fm-menu__switch{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:flex-end;',
-      'width:28px;height:16px;padding:0 2px;margin:0;border:0;border-radius:8px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.16));',
-      'cursor:pointer;transition:background-color .14s ease}',
-      '.fm-menu__switch[data-on="true"]{background:var(--dsw-alias-state-business-primary,#4d6bfe);justify-content:flex-start}',
-      '.fm-menu__knob{flex:none;width:12px;height:12px;border-radius:50%;background:#fff;',
-      'box-shadow:0 1px 2px rgba(0,0,0,.28)}',
-      '.fm-menu__switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
-      'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
-      '.fm-menu__sep{height:1px;margin:0 6px 5px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
-      '.fm-menu__scope{padding:0 6px 4px;font-size:10px;line-height:1.5;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      // The scheduler line: what the mode is currently allowed to do. One row,
-      // no columns, because there is nothing left to choose between.
-      '.fm-menu__live{display:flex;align-items:center;gap:6px;padding:3px 6px 4px;font-size:11px;',
-      'line-height:1.45;color:var(--dsw-alias-label-secondary,#5c5c5c)}',
-      '.fm-menu__dot{flex:none;width:6px;height:6px;border-radius:50%;',
-      'background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
-      '.fm-menu__dot[data-on="false"]{background:var(--dsw-alias-label-tertiary,#8b8b8b)}',
-      // The fine print wraps; the old one was `white-space:nowrap` and got cut.
-      '.fm-menu__foot{margin-top:5px;padding:5px 6px 1px;border-top:1px solid ',
-      'var(--dsw-alias-border-subtle,rgba(0,0,0,.07));font-size:10px;line-height:1.5;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
-      '.fm-menu__foot p{margin:0}',
-      '.fm-menu__status{padding:5px 6px;font-size:11px;line-height:1.45;',
-      'color:var(--dsw-alias-state-error-primary,#c9353f)}',
     ].join('')
 
     /** A bolt: outlined when off, filled when on. One path, two paint modes. */
@@ -217,12 +153,6 @@ window.__ModuleLoader__.load({
       /** The value we are waiting for the host to echo back after a write. */
       pending: undefined,
       /**
-       * `undefined` while closed. Otherwise the fixed-position anchor of the
-       * panel: `{right, bottom}` in pixels, or `'dock'` when the chip has no
-       * measurable box (tests, a detached node).
-       */
-      menu: undefined,
-      /**
        * The conversation this chip is rendered for, handed over by the slot's
        * `inject` hook. Every read and write is scoped to it: the settings column
        * is shared, so an unscoped chip is a chip that flips every open session.
@@ -234,10 +164,6 @@ window.__ModuleLoader__.load({
        * a read-modify-write of the whole column in one patch.
        */
       sessions: {},
-      /** The ceiling the panel quotes, in whole minutes, read off the host. */
-      stallMinutes: '2',
-      /** The same ceiling in milliseconds; `0` means the guard is disabled. */
-      stallBudget: 120_000,
     }
 
     /** @type {Set<() => void>} */
@@ -289,7 +215,7 @@ window.__ModuleLoader__.load({
 
     /**
      * Parse the column. A broken value degrades to "no overrides" instead of
-     * taking the chip down: the column may be hand-edited, and the panel is the
+     * taking the chip down: the column may be hand-edited, and the chip is the
      * only place a user can see the switch, so throwing here would hide the bug.
      *
      * The shape check is deliberately the same one the host applies
@@ -366,7 +292,7 @@ window.__ModuleLoader__.load({
      * shared default (and therefore the "last choice" a new session inherits),
      * `sessions` is this conversation's own entry (and therefore what the host
      * applies to *this* request stream). Splitting them into two writes would
-     * leave a window where the session runs on one gear while the panel shows
+     * leave a window where the session runs on one gear while the chip shows
      * another — and two writes means two revision races.
      *
      * @param {Record<string, any>} map
@@ -510,7 +436,7 @@ window.__ModuleLoader__.load({
           store.sessions = parseChoices(value.sessions)
           const own = ownChoice(sid)
           // A layer that carries the field wins; otherwise keep what we already
-          // know instead of flattening the menu back to the default. The
+          // know instead of flattening the switch back to the default. The
           // conversation's own entry outranks the shared default, field by field,
           // so an entry that pins only the gear still inherits the switch.
           const sharedGear = typeof value.gear === 'string' ? value.gear : store.gear
@@ -521,14 +447,6 @@ window.__ModuleLoader__.load({
           store.revision = typeof view.revision === 'number' ? view.revision : undefined
           store.writable = !(result && result.writable === false)
           store.gear = seenGear
-          // The panel quotes the ceiling the host actually enforces: an explicit
-          // `toolTimeoutMs` wins, otherwise the `auto` budget. A disabled guard
-          // is not a number, and the panel says so instead of inventing one.
-          const budget = value.stallGuard === false
-            ? 0
-            : (Number(value.toolTimeoutMs) > 0 ? Number(value.toolTimeoutMs) : 120_000)
-          store.stallBudget = budget
-          store.stallMinutes = `${Math.round((budget / 60_000) * 10) / 10}`
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -611,54 +529,10 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /* ------------------------------------------------------------------- menu */
-
     /**
-     * Open the gear menu, anchored above the chip when a box is measurable.
-     *
-     * @param {any} [node] the caret element (`event.currentTarget`).
-     */
-    function openMenu(node) {
-      let anchor = 'dock'
-      try {
-        const rect = node !== null && typeof node === 'object' && typeof node.getBoundingClientRect === 'function'
-          ? node.getBoundingClientRect()
-          : undefined
-        const viewport = typeof window !== 'undefined' && window !== null ? window : undefined
-        if (rect !== undefined && viewport !== undefined
-          && typeof rect.right === 'number' && typeof rect.bottom === 'number'
-          && typeof viewport.innerWidth === 'number' && typeof viewport.innerHeight === 'number') {
-          anchor = {
-            right: Math.max(8, Math.round(viewport.innerWidth - rect.right)),
-            bottom: Math.round(viewport.innerHeight - rect.bottom + 6),
-          }
-        }
-      } catch {
-        anchor = 'dock'
-      }
-      store.menu = anchor
-      emit()
-    }
-
-    function closeMenu() {
-      if (store.menu === undefined) return
-      store.menu = undefined
-      emit()
-    }
-
-    /** @param {any} node */
-    function toggleMenu(node) {
-      if (store.menu !== undefined) {
-        closeMenu()
-        return
-      }
-      openMenu(node)
-    }
-
-    /**
-     * Flip fast mode. Called from the switch inside the panel, so the panel is
-     * already open — a refusal just leaves the reason on the status line there
-     * instead of closing the surface the user is looking at.
+     * Flip fast mode for the conversation this chip belongs to. The chip is the
+     * switch, so a refusal leaves its reason on the tooltip; the reason stays
+     * until the next successful read.
      *
      * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      */
@@ -671,14 +545,14 @@ window.__ModuleLoader__.load({
       if (!store.writable) return
       // The scheduler rides along so the shared column (which seeds a brand-new
       // conversation) matches what this one just got. `auto` is a constant, not
-      // a choice: it is the only value the panel can produce.
+      // a choice: the scheduler is the only mode, and the chip is the only choice.
       await write(remote, { enabled: !store.enabled, gear: 'auto' })
     }
 
     /* -------------------------------------------------------------- component */
 
     /**
-     * Why the chip cannot write, as a sentence for the tooltip and the menu.
+     * Why the chip cannot write, as a sentence for the tooltip.
      *
      * @param {(key: string, params?: object) => string} t
      */
@@ -692,89 +566,14 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The panel the bolt opens.
-     *
-     * One switch, one scheduler line, two lines of fine print. There is no gear
-     * list because there is no gear to pick: the mode runs at the user's chosen
-     * thinking effort and the scheduler adapts the width per step. Re-introducing
-     * a ladder here would be re-introducing the thing that was removed.
-     *
-     * @param {{t: (key: string, params?: object) => string, remote: any}} props
-     */
-    function FastPanel(props) {
-      const { t, remote } = props
-      const anchor = store.menu
-      const style = anchor !== undefined && anchor !== 'dock'
-        ? { right: `${anchor.right}px`, bottom: `${anchor.bottom}px` }
-        : undefined
-      const status = statusLine(t)
-      const on = store.phase === 'ready' && store.enabled
-      // The ceiling is a policy the user should be able to read off the panel,
-      // not a hidden constant. It is the `auto` budget (`AUTO_LIMITS` /
-      // `STALL_BUDGET`); a per-request override is a composition knob the client
-      // cannot see, so it is not painted here.
-      const minutes = store.stallMinutes
-
-      const children = [
-        react.createElement(
-          'div',
-          { className: 'fm-menu__head' },
-          react.createElement('span', { className: 'fm-menu__title' }, t('menu.title')),
-          react.createElement(
-            'button',
-            {
-              type: 'button',
-              className: 'fm-menu__switch',
-              role: 'switch',
-              'aria-checked': on,
-              'aria-label': t(on ? 'chip.on' : 'chip.off'),
-              title: t(store.busy ? 'menu.busy' : on ? 'menu.switchOn' : 'menu.switchOff'),
-              'data-on': on ? 'true' : 'false',
-              'data-busy': store.busy ? 'true' : 'false',
-              onClick: () => { void toggleEnabled(remote) },
-            },
-            react.createElement('span', { className: 'fm-menu__knob' }),
-          ),
-        ),
-        react.createElement('div', { className: 'fm-menu__sep' }),
-        react.createElement('div', { className: 'fm-menu__scope' }, t('menu.scope')),
-        react.createElement(
-          'div',
-          { className: 'fm-menu__live' },
-          react.createElement('span', { className: 'fm-menu__dot', 'data-on': on ? 'true' : 'false' }),
-          react.createElement('span', null, on
-            ? (minutes === '0' ? t('menu.autoOpen') : t('menu.auto', { minutes }))
-            : t('menu.autoOff')),
-        ),
-      ]
-
-      children.push(react.createElement(
-        'div',
-        { className: 'fm-menu__foot' },
-        react.createElement('p', null, t('menu.effort')),
-        react.createElement('p', null, t('menu.mechanism')),
-      ))
-      if (status !== '') children.push(react.createElement('div', { className: 'fm-menu__status' }, status))
-
-      return react.createElement(
-        'div',
-        {
-          className: anchor === 'dock' ? 'fm-menu fm-menu--dock' : 'fm-menu',
-          role: 'dialog',
-          'aria-label': t('menu.title'),
-          style,
-        },
-        ...children,
-      )
-    }
-
-    /**
      * The chip: one bolt, and nothing else.
      *
-     * It is an *entry point*, not a switch: clicking it opens the panel, where
-     * the on/off control and the gear list live. A hollow bolt means fast mode
-     * is off, a filled one that it is on — that is the whole at-a-glance
-     * contract, and it is why the caret that used to sit next to it is gone.
+     * It is the switch, not an entry point. A hollow bolt means fast mode is off
+     * for this conversation, a filled one that it is on; one click flips it and
+     * writes the choice for this conversation only. There is no popover to open,
+     * because there is nothing left to configure there: the mode always runs at
+     * the thinking effort the user picked, and the scheduler adapts the width by
+     * itself. The explanation lives in the plugin description instead.
      *
      * @param {{t: (key: string, params?: object) => string, remote: any}} props
      */
@@ -800,7 +599,6 @@ window.__ModuleLoader__.load({
 
       const on = store.phase === 'ready' && store.enabled
       const status = statusLine(t)
-      const open = store.menu !== undefined
       const title = status !== ''
         ? status
         : t(on ? 'chip.titleOn' : 'chip.titleOff')
@@ -814,16 +612,16 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'fm-chip__button',
             'data-on': on ? 'true' : 'false',
-            'data-open': open ? 'true' : 'false',
             'data-busy': store.busy ? 'true' : 'false',
             'aria-pressed': on,
-            'aria-haspopup': 'dialog',
-            'aria-expanded': open,
             'aria-label': t(on ? 'chip.on' : 'chip.off'),
             title,
-            onClick: (event) => {
-              toggleMenu(event && event.currentTarget)
-              if (store.phase !== 'ready') void refresh(remote)
+            onClick: () => {
+              if (store.phase !== 'ready') {
+                void refresh(remote).then(() => toggleEnabled(remote))
+                return
+              }
+              void toggleEnabled(remote)
             },
           },
           react.createElement(
@@ -839,7 +637,6 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
-        store.menu === undefined ? null : react.createElement(FastPanel, { t, remote }),
       )
     }
 
@@ -897,27 +694,6 @@ window.__ModuleLoader__.load({
         }, FastChip))
       } catch (error) {
         ctx.logger?.warn?.('fast-mode: composer chip not registered: %s', describeError(error))
-      }
-
-      // Dismissal: a click outside the chip, or Escape. Capture phase so a
-      // composer handler cannot swallow the click first.
-      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-        const onPointerDown = (event) => {
-          if (store.menu === undefined) return
-          const target = event && event.target
-          if (target !== null && typeof target === 'object' && typeof target.closest === 'function'
-            && target.closest('.fm-chip') !== null) return
-          closeMenu()
-        }
-        const onKeyDown = (event) => {
-          if (event && event.key === 'Escape') closeMenu()
-        }
-        document.addEventListener('mousedown', onPointerDown, true)
-        document.addEventListener('keydown', onKeyDown, true)
-        ctx.effect(() => () => {
-          document.removeEventListener('mousedown', onPointerDown, true)
-          document.removeEventListener('keydown', onKeyDown, true)
-        }, 'fast-mode: menu dismissal')
       }
 
       // Another tab, a hand-edited patch, or the plugin's own host half may be
