@@ -90,7 +90,10 @@ export function classifyEntry(input) {
 
   // A chain is a chain even when it names many files.
   if (serial.length > 0) return { width: 1, reason: 'serial', targets, signals }
-  // Shell work is where a wide tool block serializes anyway: stay native.
+  // Many independent shell jobs (one per directory, one per job) still save a
+  // round trip each when they share a block; the harness runs them one after
+  // another, but the model no longer pays a step per job.
+  if (shell.length > 0 && fanout.length > 0) return { width: 8, reason: 'shell-fanout', targets, signals }
   if (shell.length > 0) return { width: 1, reason: 'shell', targets, signals }
   // "The same operation over many targets" is the shape fan-out is for.
   if (fanout.length > 0) return { width: 8, reason: 'fanout', targets, signals }

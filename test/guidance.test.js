@@ -84,11 +84,11 @@ test('the discipline can be light without touching the width', () => {
 
 test('the guidance stays small in absolute terms', () => {
   const text = buildGuidance(resolve({ gear: 'auto', parallel: 8 }))
-  // ~4 chars per token: the whole section stays under ~200 input tokens on a
+  // ~4 chars per token: the whole section stays under ~250 input tokens on a
   // request that already carries a system prompt and a transcript. Both blocks
   // are amortised over a step that costs tens of thousands of prompt tokens, so
   // they are noise next to the round trips and the cancelled calls they remove.
-  assert.ok(text.length < 3000, `guidance is ${text.length} chars`)
+  assert.ok(text.length < 3800, `guidance is ${text.length} chars`)
 })
 
 test('no prompt text ever asks the model to think less', () => {

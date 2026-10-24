@@ -280,7 +280,10 @@ export function autoSchedule(state, agent) {
   // width 1 silences the whole guidance section, so a write-heavy or
   // dependency-bound stretch is not told to batch, and pays no prompt tax.
   let parallel = 1
-  if (entry.turnSteps === 1 && Number.isFinite(entry.entryWidth) && entry.entryWidth >= 1) {
+  // A classified fan-out holds for the whole turn: later steps of the same task
+  // are the same shape even when their last call happened to be a write or a
+  // single shell command.
+  if (entry.turnSteps >= 1 && Number.isFinite(entry.entryWidth) && entry.entryWidth >= 1) {
     // Classified from the request itself: this is the only signal available on
     // the very first step, so it must outrank the "nothing observed" probe.
     parallel = entry.entryWidth

@@ -6,7 +6,7 @@ import { classifyEntry } from '../src/shape.js'
 const cases = [
   ['t1', 'Audit the eight files under data/ independently. For each file, report its final token line.', 8],
   ['t2', 'Count how many times each marker appears across every file under data/.', 8],
-  ['t3', 'Six independent jobs live in job-01 .. job-06. Run `python3 gen.py` inside each directory with the bash tool.', 1],
+  ['t3', 'Six independent jobs live in job-01 .. job-06. Run `python3 gen.py` inside each directory with the bash tool.', 8],
   ['t4', 'Audit the twelve modules under repo/ one by one, in ascending filename order.', 1],
   ['t5', 'Across every file under data/ count each symbol and how many modules contain it.', 8],
   ['t6', 'Under data/ there are many log files. Total the count per level.', 8],

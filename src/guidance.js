@@ -60,6 +60,15 @@ const STALL_RULES = `Bounded calls:
  */
 const FANOUT = 'Aim for up to {n} independent calls per message: the target is chosen from how your recent steps went — it widens after clean multi-call steps and narrows after errors. Plan the whole read set of a step before issuing it, then act on every result before requesting more. The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
 
+/**
+ * The single largest remaining loss: a model that discovers targets one at a
+ * time pays a round trip per discovery. When the request itself names the whole
+ * target set, the gather belongs in one block; splitting a known read set is the
+ * bug, not a safety measure.
+ */
+const GATHER = `Gather in one block: before your first call, list every independent target this request already names. Put all of them in the first block — do not split a known read set across steps, and do not read one item only to decide what to read next unless the request is genuinely sequential. Extra input tokens per step are the intended trade; an extra round trip is the cost you are removing. Independent shell commands (one per directory, one per job) may share a block too: write them as separate calls, not as one long chain with \`&&\`.
+- When the target set is large (roughly more than ten items) or the answer is an aggregate (a count, a total, a set intersection), reach for one bounded command or search — \`rg -c\`, \`grep -r\`, \`wc -l\`, or a short script that only prints — instead of reading every file. A wide read set is itself a slow step, and the aggregate usually fits in one command.`;
+
 /** Prefetch only becomes true once a step is wide enough to hold the extra call. */
 const PREFETCH = 'If the evidence already implies which file, search or status check the next step will need, fetch it in this same block: a wasted read costs a few hundred input tokens, an extra round trip costs a whole step.'
 
@@ -102,7 +111,7 @@ export function buildGuidance(config) {
   if (!(parallel > 1)) return undefined
   const parts = [BATCH_RULES]
   let fanout = FANOUT.replace('{n}', String(parallel))
-  if (parallel >= 4) fanout += ` ${PREFETCH}`
+  if (parallel >= 4) fanout += ` ${PREFETCH} ${GATHER}`
   parts.push(fanout)
   if (config.stallGuard !== false) parts.push(STALL_RULES)
   const discipline = config.discipline ?? 'light'
