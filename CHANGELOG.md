@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.7.0
+
+Fast mode was a global switch wearing a per-conversation costume: the bolt sits in
+one composer, so clicking it read as "this conversation", and it changed every
+conversation in the app. Two sessions side by side, one clicked, both accelerated —
+and nothing in the UI said so.
+
+- **The switch and the gear are per conversation now.** A click writes that
+  conversation's own `{enabled, gear}` entry; the panel says `仅本会话生效` /
+  `This conversation only` under the switch, so the scope is stated where the
+  decision is made instead of being inferred.
+- **A conversation with no entry inherits the shared pair**, which doubles as the
+  record of the last choice made anywhere. A brand-new conversation therefore
+  starts from the last selection rather than from the schema default — the
+  behaviour asked for, and the reason the shared fields still exist.
+- **Precedence is explicit**: experiment assignment > that conversation's entry >
+  shared default. An assigned trial still outranks the UI, because a click that
+  quietly overrode the arm would empty the control group of the very trial the
+  user asked for.
+- **One click, one patch.** The shared `enabled` / `gear` and the `sessions` entry
+  travel in a single `settings/update` carrying the revision that was read. Two
+  writes would mean a window where the panel shows one gear and the request runs
+  on another, plus a second revision race; a refused write rolls back all three
+  fields and states the reason in the panel.
+- **The column is bounded and forgiving.** `sessions` holds at most 200 entries,
+  oldest pruned first by `ts` (a pruned conversation just falls back to the
+  shared default). A hand-edited or truncated value degrades to "no overrides"
+  and never takes the chip down.
+- **The two copies of the format are tested against each other.** The host reads
+  the column (`src/state.js`), the browser half writes it (`client.js`), and a
+  drift between them is a switch that looks on and changes nothing — so the
+  shipped `client.js` is loaded in a `vm` and fed the same fixtures as the host
+  module. Writing the test found one real drift (the browser copy accepted an
+  empty session id the host drops), which is now fixed on both sides.
+- The conversation id reaches the client half through the slot's own scoped
+  `inject(sessionId)`; the chip also accepts a standard `sessionId` prop, so a
+  release that stops injecting one spelling still behaves.
+- One caveat, stated where a user will hit it: `sessions` renders as a text input
+  on the plugin settings page, because this build of schemastery has no
+  `.hidden()`. Its description says it is maintained automatically; editing it by
+  hand is how a conversation ends up running a gear nobody chose.
+
+165 tests.
+
 ## 0.6.2
 
 The measurement was wrong in the one way that matters most: it counted time but

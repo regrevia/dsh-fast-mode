@@ -70,7 +70,7 @@ test('the form fields are exactly the three live knobs, and all three are volati
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'benchmarkFile', 'enabled', 'gear', 'metrics', 'metricsFile', 'parallel',
+    'benchmarkFile', 'enabled', 'gear', 'metrics', 'metricsFile', 'parallel', 'sessions',
   ])
 
   // The switch, the gear and the fan-out are the form. They must be volatile:
@@ -78,6 +78,11 @@ test('the form fields are exactly the three live knobs, and all three are volati
   for (const key of ['enabled', 'gear', 'parallel']) {
     assert.equal(visit(root.dict[key]).meta.volatile, true, `${key} must be volatile to appear in the form`)
   }
+
+  // The per-session column rides in the same document and has to be writable by
+  // the client half, so it is volatile too. It is not a knob anyone should type
+  // into: the description says so, and the chip is the only writer.
+  assert.equal(visit(root.dict.sessions).meta.volatile, true, 'sessions must be volatile to be writeable')
 
   // Measurement paths are composition knobs, like `debugFile`: they are read at
   // load and deliberately stay out of the form. Changing where the file goes is

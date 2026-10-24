@@ -74,6 +74,7 @@ import {
 } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
 import { createRecorder } from './src/metrics.js'
+import { choiceFor } from './src/state.js'
 
 /**
  * The settings-page schema. Re-exported from here because the Loader reads
@@ -87,7 +88,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.6.2'
+export const VERSION = '0.7.0'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
 
@@ -269,7 +270,16 @@ export function apply(ctx, rawConfig) {
    */
   const configFor = (sessionId) => {
     const assigned = assignment.gearFor(sessionId)
-    if (assigned === undefined) return resolveConfig(rawConfig)
+    // A running experiment outranks the UI on purpose: the arms are assigned by
+    // session hash, and a panel click that quietly overrode the arm would empty
+    // the control group of the very trial the user asked for.
+    if (assigned === undefined) {
+      // No experiment: the conversation's own entry wins, and its absence means
+      // "inherit" — the configured pair is both the default and the record of
+      // the last choice anywhere, which is what a fresh session starts from.
+      const own = choiceFor(rawConfig?.sessions, sessionId)
+      return own === undefined ? resolveConfig(rawConfig) : resolveConfig(rawConfig, own)
+    }
     // The control arm is an assignment like any other: the mode is off because
     // the experiment said so, not because somebody forgot to click. Otherwise a
     // randomized trial could not have a baseline at all.

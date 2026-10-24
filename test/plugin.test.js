@@ -600,3 +600,47 @@ test('a session assigned to the control arm runs switched off, not accelerated',
     await rm(dirname(bench), { recursive: true, force: true })
   }
 })
+
+test('two conversations, one settings column: each runs at its own entry', async () => {
+  // The point of the per-session column: flipping the switch in one conversation
+  // must not silently change what a conversation running next to it does. The
+  // shared `enabled` / `gear` stay the default ("last choice"), and an entry is
+  // the only thing that outranks it.
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
+  apply(ctx, {
+    enabled: true,
+    gear: 'max',
+    metrics: false,
+    benchmarkFile: '',
+    sessions: JSON.stringify({
+      'session-quiet': { enabled: false },
+      'session-turbo': { enabled: true, gear: 'turbo' },
+    }),
+  })
+
+  const handler = ctx.handlers.get('agent/request')
+  const run = (id, effort = 'high') => {
+    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: effort }
+    const payload = { agent: { id }, turn: 0, step: 2, signal: new AbortController().signal }
+    return handler(payload, async () => resolved).then(out => ({ out, resolved }))
+  }
+
+  const quiet = await run('session-quiet')
+  assert.equal(quiet.out, quiet.resolved, 'a conversation that turned the mode off is handed back untouched')
+
+  const turbo = await run('session-turbo')
+  assert.notEqual(turbo.out, turbo.resolved, 'the conversation that pinned a gear is accelerated')
+  assert.notEqual(turbo.out.reasoningEffort, 'high', 'and its gear reached the request')
+
+  // A conversation with no entry inherits the shared pair, which is what a fresh
+  // session starts from: the last choice made anywhere.
+  const fresh = await run('session-never-seen')
+  assert.notEqual(fresh.out, fresh.resolved, 'a fresh conversation inherits the shared switch')
+
+  // An entry is authoritative for its conversation and inapplicable to the
+  // others: the quiet one stays quiet even though the shared default is on.
+  const quietAgain = await run('session-quiet')
+  assert.equal(quietAgain.out, quietAgain.resolved)
+})
