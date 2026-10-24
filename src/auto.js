@@ -58,6 +58,8 @@ export const AUTO_LIMITS = Object.freeze({
   waitWindow: 32,
   /** Steps between two directives, so the reminder cannot become the noise. */
   directiveCooldown: 3,
+  /** Steps into a turn before compression is worth its one message. */
+  disciplineAfterSteps: 4,
 })
 
 /**
@@ -89,6 +91,23 @@ export const AUTO_SESSIONS = 200
 export function noteEntry(state, agent, width) {
   const entry = entryOf(state, agent)
   if (Number.isFinite(width) && width >= 1) entry.pendingWidth = Math.min(width, AUTO_LIMITS.parallelMax)
+}
+
+/**
+ * Tell the scheduler how this session's config wants output compressed.
+ *
+ * `outputDiscipline: 'late'` keeps the system prompt free of prose rules and
+ * asks for compression only once the turn has proved long enough to earn it,
+ * so a three-step task pays nothing and a twenty-step task still saves the
+ * decode time that dominates it.
+ *
+ * @param {ReturnType<typeof createAutoState>} state
+ * @param {string} agent
+ * @param {{lateDiscipline?: boolean}} policy
+ */
+export function notePolicy(state, agent, policy) {
+  const entry = entryOf(state, agent)
+  entry.lateDiscipline = policy?.lateDiscipline === true
 }
 
 /** @returns {{sessions: Map<string, object>}} */
@@ -134,6 +153,10 @@ function entryOf(state, agent) {
     lastDirectiveStep: -Infinity,
     lastDirectiveKind: '',
     stopped: false,
+    /** True when the config asked for `outputDiscipline: 'late'`. */
+    lateDiscipline: false,
+    /** One compression reminder per turn, never more. */
+    disciplineSent: false,
   }
   state.sessions.set(key, entry)
   if (state.sessions.size > AUTO_SESSIONS) {
@@ -158,6 +181,7 @@ export function noteTurn(state, agent) {
   entry.stepUnsafe = 0
   entry.stepArgs.clear()
   entry.stopped = false
+  entry.disciplineSent = false
   entry.entryWidth = undefined
   entry.pendingWidth = undefined
 }
@@ -346,6 +370,22 @@ function directiveFor(entry, stats) {
   if (since < AUTO_LIMITS.directiveCooldown) return undefined
 
   let kind = ''
+  if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= AUTO_LIMITS.disciplineAfterSteps) {
+    // Late engagement: the prompt carried no prose rules, so the only cost of a
+    // short task was its own work. By this step the task is demonstrably long,
+    // and every remaining step re-pays its output tokens in decode time.
+    entry.disciplineSent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'compress-output'
+    return {
+      kind: 'compress-output',
+      text: 'Auto schedule: this turn is long enough that prose is now the cost. '
+        + 'For the remaining steps write only what the next action needs: the command, the file, the '
+        + 'conclusion. No restating file contents, no narrating what you are about to do, no summary of '
+        + 'what a tool returned. Keep the answer complete; cut the commentary.',
+      summary: 'auto: compress output for the rest of the turn',
+    }
+  }
   if (stats.noProgress >= AUTO_LIMITS.noProgressStop || stats.turnSteps >= AUTO_LIMITS.turnStepBudget) {
     if (entry.stopped) return undefined
     kind = 'stop-and-report'

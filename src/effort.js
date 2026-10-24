@@ -196,7 +196,12 @@ export function resolveConfig(raw, overrides) {
       : 1,
     directive: gear.directive,
     /** How much visible prose the model is asked to cut. */
-    discipline: gear.directive && config.outputDiscipline !== false ? gear.discipline : 'off',
+    discipline:
+      gear.directive && config.outputDiscipline !== false && config.outputDiscipline !== 'late'
+        ? gear.discipline
+        : 'off',
+    /** `outputDiscipline: 'late'` — compress from step 4 on, via the scheduler. */
+    lateDiscipline: gear.directive && config.outputDiscipline === 'late',
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative

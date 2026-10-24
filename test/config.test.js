@@ -96,6 +96,13 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   }
 })
 
+test("outputDiscipline accepts the three documented modes", () => {
+  assert.equal(parse({}).outputDiscipline, 'late', 'short tasks pay nothing, long tasks still save')
+  assert.equal(parse({ outputDiscipline: false }).outputDiscipline, false)
+  assert.equal(parse({ outputDiscipline: 'late' }).outputDiscipline, 'late')
+  assert.throws(() => parse({ outputDiscipline: 'sometimes' }))
+})
+
 test('measurement is on by default and can be pointed somewhere private', () => {
   const defaults = parse({})
   assert.equal(defaults.metrics, true, 'a plugin about speed must measure its own effect by default')
