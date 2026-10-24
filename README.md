@@ -98,6 +98,10 @@
 | **B. 终端一条命令** | `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | 然后见下方 patch 片段 |
 | **C. 本地开发** | `pnpm add link:/path/to/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | 改代码即时生效 |
 
+**已实测**：在 DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop` 上，把插件管理器的安装目标填成 `github:regrevia/dsh-fast-mode`，它拉下 0.4.0 的 tarball 并直接生效（`application: applied`，无 warning），profile 里记录为 `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`。
+
+同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.4.0` 这类 npm spec，用上面的 `github:` 形式。
+
 方式 B / C 需要在 profile 的 `cordis.patch.yml` 里插入插件行（方式 A 会自己写）：
 
 ```yaml
