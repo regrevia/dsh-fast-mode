@@ -84,7 +84,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.4.1'
+export const VERSION = '1.4.2'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -424,7 +424,10 @@ export function apply(ctx, rawConfig) {
   // work never overlaps, no matter how the model batches it. This tool is the
   // missing primitive: one call, a bounded pool inside, every result back. It is
   // registered only while fast mode is on, so the native path pays no schema tax.
-  if (initial.enabled) {
+  // Off by default: measured 2026-10-24 — the model already fans shell work out
+  // with inline `&` + `wait`, so the extra tool only added verification steps
+  // (six 5 s jobs: 9.1 s native vs 16–26 s with the tool advertised).
+  if (initial.enabled && initial.shellParallel === true) {
     try {
       ctx.inject(['tools'], (toolCtx) => {
         toolCtx.effect(
@@ -507,7 +510,7 @@ export function apply(ctx, rawConfig) {
             const scope = context && typeof context === 'object' ? (context.scope ?? context.agent) : undefined
             const sid = scope && typeof scope === 'object' ? scope.id : undefined
             const live = configFor(typeof sid === 'string' ? sid : undefined)
-            if (!live.enabled) return ''
+            if (!live.enabled || live.guidance === false) return ''
             // `auto` quotes the width it actually computed for this session, so
             // the sentence the model reads and the number the scheduler enforces
             // are the same number.

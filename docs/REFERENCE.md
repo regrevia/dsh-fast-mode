@@ -152,6 +152,8 @@
 | `outputDiscipline` | `true` | 是否注入输出纪律。关掉后仍然注入并行与有界调用规则，只是不干预文风。 |
 | `stallGuard` | `true` | 是否给单次 shell/脚本类调用加上限。`auto` 下预算在 2–5 分钟之间自适应。 |
 | `toolTimeoutMs` | `0` | 单次调用上限，单位毫秒。`0` = 自适应（见 `stallGuard`），负数 = 关闭看门狗，正数 = 所有档位统一用这个值。 |
+| `guidance` | `true` | 是否向模型注入提示段。关掉后调度、宽度计算、看门狗照常，只是不写任何提示文字——用来把“提示词的效果”和“harness 层面的效果”分开测。 |
+| `shellParallel` | `false` | 是否注册 `shell_parallel` 工具（一次调用内跑多个独立 shell 作业）。默认关闭：2026-10-24 实测 6 个 5 秒作业，原生 9.1 s vs 开工具 26.3 s（0.35×）——模型本来就会用 `&` + `wait` 自并行，多出的工具诱发复核步骤。 |
 | `reassertAfterCompaction` | `true` | 上下文被压缩后的下一次请求，补一条极短 notice，重申批量与有界调用两条规则。提示段本身不受影响。 |
 | `metrics` | `true` | 是否写计量文件。关闭则不落任何文件。 |
 | `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | 计量文件路径，每步一行 JSONL。 |

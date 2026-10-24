@@ -144,6 +144,8 @@ In the profile's `cordis.patch.yml`:
 | `outputDiscipline` | `true` | Whether to inject output discipline. Off still injects batching and bounded-call rules; it only stops steering the prose. |
 | `stallGuard` | `true` | Whether to cap a single shell/script call. Under `auto` the budget self-tunes between 2 and 5 minutes. |
 | `toolTimeoutMs` | `0` | Per-call ceiling in milliseconds. `0` = adaptive (see `stallGuard`), negative = no guard, positive = that value for every gear. |
+| `guidance` | `true` | Whether to inject the prompt section. Off keeps the scheduler, width computation and watchdog exactly as they are and only stops the text, so "what the text does" can be measured apart from "what the harness does". |
+| `shellParallel` | `false` | Whether to register the `shell_parallel` tool (one call, a bounded pool of independent shell jobs). Off by default: measured 2026-10-24 on six 5 s jobs, 9.1 s native vs 26.3 s with the tool (0.35×) — the model already fans shell work out with inline `&` + `wait`, and the extra tool invited a verification pass. |
 | `reassertAfterCompaction` | `true` | After a compaction, the next request carries one very short notice restating batching and bounded calls. The guidance section itself is unaffected. |
 | `metrics` | `true` | Whether to write the metrics file. Off writes nothing. |
 | `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | Metrics path, one JSONL row per step. |

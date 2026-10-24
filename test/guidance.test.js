@@ -105,3 +105,20 @@ test('no prompt text ever asks the model to think less', () => {
     }
   }
 })
+
+test('the shell_parallel sentence appears only when that tool is really registered', () => {
+  // 2026-10-24: the six-job fixture showed the tool itself costs 1.7–2.9× wall
+  // because the model already fans shell work out with inline `&` + `wait`. The
+  // prompt must therefore never name a tool the harness did not register.
+  const off = buildGuidance(resolve({ gear: 'auto', parallel: 6, shellParallel: false }))
+  assert.ok(off.includes('shell calls do not'), 'the serial-shell fact stays: it is true with or without the tool')
+  assert.equal(off.includes('shell_parallel'), false, 'no dangling tool name when the tool is off')
+
+  const on = buildGuidance(resolve({ gear: 'auto', parallel: 6, shellParallel: true }))
+  assert.ok(on.includes('Use `shell_parallel` for independent slow shell jobs.'))
+  assert.ok(on.includes('Independent shell jobs belong in ONE `shell_parallel` call'))
+})
+
+test('the shell fan-out tool is opt-in, and its default is documented as measured', () => {
+  assert.equal(resolve({ gear: 'auto' }).shellParallel, false, 'a tool that measured slower must not ship on')
+})
