@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.6.0
+
+0.5.2 made the switch work. 0.6.0 makes the claim checkable: fast mode measures
+itself, assigns gears to sessions for comparison, and reports the result from a
+terminal. It also adds one gear above `max`, because on the official route that
+is the only honest way past the 2× ceiling.
+
+- **Measurement is built in and on by default.** A `session/event` tap folds
+  every step into `~/.dsh/fast-mode-metrics.jsonl`, one JSON line per completed
+  step, for sessions with the switch **off** as well as on — a comparison needs
+  both sides, and nobody remembers to enable measurement before an A/B. A row
+  carries `v, ts, sid, turn, step, mode` (`on|off|unknown`), `gear` (or `off`),
+  `effort`, `route`, `ttftMs` (step start → first assistant message), `llmMs`
+  (step start → last assistant message), `stepMs` (the whole step), `calls`,
+  `errors`, `input`, `output`, `reasoning`, `cacheRead`, `cacheWrite` and
+  `assistantMessages`. `metrics: false` disables it; a write failure is
+  swallowed and never fails a request.
+- **Experiment assignment without a UI.** An optional
+  `~/.dsh/fast-mode-bench.json` (`benchmarkFile`) assigns gears per session:
+  `{"enabled": true, "gears": ["safe","fast","turbo","max"], "sessions": {"<session id>": "turbo"}}`.
+  An explicit pin wins; otherwise the gear is `FNV-1a(session id) mod gears`.
+  The file is re-read on a 1 s TTL, so an edit applies to the next request, and
+  deleting it returns control to the configured switch. A session an experiment
+  assigns runs on that assignment even with the switch off — letting a forgotten
+  click decide the arm would silently put the session in the control group.
+  Unknown gear names are dropped with one warning.
+- **The experiment has a command, not a JSON file you edit by hand.**
+  `bin/experiment.mjs` (package bin `dsh-fast-mode-experiment`) writes the
+  assignment file, reports how many sessions and steps each arm has collected so
+  far (`status`, including whether a disabled-state sample exists at all), and
+  refuses to overwrite a running experiment without `--force`. An experiment is
+  what makes the numbers trustworthy: the arm is chosen by the session-id hash,
+  not by whoever wants the better result.
+- **A report command instead of a spreadsheet.** `bin/report.mjs`
+  (package bin `dsh-fast-mode-report`) reads the JSONL and prints a per-stance
+  table plus a speedup table against the `off` baseline. The unit is the step;
+  session wall clock is not used, because it mostly measures the human. Flags:
+  `--file`, `--since 2d|12h|90m`, `--json`, `--lan`, `--help`. `--lan` joins
+  local rows to the self-hosted usage dashboard by session UUID using
+  `USAGE_TOKEN` (optional `USAGE_BASE`): read-only, nothing leaves the LAN, and
+  the token is never printed. The dashboard's own window (`1d`/`7d`/`30d`)
+  follows `--since` instead of always asking for one day. An unreachable,
+  slow or unauthorised dashboard degrades to one note; it never costs you the
+  local report.
+- **New gear `ludicrous` (极速), above `max`.** It is the only gear whose floor
+  is `off`, i.e. it may set `reasoningEffort: 'off'`, with a fan-out target of 8
+  and `deepAfter: 1`. That is not "a bit faster than max": the official route
+  declares `off/low/high/max`, so with thinking on the only legal cut is
+  `high → low` (≈2×) and 3–4× requires turning thinking off, which this gear
+  does. The panel therefore marks it `极速*` / `Ludicrous*` and the footer says
+  `* 关闭思考，质量会下降`. The plugin still never emits an id the route does
+  not declare — on a route without `off`, the gear degrades to what the ladder
+  offers.
+- **The chip is one bolt, and the panel is behind it.** The caret and its inline
+  dropdown are gone. Clicking the bolt opens a panel holding the on/off switch,
+  the five gear rows (each with its estimated multipliers, the current one
+  marked) and the fine print, plus a status line that states the reason when a
+  write is refused. Clicking does not toggle; picking a gear while fast mode is
+  off still arms `enabled` in the same write.
+- **The gear is a name.** `gear` is a schema union of
+  `safe/fast/turbo/max/ludicrous`; a number or a typo is a load-time error, as
+  `src/config.js` already documented. The policy layer still normalises
+  defensively, so a bad value can never become "unlimited", but it no longer
+  silently becomes `safe` either.
+- **Measurement paths are composition knobs.** `metricsFile` and
+  `benchmarkFile` are deliberately not `.volatile()`: they are read at load and
+  do not belong on a live form. Moving the JSONL is a `cordis.patch.yml` edit.
+
+Tests 142: the measurement tap proves off sessions are measured too (one row per
+step, first-token vs last-message latency in a multi-message step, token and
+error sums, per-session isolation, a missing directory created on first write,
+an empty path disabling the sink); the assignment proves a stable hash that
+covers every gear, an explicit pin, a single-session pin, a live 1 s re-read,
+inertness without a file or with `enabled: false`, and one complaint for a
+broken file; the report proves both tables, a one-sided refusal in words,
+`--since` including the wider dashboard window, `--json`, `--help` reading no
+file, `--lan` without a token and with one (the token is never printed), and an
+unreachable dashboard degrading to a note; the client proves the contract after
+the caret removal — one icon, clicking opens the panel and writes nothing by
+itself, the switch writes once and a second click turns it back off, five rows
+with estimates and an asterisk on `ludicrous`, and picking a gear while already
+on leaves the toggle alone; and the schema proves an unknown gear name is a
+load-time error, measurement is on by default, and exactly
+`enabled`/`gear`/`parallel` are volatile.
+
 ## 0.5.2
 
 0.5.1 shipped the switch but left it inert, and the reason was one wrong field

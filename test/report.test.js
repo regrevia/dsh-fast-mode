@@ -120,13 +120,14 @@ test('--lan without a token says so and reports without it', () => withRows(comp
 }))
 
 /** A stand-in for the self-hosted dashboard: same envelope, one matching session. */
-const dashboard = () => new Promise((resolve) => {
+const dashboard = (seen = []) => new Promise((resolve) => {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname !== '/api/v1/sessions/recent') {
       response.writeHead(404).end()
       return
     }
+    seen.push(url.searchParams.get('range'))
     response.writeHead(200, { 'content-type': 'application/json' })
     response.end(JSON.stringify({
       code: 0,
@@ -154,7 +155,8 @@ const dashboard = () => new Promise((resolve) => {
 })
 
 test('--lan joins by session id and never prints the token', () => withRows(comparison(), async (file) => {
-  const { server, port } = await dashboard()
+  const seen = []
+  const { server, port } = await dashboard(seen)
   try {
     const token = 'not-a-real-token-9f3a'
     const { stdout } = await run(process.execPath, [CLI, '--file', file, '--lan'], {
@@ -165,6 +167,23 @@ test('--lan joins by session id and never prints the token', () => withRows(comp
     assert.match(stdout, /2280/, 'the dashboard total for the joined session')
     assert.doesNotMatch(stdout, /someone-else/, 'sessions this machine never measured stay out')
     assert.equal(stdout.includes(token), false, 'the credential must never reach stdout')
+    assert.deepEqual(seen, ['7d'], 'no --since asks the dashboard for its default window')
+  } finally {
+    server.close()
+  }
+}))
+
+test('--since widens the dashboard window with the local one', () => withRows(comparison(), async (file) => {
+  const seen = []
+  const { server, port } = await dashboard(seen)
+  try {
+    await run(process.execPath, [CLI, '--file', file, '--lan', '--since', '30d'], {
+      env: { ...process.env, USAGE_TOKEN: 'x', USAGE_BASE: `http://127.0.0.1:${port}` },
+    })
+    await run(process.execPath, [CLI, '--file', file, '--lan', '--since', '90m'], {
+      env: { ...process.env, USAGE_TOKEN: 'x', USAGE_BASE: `http://127.0.0.1:${port}` },
+    })
+    assert.deepEqual(seen, ['30d', '1d'])
   } finally {
     server.close()
   }

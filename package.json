@@ -53,7 +53,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "report": "node bin/report.mjs"
+    "report": "node bin/report.mjs",
+    "experiment": "node bin/experiment.mjs"
   },
   "license": "MIT",
   "dsh": {
