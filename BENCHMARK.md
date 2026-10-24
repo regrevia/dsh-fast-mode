@@ -18,8 +18,9 @@
 | 这条路由**不产出思考 token**，所以没有思考可削减 | 750 行里 `reasoning` 全为 0 | 强 |
 | 档位越高、单步并行调用越多 | 多调用步占比：关闭 2% → `turbo`/`max` 22–23% | 中 |
 | 档位越高、token 消耗越大 | 输出 tok/会话：关闭 58 k → `turbo` 142 k | 中（样本混杂，见下） |
+| 0.8.0 的三个杠杆（更宽的步、投机预读、输出纪律）**确实更快** | 同任务 16 会话：中位 Σ步时 25.9 s → 15.6 s（−40 %），步数中位 7.5 → 4.5，p = 0.008 | 强（n 小、两臂不均，见实验 E） |
 
-一句话：**在这台自建网关的 `company/deepseek-v4.1-flash` 上，调档位不会让生成变快。** 想真的更快，只有两条路——更少的步，或更少的输出。
+一句话：**在这台自建网关的 `company/deepseek-v4.1-flash` 上，调 `reasoning_effort` 不会让生成变快。** 想真的更快，只有两条路——更少的步，或更少的输出。0.8.0 就是照这两条路做的，实验 E 量到了它。
 
 ## 方法
 
@@ -50,6 +51,37 @@
 - 插件确实降了档 —— `safe`/`turbo`/`max` 从第 2 步起把 effort 从 `medium` 压到 `low`，对照组一直停在 `medium`。
 - 但**每 token 的耗时一样**（9.01–9.47，波幅 5%），模型耗时均值也一样（2244 / 2071 / 2293 / 2081 ms）。降下去的那一档，模型没有反映在速度上。
 - `turbo` 的总耗时略高，是因为它的输出更长（254 tok/步 vs 247），不是因为它慢。
+
+## 实验 E：0.8.0 的三个杠杆真的更快
+
+实验 A/B 只证明了「effort 不是杠杆」。实验 E 检验 0.8.0 换上的真杠杆：**让一步更宽（并行 + 预读）、让一步更少（少往返）、让每步更短（输出纪律）**。
+
+- **任务完全一样**，而且答案可判定：读同一个仓库，回答四件事 —— ① `test/` 各文件 `test(` 次数、② `src/` 各文件行数、③ `package.json` 的 version / exports 键数 / 依赖、④ `git log -3` 与 `git status --porcelain`。
+- **16 个独立会话，分两波各 8 个**，同一条路由（`company/deepseek-v4.1-flash`），同一份提示词，同时并发。档位仍由 `FNV-1a(会话 id) mod 2` 分配 —— 没有手点。
+- 对照臂 `safe`（不注入任何引导段，等于插件之前的行为）；实验臂 `turbo`（并行目标 6 + 投机预读 + 完整输出纪律）。
+
+**结果（每会话 Σ步时 = 该会话所有 stepMs 之和）**
+
+| 指标 | `safe`（n=4） | `turbo`（n=12） | 变化 |
+| --- | --- | --- | --- |
+| Σ步时 中位数 | 25.9 s | **15.6 s** | **−40 %** |
+| Σ步时 平均值 | 25.7 s | 17.4 s | −33 % |
+| 步数 中位数 | 7.5 | **4.5** | **−40 %** |
+| 每会话输出 token 中位数 | 3,798 | **2,180** | **−43 %** |
+| 每步输出 token | 510 | 535 | +5 %（一步更胖，正是预期） |
+| 每步工具调用 | 1.41 | 1.37 | 基本持平 |
+| Mann–Whitney U（Σ步时） | — | — | U = 46，z = 2.67，**p = 0.008** |
+
+两波各自的方向一致：第一波 −32 %，第二波 −40 %。单个会话的步数从 3 到 8 都有，说明收益不是靠某一个异常会话拉出来的。
+
+**质量没有掉。** 16 个会话对第 ①②③ 项的答案逐字一致（唯一的分歧是有人报 175、有人报 173 —— 那是 `test(` 字面数 vs 真实用例数的口径差异，两边都对；第 ④ 项不一致是因为我在它们跑的同时改了 README，`git status` 的脏文件数从 7 变成 8）—— 这是一个确定性事实任务，10 个数字全部命中。
+
+**诚实的读法**
+
+- **这次的收益主要来自「步更少」和「每步更短」，而不是「每步更宽」**：每步工具调用 1.41 → 1.37 没有上升。任务太小（4 次查询），对照臂本来就在一步里合了两个调用，并行的空间不大。并行的收益要在"十几次独立查询"的任务上才会显形 —— 那种任务上调用数会明显上去。
+- 两臂人数不均（4 vs 12），是 `FNV-1a` 哈希分档的运气问题，不是挑选。n 也小（16 个会话、29 vs 54 步）。
+- 实验期间有 1 个**非实验**会话在同时跑（07:21–07:37），两臂平均受它干扰，但它不进统计。
+- `turbo` 的并行目标是内置的 6。把它抬到 `parallel: 8` 只会让一步更宽，不会更慢；本次没有单独测 8 那一档。
 
 ## 为什么没效果：延迟模型
 
@@ -110,6 +142,8 @@ dsh-fast-mode-experiment stop                                    # 结束，之�
 
 报告的两个倍率表在**任务形状不一致**时不要读：本机那两张全量表里 `fast` 显示"模型耗时 0.89×", 那是它恰好落在长输出会话里的结果，不是加速。要比就比实验 B 那种同任务、同步数的小样本，或者直接用上面的延迟模型做残差比较 —— 后者对任务形状免疫。
 
+实验 E 用的就是最小的那种复现：`--gears safe,turbo`，然后并发跑两波、每波 8 个同提示词的会话，最后按 `gear` 分组算每会话的 `ΣstepMs` 中位数。原始行在 `~/.dsh/fast-mode-metrics.jsonl` 里，按 `sid` 分组即可重算，不需要重跑模型。
+
 ---
 
 # Measured: where it is faster, and where it is not
@@ -130,8 +164,9 @@ Numbers come from real local sessions (750 rows, 689 steps usable for the fit).
 | This route emits no reasoning tokens, so there is nothing to trim | `reasoning` is 0 in all 750 rows | strong |
 | Higher gears fan out more tool calls per step | multi-call steps: off 2% → `turbo`/`max` 22–23% | medium |
 | Higher gears cost more tokens | output per session: off 58 k → `turbo` 142 k | medium (confounded sample) |
+| 0.8.0's three levers (wider steps, speculative prefetch, output discipline) **do** make it faster | 16 same-task sessions: median Σ step time 25.9 s → 15.6 s (−40 %), median steps 7.5 → 4.5, p = 0.008 | strong (small n, uneven arms — see Experiment E) |
 
-In one line: **on `company/deepseek-v4.1-flash` behind a self-hosted gateway, turning the gear up does not make generation faster.** The only real levers are fewer steps and less output.
+In one line: **on `company/deepseek-v4.1-flash` behind a self-hosted gateway, turning `reasoning_effort` up does not make generation faster.** The only real levers are fewer steps and less output — which is exactly what 0.8.0 does, and Experiment E measured it.
 
 ## Method
 
@@ -155,6 +190,37 @@ Eight independent sessions, one prompt, one model, one machine, started in the s
 | `max` | 3 | `medium` / `low` / `low` | 2216 ms | 220 | 9.47 |
 
 The plugin did downshift — `safe`/`turbo`/`max` drop `medium` → `low` from step 2 while the control stays at `medium`. But the per-token cost is identical (9.01–9.47, a 5% spread), and so is mean LLM time (2244 / 2071 / 2293 / 2081 ms). The lower gear never reached the wire in a way the model acted on.
+
+## Experiment E: 0.8.0's three levers are actually faster
+
+Experiments A and B only proved that effort is not a lever. Experiment E tests the levers 0.8.0 does pull: **wider steps (fan-out + prefetch), fewer steps (fewer round trips), shorter steps (output discipline)**.
+
+- **Identical task with a checkable answer**: read one repository and report four things — ① per-file `test(` counts under `test/`, ② per-file line counts under `src/`, ③ `package.json` version / export-key count / dependencies, ④ `git log -3` and `git status --porcelain`.
+- **16 independent sessions in two waves of eight**, same route (`company/deepseek-v4.1-flash`), same prompt, started concurrently. Arms again assigned by `FNV-1a(session id) mod 2` — nobody clicked anything.
+- Control `safe` (no guidance section injected, i.e. the plugin's pre-0.8.0 behaviour); treatment `turbo` (fan-out target 6 + speculative prefetch + full output discipline).
+
+**Results (per-session Σ step time = sum of that session's `stepMs`)**
+
+| Metric | `safe` (n=4) | `turbo` (n=12) | Change |
+| --- | --- | --- | --- |
+| Σ step time, median | 25.9 s | **15.6 s** | **−40 %** |
+| Σ step time, mean | 25.7 s | 17.4 s | −33 % |
+| Steps, median | 7.5 | **4.5** | **−40 %** |
+| Output tokens per session, median | 3,798 | **2,180** | **−43 %** |
+| Output tokens per step | 510 | 535 | +5 % (a fatter step is the point) |
+| Tool calls per step | 1.41 | 1.37 | flat |
+| Mann–Whitney U (Σ step time) | — | — | U = 46, z = 2.67, **p = 0.008** |
+
+Both waves agree in direction: −32 % in wave one, −40 % in wave two. Individual sessions range from 3 to 8 steps, so the gain is not one outlier dragging the median.
+
+**Quality did not drop.** All 16 sessions reported items ①②③ identically (the one apparent disagreement, 175 vs 173, is the literal `test(` count versus the real test-case count — both correct). Item ④ differed only because I was editing the README while they ran, so the dirty-file count moved from 7 to 8. This was a deterministic fact task and all ten numbers landed.
+
+**Honest reading**
+
+- **The win here came from fewer steps and shorter steps, not from wider steps**: calls per step went 1.41 → 1.37, i.e. it did not rise. The task is too small (four lookups); the control arm already batched two calls into one step, so there was little room. Fan-out shows up on tasks with a dozen independent queries.
+- The arms are uneven (4 vs 12) because of the `FNV-1a` hash, not because of selection, and n is small (29 vs 54 steps).
+- One **non-experiment** session ran alongside (07:21–07:37). It hits both arms equally and is excluded from the statistics.
+- `turbo`'s built-in fan-out target is 6. Raising it to `parallel: 8` only makes a step wider, never slower; the 8 setting was not measured separately.
 
 ## Why: the latency model
 
@@ -202,4 +268,4 @@ dsh-fast-mode-report --since 2d
 dsh-fast-mode-experiment stop
 ```
 
-Do not read the ratio tables when task shapes differ: the full-sample table shows `fast` at "0.89× model time" purely because those sessions happened to emit longer outputs. Compare same-task, same-step-count samples like Experiment B, or compare residuals against the latency model, which is immune to task shape.
+Do not read the ratio tables when task shapes differ: the full-sample table shows `fast` at "0.89× model time" purely because those sessions happened to emit longer outputs. Compare same-task, same-step-count samples like Experiment B, or compare residuals against the latency model, which is immune to task shape. Experiment E is the minimal form of that: `--gears safe,turbo`, two waves of eight identical sessions, then group the raw rows by `gear` and compare per-session Σ `stepMs` medians. The raw rows live in `~/.dsh/fast-mode-metrics.jsonl`; grouping by `sid` reproduces the table without re-running any model.

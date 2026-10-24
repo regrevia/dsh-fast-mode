@@ -125,11 +125,21 @@
 
 自建 / 网关路由同理，只是档位链不同（例如本机 `company` 网关声明 `off/minimal/low/medium/high` 且都真实生效，降一档是 `high → medium`）。插件不假设任何词汇：路由声明什么，它就在什么上面挪；声明为空（`route=provider-none`）或问不到（`route=unknown`）时它完全不动。
 
-### 三、按档位批量并行
+### 三、用 token 换时间：三个杠杆
 
-思考档位只决定"想多久"，决定不了"一步发几个调用"。同一 assistant message 里的多个工具调用会被 harness **并发**调度（受 `agentLoop.maxParallelToolCalls` 限制，默认 10，且只并发声明为安全的调用），所以提高真实并发的唯一诚实办法是让模型把独立调用放在同一步里 —— 于是档位 ≥ 2 时插件注册一段系统提示，随档位给出不同的并行目标。
+一句话：**这个插件不省 token，它花 token 买时间。** 花在三个地方，第三个是 0.8.0 新加的，也是实测收益最大的一个。
 
-它同时守住三条不许破的规则：只并行**互不依赖**的调用、读与写不放进同一批、批里失败就缩回小步。并行目标只是目标：如果 profile 把调度上限压得比档位目标还低，插件会打一条 warn 告诉你在 `cordis.patch.yml` 里改哪一行。
+| 杠杆 | 怎么做 | 为什么快 | 谁在付钱 |
+|---|---|---|---|
+| **1. 步更宽** | 档位给出每步并行目标（4/6/8/8），提示模型把互不依赖的调用放进同一条 assistant message | 同一 message 里的调用被 harness **并发**调度（受 `agentLoop.maxParallelToolCalls` 限制，默认 10，且只并发声明为安全的调用），N 个读从 N 次往返压成 1 次 | 输入 token：一步带更多工具结果 |
+| **2. 投机预读** | 档位 ≥ `turbo` 时追加一句：证据已经暗示下一步要读哪个文件，就**在同一批里读掉** | 多读一个用不上的文件只要几百输入 token，多一次往返要一整个步（≈0.7 s 固定开销 + prefill） | 输入 token：偶尔白读 |
+| **3. 少写过程** | 提示模型别在工具调用前后叙述、别复述文件内容、别在步末写"已完成"的进度报告 | 这条路由上每步耗时 ≈ `720 ms + 6.6 ms × 输出 token`（R²=0.93），**可见文字就是最大单项成本** | 输出 token：答案只写结论 |
+
+三个杠杆都只动一个东西：**同一条路由的请求里多花些 token**。没有一项依赖"降低模型能力"，也没有一项靠调低 effort —— 在这条自建路由上 reasoning token 是 0，调低 effort 一分钱也省不下来（实测见 [BENCHMARK.md](BENCHMARK.md)）。
+
+第三条默认开启，可以用 `outputDiscipline: false` 关掉（只保留并行与预读提示，不动文风）。`fast` 用轻量版（三条禁令），`turbo` 及以上用完整版（再加一条"这一步不需要文字就别写"）。`safe` 什么都不注入。
+
+并行提示同时守住四条不许破的规则：只并行**互不依赖**的调用、读与写不放进同一批、批里失败就缩回小步、绝不为了省 token 把步重新切窄。并行目标只是目标：如果 profile 把调度上限压得比档位目标还低，插件会打一条 warn 告诉你在 `cordis.patch.yml` 里改哪一行。
 
 ### 四、开关状态跟着会话走
 
@@ -175,20 +185,22 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 
 档位不是"开关多档"，而是**一套姿态**：多早允许降档、信号回看多长、让模型一步发几个调用。
 
-| 档位 | 名字 | `floor` | `deepAfter` | `window` | 并行目标 | 适合 |
-|---|---|---|---|---|---|---|
-| 1 | 安全 `safe` | `low` | 6 | 8 | 2 个/步 | 关键改动、想先看日志、要求零提示变更 |
-| 2 | 快速 `fast` | `low` | 4 | 6 | 4 个/步 | **默认，日常推荐** |
-| 3 | 涡轮 `turbo` | `low` | 3 | 5 | 6 个/步 | 大量读代码、调研、批量排查 |
-| 4 | 极限 `max` | `low` | 2 | 4 | 8 个/步 | 机械批量任务；不建议无人值守跑关键改动 |
-| 5 | 极速 `ludicrous` * | `off` | 1 | 4 | 8 个/步 | 明确不要质量的批量任务：关掉思考，最快也最险 |
+| 档位 | 名字 | `floor` | `deepAfter` | `window` | 并行目标 | 输出纪律 | 适合 |
+|---|---|---|---|---|---|---|---|
+| 1 | 安全 `safe` | `low` | 6 | 8 | 2 个/步 | 不注入 | 关键改动、想先看日志、要求零提示变更 |
+| 2 | 快速 `fast` | `low` | 4 | 6 | 4 个/步 | 轻（3 条禁令） | **默认，日常推荐** |
+| 3 | 涡轮 `turbo` | `low` | 3 | 5 | 6 个/步 | 完整 + 预读 | **要更快就选这一档**；大量读代码、调研、批量排查 |
+| 4 | 极限 `max` | `low` | 2 | 4 | 8 个/步 | 完整 + 预读 | 机械批量任务；不建议无人值守跑关键改动 |
+| 5 | 极速 `ludicrous` * | `off` | 1 | 4 | 8 个/步 | 完整 + 预读 | 明确不要质量的批量任务：关掉思考，最快也最险 |
 
 - 只能用名字（`gear: turbo`）：schema 只接受 `safe`/`fast`/`turbo`/`max`/`ludicrous` 五个名字，`gear: 5` 或写错一个字母都是**加载时报错**，不会悄悄退回某个档位。运行时策略层另有兜底，但坏值不会变成"无限制"。
 - 显式字段永远优先于档位：`gear: turbo` + `deepAfter: 8` 就是"涡轮的并行 + 保守的降档节奏"。
 - 除 `ludicrous` 自己的 `floor` 就是 `off` 之外，任何档位都**不会**低于你设的 `floor`（默认 `low`）。想要更狠可以自己设 `floor: minimal` 或 `floor: off`；那等于允许关掉思考，质量风险由你承担。
 - `ludicrous` 是唯一会真的发出 `reasoningEffort: 'off'` 的档位：官方路由声明了 `off`，所以 3–4× 只在这一档出现；质量下降是设计的一部分，面板用星号和一行小字标着。
-- `safe` 的并行目标是 2，但它是唯一**不注入引导段**的档位（`directive: false`），所以这个目标根本不会到达模型 —— 它的行为就是快模式之前的版本。
+- `safe` 的并行目标是 2，但它是唯一**不注入引导段**的档位（`directive: false`），所以这个目标根本不会到达模型 —— 它的行为就是快模式之前的版本，也是做对照实验时的对照臂。
 - 档位越高，输入 token 通常越多（一步带更多工具结果），往返越少 —— 这正是"用 token 换时间"的那笔交易。
+- **想再快一点，先把 `parallel` 抬到 8**（`gear: turbo` + `parallel: 8`）：turbo 自己的目标是 6，抬到 8 是在同一次往返里多塞两个独立调用，不增加步数。前提是 profile 的 `agentLoop.maxParallelToolCalls` 不小于 8（默认 10），否则插件会 warn 告诉你被压住了。
+- 实测：同一个"数文件行数 + 数用例 + 看 git 状态"的任务，`turbo`（含输出纪律）对比 `safe`，中位墙钟 −32%，步数 −27%，输出 token 持平略降。完整方法与原始数据见 [BENCHMARK.md](BENCHMARK.md) 的实验 E。
 
 ## 和上下文压缩类插件一起用：更多 token，更快
 
@@ -238,6 +250,33 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 `image-guard`、`intellif-litellm-adapter` 这类插件修的是另一种失败：在请求发出前重写消息列表（搬走老图片、强制再压一轮、重试 `too_many_images` 的 400），以便穿过网关的图片数量 / 像素 / 上下文上限。它们和本插件不共享任何字段，不需要改配置；想让它们的重试步保住思考，也可以把相应的 offload / compaction 工具名放进 `holdTools`。
 
 同一 profile 里**只留一个图片削减者**（billion-context 也会在服务端折叠媒体），否则两次压缩互相踩。
+
+## 共存与冲突：谁可以一起用，谁不能
+
+这个插件只碰三个地方，所以兼容性可以说得很具体：**① 系统提示里的一个 section**（`fast-mode:execution-speed`，order 520）；**② `agent/request` 里的 `reasoningEffort`**（只发路由声明过的 id）；**③ 读一次 `agentLoop.maxParallelToolCalls`**（只读，用来告警）。它不写消息历史、不接管工具结果、不拦 `fetch`、不发任何网络请求（测量只写本地 JSONL）。
+
+### 可以一起用
+
+| 插件 | 关系 |
+|---|---|
+| 上下文压缩类（billion-context / 内置 compaction / 历史图片压缩 / 网关适配） | 正交且互补：它们削输入，本插件削往返与输出。见上一节 |
+| 任何只加 UI、不改模型的插件（状态栏、主题、通知…） | 无交集：闪电挂在 `conversation.input.activity` 自己的一格里 |
+| 只读的观测 / 计量 / 遥测插件 | 无交集：本插件不消费别人的 section，也不改别人的字段 |
+
+### 会冲突
+
+| 冲突对象 | 为什么 |
+|---|---|
+| **另一个改 `reasoningEffort` / `output_config.effort` 的插件**（各种"思考强度""reasoning boost"、billion-context 的 `effortRouting`） | 一个旋钮只能有一个主人。两个钳子互相看不见对方为什么抬高，最后一个写赢，二者的判断都失效。二选一，或关掉对方那一路 |
+| **另一个也叫"fast mode"的插件** | settings 命名空间与 `cordis.patch.yml` 里的 `- id:` 都会撞；两段同类系统提示还会重复计费 |
+| **另一个在 `conversation.input.activity` 上渲染且假设自己独占一行的插件** | slot 是共享的，两个 chip 会挤在一起。不是数据损坏，是 UI 变丑 |
+| **接管 `agent/request` 后把 `maxParallelToolCalls` 压回 1–2 的插件**（某些"省 token""串行化"实现） | 档位给的并行目标变成空话：模型照样把 8 个调用放进一条消息，harness 却排队执行，只剩"一次往返里排 8 次"的假快 |
+| **要求逐字引用 / 禁止并行工具调用的严格审计网关** | 语义冲突，不是技术冲突：输出纪律会删掉过程说明。把 `outputDiscipline: false` 并考虑 `gear: safe` |
+| 第二个注入同类提示的 agent preset | preset 的提示会先拼进来，两段"批量调用"话术指向不同数字时会互相稀释。用 preset 自带规则时就别开 `directive` 档位 |
+
+### 一句话规则
+
+**同一个 profile 里，`reasoningEffort` 只能有一个主人；系统提示里"怎么发工具调用"只能有一个声音。** 满足这两条，其余插件随便叠。
 
 ## 官方 API 支持
 
@@ -364,6 +403,7 @@ node bin/report.mjs --since 7d                # 对比
     enabled: true              # 共享默认开关，默认 false；没有自己条目的会话沿用它
     gear: fast                 # safe / fast / turbo / max / ludicrous（默认 fast）
     parallel: 4                # 可选：覆盖档位给的并行目标（只影响提示词里的数字与告警）
+    outputDiscipline: true     # 少写过程、只写结论；false = 只保留并行/预读提示，不动文风
     floor: low                 # 永不选比它更便宜的档位
     deepAfter: 4               # 连续干净几次后允许第二档降幅（默认随档位）
     slowMs: 5000               # 慢到这个程度即保住思考
@@ -388,6 +428,7 @@ node bin/report.mjs --since 7d                # 对比
 | `gear` | `fast` | 档位，只能是 `safe`/`fast`/`turbo`/`max`/`ludicrous`；写数字或写错都是加载时报错。没有自己条目的会话沿用它 |
 | `parallel` | 随档位（4/6/8） | 注入提示里的并行目标；`1` 等于不注入。设置页里**留空**就是跟随档位——所以它故意没有默认值，给了默认值档位就再也抬不动它了 |
 | `sessions` | `""` | 会话级覆盖，插件自动维护（**别手改**）：`{"<sessionId>":{"enabled":true,"gear":"turbo","ts":…}}`；超过 200 条按 `ts` 丢最旧的，被丢的会话回到共享默认。volatile；设置页里是一个文本框 |
+| `outputDiscipline` | `true` | 让模型少写过程（不叙述工具调用、不复述文件内容、不写进度报告），只写结论。这是"用 token 换时间"里最有效的杠杆：实测每步输出从 640 降到 190 token，墙钟约 −⅓。`false` 保留并行与预读提示，只关掉文风约束。**非 volatile**，改它要重新加载 |
 | `floor` | `low` | 永不选比它更便宜的档位；官方路由上 `floor: high` 等于完全不降档 |
 | `deepAfter` | 随档位（6/4/3/2/1） | 连续干净调用几次后允许第二档降幅 |
 | `slowMs` | `5000` | 达到该耗时即保住思考 |
@@ -433,7 +474,7 @@ node bin/report.mjs --since 7d                # 对比
 ## 开发与测试
 
 ```bash
-npm test        # 165 个测试，无网络、不需要 harness
+npm test        # 173 个测试，无网络、不需要 harness
 ```
 
 策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（坏值不会变成"无限制"）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；计量那组证明**关闭状态的会话也被记录**（一步一行、多消息步的首字取第一条），并覆盖 token/错误求和、按会话隔离、目录懒创建、空路径关掉 sink。会话状态那组针对 0.7.0 的会话级覆盖：把 `client.js` 里那份浏览器实现放进 `vm`、喂同一组夹具，证明它和 host 的 `src/state.js` 对同一列格式读写一致 —— 两份实现一旦漂移，开关就会显示"开着"而实际什么都不做；同时覆盖超过 200 条时按 `ts` 丢最旧、坏列退化成"没有覆盖"、host 对每个会话取自己的条目而没有条目的会话沿用共享的一对。实验分派那组证明哈希稳定且覆盖全部档位、显式 pin 优先、单会话 pin、文件 1 秒内生效、没有文件或 `enabled:false` 时完全惰性、坏文件只抱怨一次。报告那组跑真实的 `bin/report.mjs`：两张表、只有一边样本时用文字拒绝、`--since` 也放大面板查询窗口、`--json`、`--help` 不读文件、没 token 时跳过 `--lan`、有 token 时按会话 id 对上且**从不打印 token**、面板不通时降级成一句说明。最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），并把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端，而且这个远端按真实协议回 `{ok, value}` 信封 —— 信封没解包正是 0.5.1 那个"点不动的闪电"的根因，所以它现在是测试夹具的一部分）：证明 bundle 能解析、只 require `react`、空心画得出来、点一下只打开面板而不写任何东西、面板里的开关只发一次带 revision 的 `settings/update`、再点一次把它关回去、被拒时回滚并在提示与状态行里给出原因；同时钉住新的交互契约 —— 外框是**单个图标**（没有小三角、没有内联下拉）、按钮**永不 disabled**、只读/缺条目/`ok:false` 都渲染成"可点 + 一句原因"、五行档位各带速度与 token 倍率、`ludicrous` 带星号、选档在关闭状态下顺手把 `enabled` 一起写、已开启时选档不碰开关、客户端给出的档位 id 与 host 端 `GEARS` 完全一致、面板里的范围说明在中英两套词典里都非空（中文那句固定为 `仅本会话生效`）。最后用 schemastery 真实校验 schema：默认 `enabled: false`、五个档位名都能过、`gear: warp` 会当场报错、计量默认开启、四个 volatile 字段正好是 `enabled`/`gear`/`parallel`/`sessions`（最后一个由客户端半写，不是给人调的）、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。

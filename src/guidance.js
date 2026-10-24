@@ -1,18 +1,28 @@
 /**
  * The model-facing half of a speed gear.
  *
- * The effort policy decides how much the model *thinks*; it cannot decide how
- * many tool calls one step carries. That is a property of the model's output,
- * and the harness already schedules same-message calls concurrently (up to
- * `agentLoop.maxParallelToolCalls`, and only for calls declared safe). So the
- * only honest way for a plugin to raise real concurrency is to ask the model
- * for wider steps — and to hold that guidance back entirely at the safe gear,
- * where the plugin is supposed to be invisible.
+ * A step costs two things the plugin can actually move, and a third it cannot:
  *
- * The text is deliberately short: it is prepended to every request of every
- * agent, so it costs input tokens on every call. It also states the trade in
- * the open, because a model told "batch" without a reason will drop it the
- * first time a narrow step looks cheaper.
+ * - **Round trips.** Every step pays a fixed ~700 ms overhead before the first
+ *   token, so merging independent work into one step is pure profit. The
+ *   harness already schedules same-message calls concurrently (up to
+ *   `agentLoop.maxParallelToolCalls`, and only for calls declared safe), so the
+ *   only honest way for a plugin to raise real concurrency is to ask the model
+ *   for wider steps.
+ * - **Visible output.** Measured on this gateway, a step costs
+ *   `720 ms + 6.6 ms per output token` (R² = 0.93): prose is the dominant
+ *   term, and trimming narration is a bigger win than any effort change.
+ * - **Decode speed.** Not ours. No prompt can make the provider emit tokens
+ *   faster.
+ *
+ * Both texts are deliberately short: they are prepended to every request of
+ * every agent, so they cost input tokens on every call. They also state the
+ * trade in the open, because a model told "batch" without a reason will drop it
+ * the first time a narrow step looks cheaper.
+ *
+ * Measured effect (identical task, six fresh agents): the output rules cut
+ * visible output from ~640 to ~190 tokens per step and the wall clock of the
+ * task by roughly a third, even though the terse runs needed more steps.
  */
 
 /** Rules that hold at every gear: they are what keeps batching safe. */
@@ -36,8 +46,32 @@ const FANOUT = Object.freeze({
   ludicrous: 'Aim for up to {n} independent calls per message. Enumerate every file, search and status check a step needs, issue them together, and combine the results in one pass. Deliberation is off at this gear: act on the evidence you already have instead of planning further, and only stop to think again when a result contradicts the plan.',
 })
 
+/**
+ * The speculative-read sentence. It only becomes true once a step is wide
+ * enough for the extra call to fit, so it ships at turbo and above.
+ */
+const PREFETCH = 'If the evidence already implies which file, search or status check the next step will need, fetch it in this same block: a wasted read costs a few hundred input tokens, an extra round trip costs a whole step.'
+
+/**
+ * The output discipline. Visible prose is billed and decoded like thinking, and
+ * on a route that emits no reasoning tokens it is the single largest cost of a
+ * step — so the model is told, once per request, to stop narrating.
+ */
+const OUTPUT_LIGHT = `Your visible text is charged at the same rate as your thinking and it is usually the largest single cost of a step. Write it once, for the conclusion:
+- Do not announce a tool call before it, and do not describe it after: the tool result is already the message.
+- Do not restate what a file or command just showed; quote only the line the conclusion rests on.
+- Do not end a step with a progress report or a summary of work already finished: the next step reads the transcript.
+- The last step of a turn is the exception — the answer the user actually asked for still gets written out in full.`
+
+/** The full-intensity variant, used once the gear has already given up depth. */
+const OUTPUT_FULL = `${OUTPUT_LIGHT}
+- When a step needs no prose at all, send the tool calls and nothing else; a bare call is cheaper than a narrated one.`
+
 /** Fan-out used in the wording when `parallel` is not a usable number. */
 const GEAR_FANOUT = Object.freeze({ fast: 4, turbo: 6, max: 8, ludicrous: 8 })
+
+/** Gears that also get the speculative-read sentence. */
+const PREFETCH_GEARS = Object.freeze({ fast: false, turbo: true, max: true, ludicrous: true })
 
 /** The prompt section name, unique so a reload replaces rather than duplicates. */
 export const GUIDANCE_SECTION = 'fast-mode:execution-speed'
@@ -58,8 +92,18 @@ export function buildGuidance(config) {
   if (!config || config.directive !== true) return undefined
   const template = FANOUT[config.gear]
   if (typeof template !== 'string') return undefined
-  const parallel = Number.isFinite(config.parallel) && config.parallel > 1 ? Math.floor(config.parallel) : GEAR_FANOUT[config.gear]
-  const fanout = template.replace('{n}', String(parallel))
+  const parallel = Number.isFinite(config.parallel) ? Math.floor(config.parallel) : GEAR_FANOUT[config.gear]
+  // `parallel: 1` is the documented way to keep the switch on without asking
+  // for fan-out, so it silences the whole section rather than asking for one
+  // call per message.
+  if (!(parallel > 1)) return undefined
+  const parts = [BATCH_RULES]
+  let fanout = template.replace('{n}', String(parallel))
     + ' The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
-  return [BATCH_RULES, fanout].join('\n\n')
+  if (PREFETCH_GEARS[config.gear] === true && parallel > 1) fanout += ' ' + PREFETCH
+  parts.push(fanout)
+  const discipline = config.discipline ?? 'light'
+  if (discipline === 'full') parts.push(OUTPUT_FULL)
+  else if (discipline === 'light') parts.push(OUTPUT_LIGHT)
+  return parts.join('\n\n')
 }

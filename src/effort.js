@@ -90,6 +90,7 @@ export const GEARS = Object.freeze({
     window: 8,
     parallel: 2,
     directive: false,
+    discipline: 'off',
   }),
   fast: Object.freeze({
     level: 2,
@@ -98,6 +99,7 @@ export const GEARS = Object.freeze({
     window: 6,
     parallel: 4,
     directive: true,
+    discipline: 'light',
   }),
   turbo: Object.freeze({
     level: 3,
@@ -106,6 +108,7 @@ export const GEARS = Object.freeze({
     window: 5,
     parallel: 6,
     directive: true,
+    discipline: 'full',
   }),
   max: Object.freeze({
     level: 4,
@@ -114,6 +117,7 @@ export const GEARS = Object.freeze({
     window: 4,
     parallel: 8,
     directive: true,
+    discipline: 'full',
   }),
   // The only honest route to 3-4x on a thinking model is to stop paying for
   // thinking: `floor: 'off'` lets the policy settle on the route's `off` level,
@@ -128,6 +132,7 @@ export const GEARS = Object.freeze({
     window: 4,
     parallel: 8,
     directive: true,
+    discipline: 'full',
   }),
 })
 
@@ -161,7 +166,7 @@ export function normaliseGear(value) {
     const key = value.trim().toLowerCase()
     if (key.length === 0) return DEFAULT_GEAR
     if (Object.hasOwn(GEARS, key)) return key
-    if (/^[1-4]$/.test(key)) return normaliseGear(Number(key))
+    if (/^[1-5]$/.test(key)) return normaliseGear(Number(key))
     return FALLBACK_GEAR
   }
   return value === undefined || value === null ? DEFAULT_GEAR : FALLBACK_GEAR
@@ -505,6 +510,8 @@ export function resolveConfig(raw, overrides) {
     /** Target fan-out the model-facing guidance asks for; 1 means no guidance. */
     parallel: gear.directive ? Math.floor(number(config.parallel, gear.parallel, { positive: true })) : 1,
     directive: gear.directive,
+    /** How much visible prose the model-facing guidance asks the model to cut. */
+    discipline: gear.directive && config.outputDiscipline !== false ? gear.discipline : 'off',
     deepAfter: Math.floor(number(config.deepAfter, gear.deepAfter, { positive: true })),
     slowMs: Math.floor(number(config.slowMs, DEFAULTS.slowMs, { positive: true })),
     bigChars: Math.floor(number(config.bigChars, DEFAULTS.bigChars, { positive: true })),
