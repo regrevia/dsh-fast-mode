@@ -139,8 +139,15 @@ function fakeContext(remote) {
   }
 }
 
-/** Mount the chip against a remote and return its renderer. */
-async function mount(remote) {
+/**
+ * Mount the chip against a remote and return its renderer.
+ *
+ * `sessionId` is handed to the registration's `inject` the way the slot kit does
+ * it (the binding key comes first), so the component sees a conversation. Pass
+ * `undefined` to model a page that injects nothing, and pass props to `render` to
+ * model the standard-prop spelling instead.
+ */
+async function mount(remote, sessionId = 'session-alpha') {
   const ctx = fakeContext(remote)
   const { module } = loadClient(remote)
   module.apply(ctx)
@@ -148,7 +155,12 @@ async function mount(remote) {
   assert.equal(ctx.registered.length, 1)
   const { component, options } = ctx.registered[0]
   const t = (key, params) => (params === undefined ? key : `${key} ${JSON.stringify(params)}`)
-  const render = () => component({ t, ...options.inject() })
+  const render = (extra = {}) => component({ t, ...options.inject(sessionId), ...extra })
+  // The chip refreshes from an effect, so the very first render paints the
+  // defaults. Render once and let the describe land, otherwise every test would
+  // be asserting on that first paint instead of on the state it mounted for.
+  render()
+  await sleep(10)
   return { ctx, module, render, t }
 }
 
@@ -461,6 +473,21 @@ test('an unsuccessful describe surfaces the error message rather than silence', 
   assert.match(boltOf(tree).props.title, /bridge is down/)
 })
 
+test('the panel says the switch is per conversation, in both languages', async () => {
+  const remote = fakeRemote()
+  const { render, ctx } = await mount(remote)
+
+  const menu = openPanel(render)
+  const scope = menu.children.find(child => child.props && child.props.className === 'fm-menu__scope')
+  assert.ok(scope, 'the panel owns the scope line')
+  assert.equal(scope.children[0], 'menu.scope')
+
+  const dict = ctx.labels[0].dict
+  assert.equal(dict.zh['menu.scope'], '仅本会话生效', 'the default locale is Chinese')
+  assert.ok(dict.en['menu.scope'].length > 0, 'and English is not forgotten')
+  assert.ok(dict.zh['menu.scope'].length <= 8, 'one short line: the panel is 196px wide and already full')
+})
+
 test('styles are injected once per page, not once per apply', () => {
   const remote = fakeRemote()
   const { module, styles } = loadClient(remote)
@@ -471,4 +498,96 @@ test('styles are injected once per page, not once per apply', () => {
   assert.match(styles[0].textContent, /\.fm-menu__switch/, 'so does the switch inside the panel')
   assert.equal(styles[0].textContent.includes('.fm-chip__caret'), false, 'the caret is gone for good')
   assert.equal(styles[0].dataset.pluginCss, 'dsh-fast-mode/chip.css')
+})
+
+/* ------------------------------------------------- per-conversation state */
+
+/** Read the `sessions` column out of one recorded patch. */
+function columnOf(call) {
+  return JSON.parse(call.patch.sessions)
+}
+
+test('a switch click records the choice for its own conversation, next to the shared default', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
+  const { render } = await mount(remote, 'session-alpha')
+
+  switchOf(openPanel(render)).props.onClick()
+  await sleep(20)
+
+  assert.equal(remote.calls.length, 1, 'one patch carries both tiers')
+  const patch = remote.calls[0].patch
+  assert.equal(patch.enabled, true, 'the shared field doubles as the last choice')
+  assert.equal(patch.gear, 'turbo', 'and keeps the gear it was painted with')
+  const column = columnOf(remote.calls[0])
+  assert.deepEqual(Object.keys(column), ['session-alpha'], 'only the clicked conversation gets an entry')
+  assert.equal(column['session-alpha'].enabled, true)
+  assert.equal(column['session-alpha'].gear, 'turbo')
+})
+
+test('a conversation with its own entry keeps it when the shared switch moves', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
+
+  const alpha = await mount(remote, 'session-alpha')
+  switchOf(openPanel(alpha.render)).props.onClick()
+  await sleep(20)
+  assert.equal(boltOf(alpha.render()).props['data-on'], 'true')
+
+  const beta = await mount(remote, 'session-beta')
+  switchOf(openPanel(beta.render)).props.onClick()
+  await sleep(20)
+
+  assert.equal(remote.calls.at(-1).patch.enabled, false, 'beta turned the shared switch off')
+  const column = columnOf(remote.calls.at(-1))
+  assert.equal(column['session-beta'].enabled, false)
+  assert.equal(column['session-alpha'].enabled, true, 'alpha was never touched')
+
+  const again = await mount(remote, 'session-alpha')
+  assert.equal(boltOf(again.render()).props['data-on'], 'true', 'reopening alpha paints its own entry')
+})
+
+test('a conversation with no entry inherits the most recent choice', async () => {
+  const remote = fakeRemote({
+    enabled: true,
+    gear: 'max',
+    sessions: JSON.stringify({ 'session-alpha': { enabled: false, gear: 'safe', ts: 1 } }),
+  })
+
+  const fresh = await mount(remote, 'session-brand-new')
+  const tree = fresh.render()
+  assert.equal(boltOf(tree).props['data-on'], 'true', 'a new session starts where the user left off')
+  assert.match(boltOf(tree).props.title, /gears\.max/, 'and with the last gear, not the schema default')
+
+  const scoped = await mount(remote, 'session-alpha')
+  assert.equal(boltOf(scoped.render()).props['data-on'], 'false', 'an entry still outranks the shared default')
+})
+
+test('an entry that pins only the gear still inherits the shared switch', async () => {
+  const remote = fakeRemote({
+    enabled: true,
+    gear: 'fast',
+    sessions: JSON.stringify({ 'session-alpha': { gear: 'turbo', ts: 7 } }),
+  })
+  const { render } = await mount(remote, 'session-alpha')
+  const tree = render()
+  assert.equal(boltOf(tree).props['data-on'], 'true')
+  assert.match(boltOf(tree).props.title, /gears\.turbo/)
+
+  switchOf(openPanel(render)).props.onClick()
+  await sleep(20)
+  const column = columnOf(remote.calls[0])
+  assert.equal(column['session-alpha'].enabled, false, 'the switch is now pinned for this conversation')
+  assert.equal(column['session-alpha'].gear, 'turbo', 'without losing the gear it had pinned')
+})
+
+test('the conversation id is honoured whether it arrives injected or as a standard prop', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'fast' })
+  const { render } = await mount(remote, undefined)
+  const withProp = () => render({ sessionId: 'session-standard' })
+
+  switchOf(openPanel(withProp)).props.onClick()
+  await sleep(20)
+
+  assert.equal(remote.calls.length, 1)
+  const column = columnOf(remote.calls[0])
+  assert.deepEqual(Object.keys(column), ['session-standard'], 'the standard prop is enough on its own')
 })

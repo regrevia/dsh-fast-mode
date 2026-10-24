@@ -69,6 +69,14 @@ export const Config = z.object({
       '并行上限 / Parallel ceiling: 覆盖档位默认的每步并行目标（1 表示不注入批量提示）。',
     ),
 
+  sessions: z
+    .string()
+    .default('')
+    .volatile()
+    .description(
+      '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true,"gear":"turbo"}}。渲染闪电面板时按会话读写；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。',
+    ),
+
   metrics: z
     .boolean()
     .default(true)

@@ -123,6 +123,7 @@ window.__ModuleLoader__.load({
       'menu.switchOff': '已关闭，点击开启',
       'menu.busy': '写入中…',
       'menu.note': '倍率预估：速度 · token',
+      'menu.scope': '仅本会话生效',
       'menu.warn': '* 关闭思考，质量会下降',
       'gears.safe': '安全',
       'gears.fast': '快速',
@@ -148,6 +149,7 @@ window.__ModuleLoader__.load({
       'menu.switchOff': 'Off, click to turn on',
       'menu.busy': 'Writing…',
       'menu.note': 'Estimates: speed · token',
+      'menu.scope': 'This conversation only',
       'menu.warn': '* reasoning off, quality drops',
       'gears.safe': 'Safe',
       'gears.fast': 'Fast',
@@ -205,6 +207,8 @@ window.__ModuleLoader__.load({
       '.fm-menu__tick{flex:none;width:6px;height:6px;border-radius:50%;',
       'background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
       '.fm-menu__tick[data-empty="true"]{background:transparent}',
+      '.fm-menu__scope{padding:3px 7px 1px;font-size:10px;line-height:1.4;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.fm-menu__note{padding:4px 7px 2px;font-size:10px;line-height:1.4;',
       'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap}',
       '.fm-menu__status{padding:6px 7px;font-size:11px;line-height:1.45;',
@@ -247,6 +251,18 @@ window.__ModuleLoader__.load({
        * measurable box (tests, a detached node).
        */
       menu: undefined,
+      /**
+       * The conversation this chip is rendered for, handed over by the slot's
+       * `inject` hook. Every read and write is scoped to it: the settings column
+       * is shared, so an unscoped chip is a chip that flips every open session.
+       */
+      sessionId: undefined,
+      /**
+       * The per-session map, parsed from the `sessions` settings column:
+       * `{ sessionId: { enabled, gear, ts } }`. Kept in memory so a write can be
+       * a read-modify-write of the whole column in one patch.
+       */
+      sessions: {},
     }
 
     /** @type {Set<() => void>} */
@@ -276,6 +292,123 @@ window.__ModuleLoader__.load({
 
     /** @param {number} ms */
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+    /* ------------------------------------------------- per-session bookkeeping */
+
+    /**
+     * Browser half of the per-session column — the same format the host parses in
+     * `src/state.js`. The bundle cannot import host ESM (it is fetched verbatim by
+     * the client module loader), so the twenty lines are duplicated and both
+     * copies are pinned to the same fixtures in the tests.
+     *
+     * The column is `{ sessionId: { enabled, gear, ts } }` as JSON. `ts` is the
+     * pruning key: past {@link SESSIONS_LIMIT} entries the oldest go first, and a
+     * pruned conversation merely falls back to the default.
+     */
+    const SESSIONS_LIMIT = 200
+
+    /** @param {unknown} value */
+    function isRecord(value) {
+      return value !== null && typeof value === 'object' && !Array.isArray(value)
+    }
+
+    /**
+     * Parse the column. A broken value degrades to "no overrides" instead of
+     * taking the chip down: the column may be hand-edited, and the panel is the
+     * only place a user can see the switch, so throwing here would hide the bug.
+     *
+     * The shape check is deliberately the same one the host applies
+     * (`src/state.js` `sanitise`): this half writes entries the host then reads
+     * to decide what a request runs at, and an entry one side accepts and the
+     * other drops is a switch that looks on and changes nothing.
+     *
+     * @param {unknown} raw
+     */
+    function parseChoices(raw) {
+      if (isRecord(raw)) return sanitiseChoices(raw)
+      if (typeof raw !== 'string' || raw.trim().length === 0) return {}
+      try {
+        const parsed = JSON.parse(raw)
+        return isRecord(parsed) ? sanitiseChoices(parsed) : {}
+      } catch {
+        return {}
+      }
+    }
+
+    /**
+     * Keep only entries the host would also honour.
+     *
+     * @param {Record<string, any>} input
+     */
+    function sanitiseChoices(input) {
+      /** @type {Record<string, {enabled?: boolean, gear?: string, ts?: number}>} */
+      const out = {}
+      for (const [sessionId, entry] of Object.entries(input)) {
+        if (sessionId.length === 0 || !isRecord(entry)) continue
+        /** @type {{enabled?: boolean, gear?: string, ts?: number}} */
+        const clean = {}
+        if (typeof entry.enabled === 'boolean') clean.enabled = entry.enabled
+        if (typeof entry.gear === 'string' && entry.gear.length > 0) clean.gear = entry.gear
+        if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
+        if (clean.enabled === undefined && clean.gear === undefined) continue
+        out[sessionId] = clean
+      }
+      return out
+    }
+
+    /**
+     * Serialise the column, dropping the oldest entries beyond the limit.
+     *
+     * @param {Record<string, any>} map
+     */
+    function encodeChoices(map) {
+      const ids = Object.keys(map)
+      if (ids.length > SESSIONS_LIMIT) {
+        ids
+          .sort((a, b) => (Number(map[a] && map[a].ts) || 0) - (Number(map[b] && map[b].ts) || 0))
+          .slice(0, ids.length - SESSIONS_LIMIT)
+          .forEach((id) => { delete map[id] })
+      }
+      return JSON.stringify(map)
+    }
+
+    /**
+     * This conversation's entry, if it has one.
+     *
+     * @param {string|undefined} sessionId
+     */
+    function ownChoice(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
+      const entry = store.sessions[sessionId]
+      return isRecord(entry) ? entry : undefined
+    }
+
+    /**
+     * A copy of the column with this conversation's entry set to the pair the user
+     * just asked for.
+     *
+     * Both halves of a click travel in one patch: `enabled` / `gear` are the
+     * shared default (and therefore the "last choice" a new session inherits),
+     * `sessions` is this conversation's own entry (and therefore what the host
+     * applies to *this* request stream). Splitting them into two writes would
+     * leave a window where the session runs on one gear while the panel shows
+     * another — and two writes means two revision races.
+     *
+     * @param {Record<string, any>} map
+     * @param {string|undefined} sessionId
+     * @param {boolean} enabled
+     * @param {string} gear
+     */
+    function withOwn(map, sessionId, enabled, gear) {
+      const next = { ...map }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return next
+      const current = isRecord(next[sessionId]) ? next[sessionId] : {}
+      /** @type {{enabled: boolean, gear?: string, ts: number}} */
+      const entry = { ...current, enabled: enabled === true, ts: Date.now() }
+      if (typeof gear === 'string' && gear.length > 0) entry.gear = gear
+      next[sessionId] = entry
+      return next
+    }
 
     /**
      * The remote protocol answers `{ ok, value }` — every shipped client bundle
@@ -395,9 +528,17 @@ window.__ModuleLoader__.load({
      * Re-read the configuration. Safe to call at any time: a failure is stored
      * as chip state, never thrown at the caller.
      *
+     * The shared `enabled` / `gear` fields are the default, and the `sessions`
+     * column overrides them for this conversation. Reading both is what makes the
+     * chip show *this* session's stance instead of whichever session wrote last.
+     *
      * @param {{settings: {describe: () => Promise<any>}}} remote
+     * @param {string} [sessionId] - the conversation to paint; defaults to the one
+     *   the chip was mounted for.
      */
-    async function refresh(remote) {
+    async function refresh(remote, sessionId) {
+      if (typeof sessionId === 'string' && sessionId.length > 0) store.sessionId = sessionId
+      const sid = store.sessionId
       try {
         const result = unwrap(await withTimeout(remote.settings.describe(), 6000, 'settings/describe'))
         const view = pickNamespace(result && result.namespaces)
@@ -408,9 +549,14 @@ window.__ModuleLoader__.load({
           store.revision = undefined
         } else {
           const value = view.value && typeof view.value === 'object' ? view.value : {}
+          store.sessions = parseChoices(value.sessions)
+          const own = ownChoice(sid)
           // A layer that carries the field wins; otherwise keep what we already
-          // know instead of flattening the menu back to the default.
-          const seenGear = typeof value.gear === 'string' ? value.gear : store.gear
+          // know instead of flattening the menu back to the default. The
+          // conversation's own entry outranks the shared default, field by field,
+          // so an entry that pins only the gear still inherits the switch.
+          const sharedGear = typeof value.gear === 'string' ? value.gear : store.gear
+          const seenGear = own !== undefined && typeof own.gear === 'string' ? own.gear : sharedGear
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
@@ -420,7 +566,9 @@ window.__ModuleLoader__.load({
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
-          const observed = value.enabled === true
+          const observed = own !== undefined && typeof own.enabled === 'boolean'
+            ? own.enabled
+            : value.enabled === true
           if (store.pending === undefined || observed === store.pending) {
             store.enabled = observed
             store.pending = undefined
@@ -462,9 +610,14 @@ window.__ModuleLoader__.load({
      */
     async function write(remote, patch) {
       if (store.phase !== 'ready' || !store.writable || store.busy) return false
-      const before = { enabled: store.enabled, gear: store.gear }
+      const before = { enabled: store.enabled, gear: store.gear, sessions: store.sessions }
+      const finalEnabled = typeof patch.enabled === 'boolean' ? patch.enabled : store.enabled
+      const finalGear = typeof patch.gear === 'string' ? patch.gear : store.gear
+      const merged = withOwn(store.sessions, store.sessionId, finalEnabled, finalGear)
+      const outgoing = { ...patch, sessions: encodeChoices(merged) }
       store.busy = true
       store.writeError = ''
+      store.sessions = merged
       if (typeof patch.enabled === 'boolean') {
         store.enabled = patch.enabled
         store.pending = patch.enabled
@@ -472,7 +625,7 @@ window.__ModuleLoader__.load({
       if (typeof patch.gear === 'string') store.gear = patch.gear
       emit()
       try {
-        unwrap(await withTimeout(remote.settings.update(store.ns, patch, store.revision), 15000, 'settings/update'))
+        unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
         store.busy = false
         await settle(remote, typeof patch.enabled === 'boolean' ? patch.enabled : store.enabled)
         emit()
@@ -481,6 +634,7 @@ window.__ModuleLoader__.load({
         store.busy = false
         store.enabled = before.enabled
         store.gear = before.gear
+        store.sessions = before.sessions
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -575,7 +729,10 @@ window.__ModuleLoader__.load({
         if (store.phase !== 'ready') return
       }
       if (!store.writable) return
-      await write(remote, { enabled: !store.enabled })
+      // The gear rides along so the shared column (which seeds a brand-new
+      // conversation) matches what this one just got, instead of pairing a new
+      // switch state with a stale gear.
+      await write(remote, { enabled: !store.enabled, gear: store.gear })
     }
 
     /* -------------------------------------------------------------- component */
@@ -635,6 +792,10 @@ window.__ModuleLoader__.load({
           ),
         ),
         react.createElement('div', { className: 'fm-menu__sep' }),
+        // The switch is per conversation, and nothing else in the panel says so:
+        // a user who flips it in one tab has no way to know another tab keeps its
+        // own stance. One short line, above the gears it governs.
+        react.createElement('div', { className: 'fm-menu__scope' }, t('menu.scope')),
       ]
 
       for (const entry of GEAR_MENU) {
@@ -696,6 +857,20 @@ window.__ModuleLoader__.load({
       const [, bump] = react.useState(0)
 
       react.useEffect(() => subscribe(() => bump(count => count + 1)), [])
+      // One conversation per chip, one shared settings column: the conversation
+      // id decides which entry to paint. It arrives either as a standard session
+      // prop or as the injected `chatId`; both spellings are accepted so a
+      // release that stops injecting one still gets per-session behaviour.
+      // Re-read on change, because a route change reuses this component.
+      const chat =
+        typeof props.sessionId === 'string' && props.sessionId !== ''
+          ? props.sessionId
+          : typeof props.chatId === 'string' && props.chatId !== ''
+            ? props.chatId
+            : undefined
+      react.useEffect(() => {
+        void refresh(remote, chat)
+      }, [chat])
 
       const on = store.phase === 'ready' && store.enabled
       const gear = currentGear()
@@ -789,7 +964,15 @@ window.__ModuleLoader__.load({
         ctx.slots.inject(SLOT, () => ctx.slots.register({
           name: SLOT,
           locale: NS,
-          inject: () => ({ remote }),
+          // The activity slot is session-scoped (`scope: "session"` in the
+          // composer tree), and the kit calls this factory with the binding key
+          // before the actions object (`runInject(entry, binding, actions)` in
+          // `@deepseek-ai/dsh-client-ui-slots`), so the first argument is the
+          // conversation id. `conversation.composer.bar` in the stock UI relies
+          // on exactly that signature. The id goes out under `chatId`, not
+          // `sessionId`, because standard session props may already own that
+          // name and a colliding injected prop is a slot-assembly error.
+          inject: (sessionId) => ({ remote, chatId: typeof sessionId === 'string' ? sessionId : undefined }),
         }, FastChip))
       } catch (error) {
         ctx.logger?.warn?.('fast-mode: composer chip not registered: %s', describeError(error))
@@ -828,6 +1011,11 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     exports.inject = inject
     exports.GEAR_MENU = GEAR_MENU
+    // The two format helpers are exported for `test/state.test.js`, which feeds
+    // the same fixtures to this copy and to `src/state.js`: the host decides what a
+    // request runs at from the column this half writes, so a drift between the two
+    // is a switch that looks on and does nothing.
+    exports.__choices = { SESSIONS_LIMIT, parseChoices, encodeChoices, withOwn }
     return module.exports
   },
 })

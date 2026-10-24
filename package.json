@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching, with a built-in speed/token benchmark. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
@@ -20,7 +20,8 @@
     "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json",
     "./metrics": "./src/metrics.js",
-    "./benchmark": "./src/benchmark.js"
+    "./benchmark": "./src/benchmark.js",
+    "./state": "./src/state.js"
   },
   "files": [
     "index.js",
