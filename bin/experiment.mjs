@@ -23,7 +23,7 @@ import { createAssignment } from '../src/benchmark.js'
 import { GEARS } from '../src/effort.js'
 import { summarise } from '../src/metrics.js'
 
-const DEFAULT_GEARS = ['safe', 'fast', 'turbo', 'max']
+const DEFAULT_GEARS = ['off', 'safe', 'fast', 'turbo', 'max']
 
 const USAGE = `用法: dsh-fast-mode-experiment <command> [options]
 
@@ -35,12 +35,12 @@ const USAGE = `用法: dsh-fast-mode-experiment <command> [options]
 选项:
   --bench <file>    实验文件（默认 ~/.dsh/fast-mode-bench.json）
   --metrics <file>  测量文件（默认 ~/.dsh/fast-mode-metrics.jsonl）
-  --gears a,b,c     参与实验的档位（默认 ${DEFAULT_GEARS.join(',')}）
+  --gears a,b,c     参与实验的档位（默认 ${DEFAULT_GEARS.join(',')}；off 是对照组）
   --sessions n      目标：每个档位至少 n 个会话（默认 3，只影响 status 的提示）
   --force           start 时覆盖已有实验文件
   -h, --help        显示本帮助
 
-档位: ${Object.keys(GEARS).join(' / ')}
+档位: off（对照组） / ${Object.keys(GEARS).join(' / ')}
 
 对比看: dsh-fast-mode-report --since 2d
 实验结束后记得 stop：留着文件不影响安全，但会让后续会话继续被分档。`
@@ -135,7 +135,7 @@ function coverage(rows) {
 
 function start(options) {
   const file = expandHome(options.bench)
-  const gears = options.gears.filter(name => Object.hasOwn(GEARS, name))
+  const gears = [...new Set(options.gears.filter((name) => name === 'off' || Object.hasOwn(GEARS, name)))]
   if (gears.length < 2) {
     process.stderr.write(`至少需要两个档位才能对比，收到: ${options.gears.join(',') || '空'}\n`)
     return 2
@@ -149,7 +149,10 @@ function start(options) {
   writeFileSync(file, `${JSON.stringify({ enabled: true, gears }, null, 2)}\n`)
   process.stdout.write(`实验开始: ${file}\n` +
     `档位: ${gears.join(' / ')}（按 session id 哈希分配，新建会话生效）\n` +
-    '实验期间新开的会话会被自动开着跑，不用手动点小闪电；同一个任务多跑几次再对比。\n' +
+    (gears.includes('off')
+      ? 'off 是对照组：被分到的会话不加速，报告拿它当基准；其余档位自动开着跑，不用点小闪电。\n'
+      : '这次没有 off 对照组，报告只能两档之间互比，不能回答「比不开快多少」。\n') +
+    '同一类任务多跑几次再对比；面板上的开关是全局的，被分到 off 的会话实际不加速。\n' +
     `进度: dsh-fast-mode-experiment status --bench ${options.bench}\n`)
   return 0
 }
@@ -184,7 +187,7 @@ function status(options) {
   if (existsSync(bench)) lines.push(`档位: ${gears.join(' / ')}`)
   lines.push('')
 
-  const wanted = existsSync(bench) ? gears : ['off', ...gears]
+  const wanted = [...new Set(existsSync(bench) ? gears : ['off', ...gears])]
   const labelWidth = Math.max(...wanted.map(name => width(name)), width('档位')) + 2
   lines.push(`${pad('档位', labelWidth)}${padLeft('会话', 6)}${padLeft('步数', 8)}${padLeft('模型耗时p50', 16)}`)
   let short = 0

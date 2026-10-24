@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.1
+
+0.6.0 could compare gears, but not against the thing they are supposed to beat.
+An assignment always switched the mode on, so a randomized trial had no baseline:
+the only "off" sessions were ones somebody happened to run before starting the
+experiment, which is not an arm — it is a convenience sample.
+
+- **`"off"` is a legal arm.** The assignment file and
+  `dsh-fast-mode-experiment --gears` now accept `off`, meaning the control group:
+  the session runs with the plugin switched off **because the experiment said so**,
+  not because a switch was left alone. `off` is always accepted even when the
+  options do not list it, and the CLI now defaults to
+  `off,safe,fast,turbo,max`, so a fresh `start` is a controlled trial rather than
+  a ranking. `start` says which kind of run it wrote: with `off` it promises a
+  baseline, without it it warns that the report can only rank arms against each
+  other.
+- **The control arm is deliberately invisible to the switch.** A session assigned
+  to `off` returns the request untouched even when the global switch is on — the
+  one place where the UI can disagree with what a session actually does, which
+  the experiment output and both READMEs now state plainly.
+- Also lands in this release: `bin/experiment.mjs` is documented and exposed as
+  the `dsh-fast-mode-experiment` bin with an npm script, and `--lan` follows
+  `--since` into the dashboard's own `1d`/`7d`/`30d` window (default `7d`) rather
+  than always asking for one day and quietly printing nothing.
+
+145 tests.
+
 ## 0.6.0
 
 0.5.2 made the switch work. 0.6.0 makes the claim checkable: fast mode measures

@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { createAssignment, gearFor, hashOf } from '../src/benchmark.js'
@@ -133,3 +133,19 @@ test('a session pin can point a single named session at one gear', () => withTem
   assert.equal(assignment.gearFor('session-pin'), 'max')
   assert.notEqual(assignment.gearFor('bad'), 'warp')
 }))
+
+
+test('off is always a legal arm, even when the options never mention it', () => {
+  // The control group cannot be opt-in: an experiment that cannot assign a
+  // baseline session is only a comparison between two interventions.
+  const root = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-off-'))
+  const file = join(root, 'bench.json')
+  try {
+    writeFileSync(file, JSON.stringify({ enabled: true, gears: ['off'] }))
+    const assignment = createAssignment({ file, gears: ['safe', 'fast'] })
+    assert.deepEqual(assignment.current?.gears, ['off'])
+    assert.equal(assignment.gearFor('any-session'), 'off')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

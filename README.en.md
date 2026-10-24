@@ -276,11 +276,12 @@ When `~/.dsh/fast-mode-bench.json` (or `benchmarkFile`) exists with `enabled: tr
 ```json
 {
   "enabled": true,
-  "gears": ["safe", "fast", "turbo", "max"],
+  "gears": ["off", "safe", "fast", "turbo", "max"],
   "sessions": { "<session id>": "turbo" }
 }
 ```
 
+- `gears` may contain `"off"` — the **control arm**, whose sessions run switched off. Without it an experiment can only rank gears against each other, never answer "faster than nothing", which is the claim to prove.
 - An explicit `sessions` pin wins; otherwise `FNV-1a(session id) mod gears` picks one, so the same session lands in the same arm every time.
 - The file takes effect within a second, no restart needed; delete it and the next request falls back to the configured switch and gear.
 - An assigned session **runs as assigned regardless of the switch**: the arm is decided by the file and the hash. Otherwise a session where you forgot to flip the switch would quietly join the control arm while you believe you are measuring `turbo`.
@@ -333,11 +334,11 @@ node bin/report.mjs --since 7d                # the comparison
 |---|---|
 | `--bench <path>` | assignment file, default `~/.dsh/fast-mode-bench.json` |
 | `--metrics <path>` | measurement file, default `~/.dsh/fast-mode-metrics.jsonl` |
-| `--gears a,b,c` | arms to include (default `safe,fast,turbo,max`; fewer than two is refused) |
+| `--gears a,b,c` | arms to include (default `off,safe,fast,turbo,max`, where `off` is the control arm; fewer than two is refused) |
 | `--sessions n` | the "at least this many sessions per arm" bar `status` reports against, default 3; advisory |
 | `--force` | overwrite a running assignment file |
 
-While an experiment runs, **new sessions arm themselves from the assignment** — no bolt-clicking, or a forgotten click would quietly land a session in the control arm. `status` says exactly what is still missing: no disabled-state samples, an arm with zero sessions, whether each arm has reached `n` sessions. Remember to `stop`; otherwise later sessions keep being assigned.
+While an experiment runs, **new sessions run as assigned** (anything but `off` arms itself), no bolt-clicking, or a forgotten click would quietly land a session in the control arm. `status` says exactly what is still missing: no disabled-state samples, an arm with zero sessions, whether each arm has reached `n` sessions. Remember to `stop`; otherwise later sessions keep being assigned.
 
 ## Configuration
 
@@ -416,7 +417,7 @@ If every line reads `high=>high`, check in this order: whether the step number r
 ## Development and tests
 
 ```bash
-npm test        # 142 tests, no network, no harness required
+npm test        # 145 tests, no network, no harness required
 ```
 
 The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (a bad value never becomes "unlimited"). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1. The metrics group proves that **sessions with the switch off are recorded too** (one row per step, time-to-first-token taken from the first assistant message), and covers token/error summing, per-session isolation, lazy directory creation, and an empty path turning the sink off. The experiment-assignment group proves the hash is stable and covers every gear, an explicit pin wins, a single session can be pinned, the file takes effect within a second, no file or `enabled:false` keeps it completely inert, and a broken file complains once. The report group runs the real `bin/report.mjs`: both tables, a text-only refusal when only one arm has samples, `--since` (which also widens the dashboard window), `--json`, `--help` reading no file, skipping `--lan` without a token, matching by session id when a token is present while **never printing the token**, and degrading to a note when the dashboard is unreachable. One last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs. The same group also checks the client-half manifest contract (`dsh.client.platform === "web"`, `exports["./client"]`, `client.js` packed, the bundle id equal to the package name, and the registered slot being `conversation.input.activity` rather than the one that would shadow the model selector), and runs the shipped `client.js` verbatim in a `vm` sandbox with a stub `__ModuleLoader__` and a fake `settings` remote that answers with the real wire envelope (`{ok, value}`) — the missing unwrap is what made 0.5.1's bolt inert, so the envelope is part of the fixture now: the bundle parses, requires only `react`, paints hollow when off, a click only opens the panel and writes nothing, the switch inside sends exactly one `settings/update` carrying the revision it read, a second click turns it back off, rolls back with a stated reason when that write is refused, and pins the new interaction contract — the outer control is **one icon** (no caret, no inline dropdown), the button is **never** disabled, read-only / absent / `ok:false` all render as "clickable with a reason", the five rows are labelled with their speed and token multipliers, `ludicrous` carries its asterisk, picking a gear while off arms `enabled` in the same write, picking one while already on leaves the toggle alone, and the client gear ids match the host `GEARS` exactly. Another group validates the schema against real schemastery: `enabled` defaults to `false`, all five gear names pass, `gear: warp` fails loudly, measurement is on by default, exactly `enabled`/`gear`/`parallel` are volatile, and patch-level keys the schema does not declare (`floor`, `holdTools`) survive untouched.

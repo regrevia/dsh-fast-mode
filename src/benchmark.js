@@ -22,12 +22,21 @@
  * An optional `"sessions": { "<session id>": "turbo" }` map overrides the hash,
  * which is how a single named session is pinned to one gear.
  *
+ * `"off"` is a legal arm name and means the control group: the session runs with
+ * the plugin switched off. Without it an experiment can only compare gears with
+ * each other, never against the thing they are supposed to improve on — and
+ * "which gear is fastest" is not the question, "is this faster than doing
+ * nothing" is.
+ *
  * @module dsh-fast-mode/benchmark
  */
 import { readFileSync } from 'node:fs'
 
 /** How long a read file stays authoritative. One second: long enough to matter, short enough to edit. */
 const TTL_MS = 1000
+
+/** The control arm: an assigned session that runs with the plugin off. */
+export const CONTROL = 'off'
 
 /**
  * FNV-1a over the session id. Stable across processes and platforms, which is
@@ -64,7 +73,7 @@ export function gearFor(sessionId, assignment) {
  */
 export function createAssignment(options) {
   const file = typeof options.file === 'string' ? options.file : ''
-  const known = new Set(options.gears)
+  const known = new Set([...options.gears, CONTROL])
   /** @type {{gears: string[], sessions: Record<string, string>}|undefined} */
   let cached
   let readAt = 0

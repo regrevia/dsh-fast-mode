@@ -59,7 +59,7 @@ import { appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { createAssignment } from './src/benchmark.js'
+import { CONTROL, createAssignment } from './src/benchmark.js'
 import {
   contentChars,
   createState,
@@ -87,7 +87,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.6.0'
+export const VERSION = '0.6.1'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
 
@@ -270,10 +270,14 @@ export function apply(ctx, rawConfig) {
   const configFor = (sessionId) => {
     const assigned = assignment.gearFor(sessionId)
     if (assigned === undefined) return resolveConfig(rawConfig)
-    // An experiment assignment also turns the mode on. Otherwise the harness
-    // would depend on the very switch it is supposed to be measuring: every
-    // session would have to be clicked on, and a forgotten click would silently
-    // land in the control arm.
+    // The control arm is an assignment like any other: the mode is off because
+    // the experiment said so, not because somebody forgot to click. Otherwise a
+    // randomized trial could not have a baseline at all.
+    if (assigned === CONTROL) return resolveConfig(rawConfig, { enabled: false })
+    // A gear assignment turns the mode on. Otherwise the harness would depend on
+    // the very switch it is supposed to be measuring: every session would have
+    // to be clicked on, and a forgotten click would silently land in the control
+    // arm.
     return resolveConfig(rawConfig, { gear: assigned, enabled: true })
   }
 

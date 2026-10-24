@@ -576,3 +576,27 @@ test('an experiment assignment picks the gear and turns the mode on by itself', 
     await rm(dirname(bench), { recursive: true, force: true })
   }
 })
+
+test('a session assigned to the control arm runs switched off, not accelerated', async () => {
+  // The baseline has to be an assignment too. If the control arm were "whatever
+  // the switch happens to be", the trial would silently lose its comparison.
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
+  const bench = join(await mkdtemp(join(tmpdir(), 'dsh-fast-mode-control-')), 'bench.json')
+  try {
+    await writeFile(bench, JSON.stringify({ enabled: true, gears: ['off'] }))
+    apply(ctx, { metrics: false, benchmarkFile: bench, enabled: true, gear: 'turbo' })
+
+    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' }
+    const payload = { agent: { id: 'session-control' }, turn: 0, step: 4, signal: new AbortController().signal }
+    assert.equal(
+      await ctx.handlers.get('agent/request')(payload, async () => resolved),
+      resolved,
+      'the control arm is untouched even though the plugin is switched on globally',
+    )
+  } finally {
+    await rm(bench, { force: true })
+    await rm(dirname(bench), { recursive: true, force: true })
+  }
+})
