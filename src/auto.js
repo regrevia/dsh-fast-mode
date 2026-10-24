@@ -60,6 +60,20 @@ export const AUTO_LIMITS = Object.freeze({
   directiveCooldown: 3,
 })
 
+/**
+ * Calls that cannot change shared state. A step made only of these is the one
+ * shape where widening costs nothing but a wider prompt: the calls cannot
+ * depend on each other's writes, so the harness can start them together.
+ *
+ * Bash is deliberately absent: `grep` and `cat` through a shell are read-only in
+ * effect but the scheduler cannot tell them apart from `rm`, so a shell step is
+ * treated as mixed and widens on the slower schedule.
+ */
+const SAFE_CALLS = Object.freeze(new Set([
+  'read', 'grep', 'glob', 'list', 'ls', 'find',
+  'web_fetch', 'web_search', 'fetch', 'search', 'journal',
+]))
+
 /** Bounded number of sessions the scheduler remembers. */
 export const AUTO_SESSIONS = 200
 
@@ -88,7 +102,10 @@ function entryOf(state, agent) {
     noProgress: 0,
     calls: 0,
     stepCalls: 0,
+    stepUnsafe: 0,
     lastStepCalls: 0,
+    lastStepReadOnly: false,
+    readOnlyStreak: 0,
     errors: 0,
     /** @type {Map<string, {chars: number, errored: boolean}>} */
     seen: new Map(),
@@ -118,7 +135,7 @@ export function noteTurn(state, agent) {
   const entry = entryOf(state, agent)
   entry.turnSteps = 0
   entry.stepCalls = 0
-  entry.lastStepCalls = 0
+  entry.stepUnsafe = 0
   entry.stopped = false
 }
 
@@ -132,8 +149,15 @@ export function noteStep(state, agent) {
   const entry = entryOf(state, agent)
   entry.steps += 1
   entry.turnSteps += 1
-  entry.lastStepCalls = entry.stepCalls
+  // A step that issued no calls (a final answer, say) says nothing about
+  // whether the work is read-heavy, so it must not reset the streak.
+  if (entry.stepCalls > 0) {
+    entry.lastStepCalls = entry.stepCalls
+    entry.lastStepReadOnly = entry.stepUnsafe === 0
+    entry.readOnlyStreak = entry.lastStepReadOnly ? entry.readOnlyStreak + 1 : 0
+  }
   entry.stepCalls = 0
+  entry.stepUnsafe = 0
 }
 
 /**
@@ -160,6 +184,7 @@ export function noteTool(state, agent, observation) {
 
   entry.calls += 1
   entry.stepCalls += 1
+  if (!SAFE_CALLS.has(name)) entry.stepUnsafe += 1
   if (Number.isFinite(obs.durationMs) && obs.durationMs >= 0) {
     entry.waits.push(Number(obs.durationMs))
     if (entry.waits.length > AUTO_LIMITS.waitWindow) entry.waits.shift()
@@ -215,10 +240,34 @@ export function autoSchedule(state, agent) {
     ),
   )
 
-  let parallel = AUTO_LIMITS.parallelBase
-  if (entry.noProgress >= 3 || entry.errors >= 3) parallel = AUTO_LIMITS.parallelMin
-  else if (entry.turnSteps >= AUTO_LIMITS.widenAfterSteps && entry.lastStepCalls >= 2) parallel = AUTO_LIMITS.parallelMax
-  else if (entry.turnSteps >= AUTO_LIMITS.widenAfterSteps) parallel = 6
+  // Selective acceleration: speed is only worth asking for where the evidence
+  // says the work is parallel. Everything else keeps the native behaviour —
+  // width 1 silences the whole guidance section, so a write-heavy or
+  // dependency-bound stretch is not told to batch, and pays no prompt tax.
+  let parallel = 1
+  if (entry.steps === 0 && entry.calls === 0) {
+    // Nothing observed yet: one cheap probe block, small enough to stay honest
+    // on tasks that turn out to have nothing to fan out.
+    parallel = AUTO_LIMITS.parallelBase
+  } else if (entry.noProgress >= 3 || entry.errors >= 3) {
+    parallel = 1
+  } else if (entry.readOnlyStreak >= 2) {
+    // Two consecutive steps of pure reads that batched cleanly: this session is
+    // doing read-heavy work, so keep the block wide — including across the turn
+    // boundary, where the old rule fell back to the base width for no reason.
+    parallel = AUTO_LIMITS.parallelMax
+  } else if (entry.turnSteps >= 1 && entry.lastStepReadOnly && entry.lastStepCalls >= 3) {
+    // The first step already proved the calls can run together; a wider read
+    // block is the cheapest speed left on the table, so do not wait for a
+    // second step to ask for it.
+    parallel = AUTO_LIMITS.parallelMax
+  } else if (entry.turnSteps >= AUTO_LIMITS.widenAfterSteps && entry.lastStepCalls >= 2) {
+    parallel = AUTO_LIMITS.parallelMax
+  } else if (entry.turnSteps === 0 && entry.lastStepReadOnly && entry.lastStepCalls >= 2) {
+    // Cross-turn momentum: the previous turn ended in a wide read block, so the
+    // next request starts wide instead of re-learning it from scratch.
+    parallel = AUTO_LIMITS.parallelMax
+  }
 
   const stats = {
     steps: entry.steps,
@@ -227,6 +276,8 @@ export function autoSchedule(state, agent) {
     errors: entry.errors,
     calls: entry.calls,
     lastStepCalls: entry.lastStepCalls,
+    lastStepReadOnly: entry.lastStepReadOnly,
+    readOnlyStreak: entry.readOnlyStreak,
     p90WaitMs: p90,
     stallBudgetMs,
     parallel,
