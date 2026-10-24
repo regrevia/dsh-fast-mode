@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.5.2",
-  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
+  "version": "0.6.0",
+  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching, with a built-in speed/token benchmark. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
@@ -18,12 +18,15 @@
     "./effort": "./src/effort.js",
     "./guidance": "./src/guidance.js",
     "./locale/*.json": "./locale/*.json",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./metrics": "./src/metrics.js",
+    "./benchmark": "./src/benchmark.js"
   },
   "files": [
     "index.js",
     "client.js",
     "src/",
+    "bin/",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.png",
@@ -49,7 +52,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "report": "node bin/report.mjs"
   },
   "license": "MIT",
   "dsh": {
@@ -68,5 +72,9 @@
     }
   },
   "author": "regrevia",
-  "icon": "./icon.png"
+  "icon": "./icon.png",
+  "bin": {
+    "dsh-fast-mode-experiment": "./bin/experiment.mjs",
+    "dsh-fast-mode-report": "./bin/report.mjs"
+  }
 }

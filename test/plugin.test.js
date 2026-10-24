@@ -12,7 +12,9 @@
  * question cannot be answered.
  */
 import assert from 'node:assert/strict'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { apply } from '../index.js'
@@ -35,6 +37,24 @@ function fakeContext(options = {}) {
     on(event, handler) {
       handlers.set(event, handler)
       return () => handlers.delete(event)
+    },
+    // Cordis runs an `inject` callback once the named services exist. The fake
+    // only registers the services the test supplied, so a missing service means
+    // "not ready yet" and the callback stays unrun — exactly what the real
+    // runtime does, which is why the plugin must not call `section()` directly.
+    inject(names, callback) {
+      if (!names.every(name => services[name])) return undefined
+      const child = {
+        ...services,
+        get(name) {
+          return services[name]
+        },
+        effect(setup) {
+          const disposer = setup()
+          return typeof disposer === 'function' ? disposer : () => {}
+        },
+      }
+      return callback(child)
     },
     get(name) {
       return services[name]
@@ -63,8 +83,13 @@ const llmService = (table, { delayMs = 0, fail = false } = {}) => ({
 
 const agent = { id: 'session-1' }
 const accept = async () => ({ kind: 'accept' })
-/** Fast mode is opt-in, so every behavioural test arms it explicitly. */
-const ON = { enabled: true }
+/**
+ * Fast mode is opt-in, so every behavioural test arms it explicitly. The
+ * measurement and experiment sinks are off here: a test must not append to the
+ * developer's home directory, and a live experiment file must not be able to
+ * change what a test asserts. Both are covered by their own tests.
+ */
+const ON = { enabled: true, metrics: false, benchmarkFile: '' }
 
 /** A request whose `next()` resolves to the harness-resolved config. */
 const request = (ctx, { step, effort, turn = 0, provider = 'company', model = 'deepseek-v4.1-flash' }) =>
@@ -92,17 +117,92 @@ test('the plugin registers both tool hooks and the request hook', () => {
   }
 })
 
-test('enabled:false registers nothing', () => {
-  const ctx = fakeContext()
-  apply(ctx, { enabled: false })
-  assert.equal(ctx.handlers.size, 0)
-})
-
-test('a bare composition registers nothing: fast mode is opt-in', () => {
+test('a bare composition changes no request: fast mode is opt-in', () => {
   for (const config of [undefined, {}, { gear: 'max' }, { enabled: 'yes' }]) {
     const ctx = fakeContext()
-    apply(ctx, config)
-    assert.equal(ctx.handlers.size, 0, `config ${JSON.stringify(config)} must stay inert`)
+    apply(ctx, { metrics: false, benchmarkFile: '', ...config })
+    assert.ok(ctx.handlers.has('agent/request'), 'the pass-through hook is what keeps it switchable')
+  }
+})
+
+test('enabled:false hands every request back untouched', async () => {
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
+  apply(ctx, { enabled: false, metrics: false, benchmarkFile: '' })
+
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.ts' } })
+  for (const step of [1, 2, 3]) {
+    const resolved = await request(ctx, { step, effort: 'medium' })
+    assert.deepEqual(resolved, { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' })
+  }
+})
+
+test('the measurement tap outlives the switch: off sessions are measured too', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-metrics-'))
+  const file = join(dir, 'metrics.jsonl')
+  try {
+    const ctx = fakeContext()
+    apply(ctx, { enabled: false, benchmarkFile: '', metricsFile: file })
+    assert.ok(ctx.handlers.has('session/event'), 'a disabled plugin must still observe: comparison needs the off side')
+
+    const session = { id: 'session-1' }
+    const feed = [
+      { type: 'step/start', turn: 0, step: 1, time: 1000 },
+      { type: 'assistant/message', turn: 0, step: 1, time: 1900, usage: { inputTokens: 120, outputTokens: 40 } },
+      { type: 'step/end', turn: 0, step: 1, time: 2000 },
+    ]
+    await request(ctx, { step: 1, effort: 'high' })
+    for (const event of feed) ctx.handlers.get('session/event')(session, event)
+
+    const rows = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].mode, 'off')
+    assert.equal(rows[0].gear, 'off')
+    assert.equal(rows[0].effort, 'high')
+    assert.equal(rows[0].llmMs, 900)
+    assert.equal(rows[0].output, 40)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an on request is labelled with the gear and the resolved effort', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-labelled-'))
+  const file = join(dir, 'metrics.jsonl')
+  try {
+    const ctx = fakeContext({
+      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    })
+    apply(ctx, { enabled: true, gear: 'turbo', benchmarkFile: '', metricsFile: file })
+    await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.ts' } })
+    await request(ctx, { step: 2, effort: 'medium' })
+
+    const session = { id: 'session-1' }
+    for (const event of [
+      { type: 'step/start', turn: 0, step: 2, time: 1000 },
+      { type: 'tool/call', turn: 0, step: 2, time: 1010, name: 'read' },
+      { type: 'assistant/message', turn: 0, step: 2, time: 1800, usage: { inputTokens: 500, outputTokens: 90 } },
+      { type: 'step/end', turn: 0, step: 2, time: 1900 },
+    ]) ctx.handlers.get('session/event')(session, event)
+
+    const [row] = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.equal(row.mode, 'on')
+    assert.equal(row.gear, 'turbo')
+    assert.equal(row.calls, 1)
+    assert.equal(row.stepMs, 900)
+    assert.equal(row.route, 'company/deepseek-v4.1-flash')
+    assert.ok(['low', 'medium'].includes(row.effort), 'the label records what the plugin actually resolved')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
@@ -169,7 +269,7 @@ test('a long clean streak earns the second notch', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, { enabled: true, floor: 'minimal' })
+  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, floor: 'minimal' })
   for (let index = 0; index < 8; index += 1) {
     await runTool(ctx, { callId: `c${index}`, name: 'read', args: { path: `f${index}` } })
   }
@@ -235,7 +335,7 @@ test('slow discovery never stalls the request, and later steps use the real ladd
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }, { delayMs: 60 }) },
   })
-  apply(ctx, { enabled: true, discoverTimeoutMs: 10 })
+  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, discoverTimeoutMs: 10 })
 
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const quick = await request(ctx, { step: 2, effort: 'medium' })
@@ -249,7 +349,7 @@ test('slow discovery never stalls the request, and later steps use the real ladd
 
 test('a pinned ladder may be used when discovery is unavailable', async () => {
   const ctx = fakeContext()
-  apply(ctx, { enabled: true, ladder: ['low', 'high'], floor: 'low' })
+  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, ladder: ['low', 'high'], floor: 'low' })
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, { step: 2, effort: 'high' })
   assert.equal(execution.reasoningEffort, 'low')
@@ -299,7 +399,7 @@ test('debug writes one line per request with the signals', async () => {
     const ctx = fakeContext({
       services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
     })
-    apply(ctx, { enabled: true, debug: true, debugFile: file })
+    apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, debug: true, debugFile: file })
     await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
     await request(ctx, { step: 2, effort: 'medium' })
     const lines = readFileSync(file, 'utf8').trim().split('\n')
@@ -318,7 +418,7 @@ test('debug writes one line per request with the signals', async () => {
   }
 })
 
-test('a disabled plugin still traces the load, then registers nothing', async () => {
+test('a disabled plugin still traces the load, and stays silent per request', async () => {
   const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -326,12 +426,15 @@ test('a disabled plugin still traces the load, then registers nothing', async ()
   const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-off-'))
   const file = join(dir, 'debug.log')
   try {
-    const ctx = fakeContext()
-    apply(ctx, { enabled: false, debug: true, debugFile: file })
+    const ctx = fakeContext({
+      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    })
+    apply(ctx, { enabled: false, metrics: false, benchmarkFile: '', debug: true, debugFile: file })
+    await request(ctx, { step: 2, effort: 'medium' })
+
     const lines = readFileSync(file, 'utf8').trim().split('\n')
     assert.match(lines[0], /apply v\d+\.\d+\.\d+ entered enabled=false/)
-    assert.ok(lines.some(line => /inactive v\d+\.\d+\.\d+: enabled=false, no hooks registered/.test(line)))
-    assert.equal(ctx.handlers.size, 0, 'off means off: no hooks at all')
+    assert.equal(lines.filter(line => / step=/.test(line)).length, 0, 'off means off: no per-request trace, no decision')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -343,30 +446,40 @@ test('the traced version is the version the package ships', async () => {
   assert.equal(VERSION, manifest.version, 'a stale log line must be impossible to mistake for a current build')
 })
 
-test('a gear above safe registers execution guidance, and safe registers none', () => {
+test('the guidance section is registered once and renders per request', () => {
   const sections = []
   const services = (parallel = 10) => ({
     llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }),
     systemPrompt: { section: entry => sections.push(entry) },
     agentLoop: { config: { maxParallelToolCalls: { get: () => parallel } } },
   })
+  const context = { scope: { id: 'session-1' } }
 
+  // Safe asks for nothing: the section still exists (the switch must be able to
+  // turn it on mid-session) but its text is empty, and the assembler drops
+  // empty sections — so the gear costs no tokens.
   const safe = fakeContext({ services: services() })
-  apply(safe, { enabled: true, gear: 'safe' })
-  assert.equal(sections.length, 0, 'the safe gear must stay invisible in the prompt')
-
-  const fast = fakeContext({ services: services() })
-  apply(fast, { enabled: true, gear: 2 })
+  apply(safe, { enabled: true, gear: 'safe', metrics: false, benchmarkFile: '' })
   assert.equal(sections.length, 1)
   assert.equal(sections[0].name, 'fast-mode:execution-speed')
   assert.equal(typeof sections[0].order, 'number')
-  assert.match(sections[0].text, /up to 4 independent calls/)
-  assert.match(sections[0].text, /never report a result you have not received/)
+  assert.equal(sections[0].text(context), '')
+
+  const fast = fakeContext({ services: services() })
+  apply(fast, { enabled: true, gear: 2, metrics: false, benchmarkFile: '' })
+  const text = sections[1].text(context)
+  assert.match(text, /up to 4 independent calls/)
+  assert.match(text, /never report a result you have not received/)
 
   // The fan-out number is configurable, and the text follows it.
   const custom = fakeContext({ services: services() })
-  apply(custom, { enabled: true, gear: 3, parallel: 7 })
-  assert.match(sections[1].text, /up to 7 independent calls/)
+  apply(custom, { enabled: true, gear: 3, parallel: 7, metrics: false, benchmarkFile: '' })
+  assert.match(sections[2].text(context), /up to 7 independent calls/)
+
+  // Switched off, the section renders to nothing — an off plugin adds no prompt.
+  const off = fakeContext({ services: services() })
+  apply(off, { enabled: false, metrics: false, benchmarkFile: '' })
+  assert.equal(sections[3].text(context), '')
 })
 
 test('a scheduler cap below the gear warns once, and never breaks the request', async () => {
@@ -379,7 +492,7 @@ test('a scheduler cap below the gear warns once, and never breaks the request', 
     },
   })
   ctx.logger.warn = (...args) => warnings.push(args)
-  apply(ctx, { enabled: true, gear: 2 })
+  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, gear: 2 })
 
   await request(ctx, { step: 2, effort: 'high' })
   await request(ctx, { step: 3, effort: 'high' })
@@ -429,4 +542,37 @@ test('the manifest ships everything a plugin manager reads before activation', a
   assert.match(client, /id: 'dsh-fast-mode'/)
   assert.match(client, /const SLOT = 'conversation\.input\.activity'/)
   assert.doesNotMatch(client, /const SLOT = 'conversation\.input\.model'/, 'never shadow the shipped model selector')
+})
+
+test('an experiment assignment picks the gear and turns the mode on by itself', async () => {
+  // The assignment, not the user, decides the arm — so it must not depend on a
+  // switch that the user could forget to click, or a forgotten click would
+  // silently land the session in the control arm.
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }) },
+  })
+  const bench = join(await mkdtemp(join(tmpdir(), 'dsh-fast-mode-assign-')), 'bench.json')
+  try {
+    await writeFile(bench, JSON.stringify({ enabled: true, gears: ['turbo'] }))
+    apply(ctx, { metrics: false, benchmarkFile: bench, enabled: false, gear: 'safe' })
+
+    const handler = ctx.handlers.get('agent/request')
+    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
+    const payload = { agent: { id: 'session-assigned' }, turn: 0, step: 2, signal: new AbortController().signal }
+    const out = await handler(payload, async () => resolved)
+    assert.notEqual(out, resolved, 'an assignment is an experiment: it cannot leave the request untouched')
+    assert.notEqual(out.reasoningEffort, 'medium', 'the assigned gear must reach the request')
+
+    // With the experiment stopped, the configured switch and gear win again.
+    await rm(bench)
+    const off = fakeContext({
+      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }) },
+    })
+    apply(off, { metrics: false, benchmarkFile: bench, enabled: false, gear: 'safe' })
+    const untouched = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
+    assert.equal(await off.handlers.get('agent/request')(payload, async () => untouched), untouched)
+  } finally {
+    await rm(bench, { force: true })
+    await rm(dirname(bench), { recursive: true, force: true })
+  }
 })

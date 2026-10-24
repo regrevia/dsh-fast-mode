@@ -28,9 +28,14 @@
  * second, half-working entry point is worse than none. Settings stays for the
  * composition-level knobs (`enabled`, `parallel`, `debug`).
  *
- * When it is off, `apply` registers nothing at all: no hooks, no prompt section,
- * no token cost. A `debug` file, if configured, still gets one line per load —
- * that is the trace an operator reads when the chip cannot switch anything on.
+ * When it is off, nothing about a request changes: the policy returns the effort
+ * the harness chose, and the guidance section renders to the empty string, which
+ * the prompt assembler drops. What stays registered is the measurement tap and
+ * the pass-through hooks — that is deliberate. A comparison between on and off
+ * needs the off sessions measured by the same code, and a switch that can only
+ * be flipped by restarting the app is a switch nobody flips mid-task. A `debug`
+ * file, if configured, still gets one line per load — that is the trace an
+ * operator reads when the chip cannot switch anything on.
  *
  * ## Provider independence
  *
@@ -51,11 +56,15 @@
  * completely alone.
  */
 import { appendFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
+import { createAssignment } from './src/benchmark.js'
 import {
   contentChars,
   createState,
   decideEffort,
+  GEARS,
   readSignals,
   recordObservation,
   resetTurn,
@@ -64,6 +73,7 @@ import {
   stableKey,
 } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
+import { createRecorder } from './src/metrics.js'
 
 /**
  * The settings-page schema. Re-exported from here because the Loader reads
@@ -77,7 +87,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.5.2'
+export const VERSION = '0.6.0'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
 
@@ -89,6 +99,28 @@ function appendDebug(file, line) {
   } catch {
     // A diagnostic sink must never break the request it observes.
   }
+}
+
+/**
+ * Expand a leading `~`, so the default paths in the schema read as documentation
+ * ("`~/.dsh/fast-mode-metrics.jsonl`") instead of as a literal directory named
+ * `~`.
+ *
+ * @param {unknown} file
+ * @returns {string}
+ */
+function expandHome(file) {
+  if (typeof file !== 'string' || file.length === 0) return ''
+  if (file === '~') return homedir()
+  if (file.startsWith('~/')) return join(homedir(), file.slice(2))
+  return file
+}
+
+/** @param {unknown} resolved */
+function routeOf(resolved) {
+  const provider = resolved && typeof resolved === 'object' ? resolved.provider : undefined
+  const model = resolved && typeof resolved === 'object' ? resolved.model : undefined
+  return typeof provider === 'string' && typeof model === 'string' ? `${provider}/${model}` : 'unknown'
 }
 
 /**
@@ -184,20 +216,65 @@ function raceTimeout(value, ms) {
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} [rawConfig]
  */
+/**
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {object} [rawConfig]
+ */
 export function apply(ctx, rawConfig) {
-  const config = resolveConfig(rawConfig)
+  const initial = resolveConfig(rawConfig)
 
-  // Traceability before everything else, including the early return for a
-  // disabled plugin: "the module never loaded" and "the module loaded but is
-  // switched off" look identical from the UI, and that ambiguity already cost a
-  // debugging round. Only a `debug` file is written to, and only one line.
-  if (config.debug) {
-    appendDebug(config.debugFile, `apply v${VERSION} entered enabled=${config.enabled} gear=${config.gear} parallel=${config.parallel}`)
-    traceSettings(ctx, config)
+  // Traceability before everything else: "the module never loaded" and "the
+  // module loaded but is switched off" look identical from the UI, and that
+  // ambiguity already cost a debugging round. Only a `debug` file is written to.
+  const metrics = createRecorder({
+    file: initial.metrics ? expandHome(initial.metricsFile) : '',
+  })
+  if (initial.debug) {
+    appendDebug(
+      initial.debugFile,
+      `apply v${VERSION} entered enabled=${initial.enabled} gear=${initial.gear} parallel=${initial.parallel}`,
+    )
+    appendDebug(initial.debugFile, `measure v${VERSION}: ${metrics.enabled ? `file=${metrics.file}` : 'off'}`)
+    traceSettings(ctx, initial)
   }
-  if (!config.enabled) {
-    if (config.debug) appendDebug(config.debugFile, `inactive v${VERSION}: enabled=false, no hooks registered`)
-    return
+
+  // The measurement tap is independent of the switch: a comparison needs the
+  // sessions that ran *without* fast mode measured by the same code, and a
+  // disabled plugin that records nothing cannot answer the question it exists
+  // for. This hook observes; it never changes a request.
+  if (metrics.enabled) {
+    ctx.on('session/event', (session, event) => metrics.record(session, event))
+  }
+
+  // Experiment assignment, shipped inert: with no file there is no experiment
+  // and the configured gear is the only stance.
+  const assignment = createAssignment({
+    file: expandHome(initial.benchmarkFile),
+    gears: Object.keys(GEARS),
+    onError: (message) => {
+      if (initial.debug) appendDebug(initial.debugFile, `benchmark v${VERSION}: ${message}`)
+    },
+  })
+
+  /**
+   * The live config for one session.
+   *
+   * Re-resolved on every request rather than frozen at load: the settings fields
+   * are patched into the running plugin in place, so a stale snapshot is how a
+   * switch silently does nothing until the next restart. The per-session gear
+   * override rides the same path, which is what lets an experiment pin a gear
+   * without a reload.
+   *
+   * @param {string|undefined} sessionId
+   */
+  const configFor = (sessionId) => {
+    const assigned = assignment.gearFor(sessionId)
+    if (assigned === undefined) return resolveConfig(rawConfig)
+    // An experiment assignment also turns the mode on. Otherwise the harness
+    // would depend on the very switch it is supposed to be measuring: every
+    // session would have to be clicked on, and a forgotten click would silently
+    // land in the control arm.
+    return resolveConfig(rawConfig, { gear: assigned, enabled: true })
   }
 
   const state = createState()
@@ -207,44 +284,59 @@ export function apply(ctx, rawConfig) {
   const planCache = new Map()
   /** @type {Map<string, Promise<any>>} */
   const inFlight = new Map()
-  let reported = false
+  /** Route sources already announced, and parallel caps already warned about. */
+  const announced = new Set()
+  const warnedCaps = new Set()
 
   // A gear above `safe` asks the model for wider steps. The harness schedules
   // same-message calls concurrently, so this is the one lever that raises real
-  // fan-out; the effort policy cannot. Registration failure is contained: a
-  // plugin that cannot add its section still runs the policy it was asked for.
-  const guidance = buildGuidance(config)
-  if (guidance !== undefined) {
-    try {
-      const systemPrompt = ctx.get('systemPrompt')
-      if (systemPrompt && typeof systemPrompt.section === 'function') {
-        systemPrompt.section({ name: GUIDANCE_SECTION, order: GUIDANCE_ORDER, text: guidance })
-        ctx.logger?.info?.('%s gear=%s asks for up to %d calls per step (prompt section registered)', TAG, config.gear, config.parallel)
-      } else {
-        ctx.logger?.warn?.('%s gear=%s guidance skipped: no systemPrompt service in this composition', TAG, config.gear)
-      }
-    } catch (error) {
-      ctx.logger?.warn?.('%s gear=%s guidance not registered: %s', TAG, config.gear, String(error))
-    }
+  // fan-out. The section's text is a function of the agent, resolved per
+  // assembly, so it follows the live config and a per-session gear — and renders
+  // to the empty string (dropped by the assembler) when the plugin is off.
+  try {
+    ctx.inject(['systemPrompt'], (child) => {
+      child.effect(() => child.systemPrompt.section({
+        name: GUIDANCE_SECTION,
+        order: GUIDANCE_ORDER,
+        text: (context) => {
+          try {
+            const scope = context && typeof context === 'object' ? (context.scope ?? context.agent) : undefined
+            const sid = scope && typeof scope === 'object' ? scope.id : undefined
+            const live = configFor(typeof sid === 'string' ? sid : undefined)
+            if (!live.enabled) return ''
+            return buildGuidance(live) ?? ''
+          } catch {
+            // A section that cannot resolve must cost nothing and stay silent.
+            return ''
+          }
+        },
+      }), 'fast-mode: guidance section')
+      ctx.logger?.info?.('%s guidance section registered (rendered per request)', TAG)
+    })
+  } catch (error) {
+    ctx.logger?.warn?.(
+      '%s guidance section not registered: %s',
+      TAG,
+      error && error.message ? error.message : String(error),
+    )
   }
 
   /**
-   * The guidance is only meaningful if the scheduler can actually run that many
-   * calls at once. Report the gap once rather than per request; the value is a
-   * volatile setting, so the fix is a composition patch, not a runtime poke.
+   * Warn once per gear when the harness cap makes the fan-out target a wish.
+   *
+   * @param {ReturnType<typeof resolveConfig>} cfg
    */
-  let capChecked = false
-  const checkParallelCap = () => {
-    if (capChecked) return
-    capChecked = true
+  const checkParallelCap = (cfg) => {
+    if (cfg.parallel <= 1 || warnedCaps.has(cfg.parallel)) return
+    warnedCaps.add(cfg.parallel)
     try {
       const holder = ctx.get('agentLoop')?.config?.maxParallelToolCalls
       const cap = typeof holder?.get === 'function' ? holder.get() : holder
-      if (typeof cap === 'number' && cap < config.parallel) {
+      if (typeof cap === 'number' && cap < cfg.parallel) {
         ctx.logger?.warn?.(
           '%s gear=%s asks for up to %d calls per step but agentLoop.maxParallelToolCalls=%d caps it; '
             + 'raise it in cordis.patch.yml (- id: agent-loop, config: { maxParallelToolCalls: %d })',
-          TAG, config.gear, config.parallel, cap, config.parallel,
+          TAG, cfg.gear, cfg.parallel, cap, cfg.parallel,
         )
       }
     } catch {
@@ -276,12 +368,19 @@ export function apply(ctx, rawConfig) {
   }
 
   /**
-   * The decision plan for a route, cached per provider and model.
+   * The decision plan for a route at one gear, cached per provider, model and
+   * gear. The gear is part of the key because it changes the floor and the
+   * ladder: one cached plan under a different gear would decide a notch it was
+   * not built for.
    *
+   * @param {string} provider
+   * @param {string} model
+   * @param {AbortSignal|undefined} signal
+   * @param {ReturnType<typeof resolveConfig>} cfg
    * @returns {Promise<{plan: any|undefined, defaultEffort: string|undefined, source: string}>}
    */
-  const planFor = async (provider, model, signal) => {
-    const key = `${provider}\u0000${model}`
+  const planFor = async (provider, model, signal, cfg) => {
+    const key = `${provider}\u0000${model}\u0000${cfg.gear}\u0000${cfg.floor}`
     const cached = planCache.get(key)
     if (cached) return cached
 
@@ -290,20 +389,22 @@ export function apply(ctx, rawConfig) {
 
     let found
     try {
-      found = await raceTimeout(pending, config.discoverTimeoutMs)
+      found = await raceTimeout(pending, cfg.discoverTimeoutMs)
     } catch {
       found = undefined
     }
 
-    const settle = info => {
+    const settle = (info) => {
       if (info) {
-        const plan = resolvePlan(info.declared, config)
+        const plan = resolvePlan(info.declared, cfg)
         const source = plan.source
-        if (!reported) {
-          reported = true
+        const announce = `${provider}\u0000${model}\u0000${cfg.gear}`
+        if (!announced.has(announce)) {
+          announced.add(announce)
           ctx.logger?.info?.(
-            '%s %s/%s ladder=%s floor=%s (%s)',
+            '%s gear=%s %s/%s ladder=%s floor=%s (%s)',
             TAG,
+            cfg.gear,
             provider,
             model,
             plan.levels.map(level => level.id).join('>') || '-',
@@ -315,7 +416,7 @@ export function apply(ctx, rawConfig) {
       }
       // Nothing known: only an explicitly pinned ladder may be trusted, because
       // an id the route does not declare would fail the call before I/O.
-      const plan = config.ladderExplicit ? resolvePlan(undefined, config) : undefined
+      const plan = cfg.ladderExplicit ? resolvePlan(undefined, cfg) : undefined
       return { plan, defaultEffort: undefined, source: plan?.source ?? 'unknown' }
     }
 
@@ -325,7 +426,7 @@ export function apply(ctx, rawConfig) {
     // Metadata that arrives after we stopped waiting still upgrades the cache,
     // so only the very first request of a slow route runs without it.
     if (found === TIMED_OUT) {
-      pending.then(info => {
+      pending.then((info) => {
         if (info) planCache.set(key, settle(info))
       }).catch(() => {})
     }
@@ -348,9 +449,11 @@ export function apply(ctx, rawConfig) {
       if (key !== undefined) startedAt.delete(key)
 
       if (exec) {
+        const agent = agentKey(exec.agent)
+        const cfg = configFor(agent === GLOBAL_AGENT ? undefined : agent)
         recordObservation(
           state,
-          agentKey(exec.agent),
+          agent,
           {
             name: typeof exec.name === 'string' ? exec.name : 'unknown',
             argsKey: stableKey(exec.arguments),
@@ -358,7 +461,7 @@ export function apply(ctx, rawConfig) {
             chars: contentChars(result?.content),
             durationMs: began === undefined ? 0 : Math.max(0, Date.now() - began),
           },
-          config.window,
+          cfg.window,
         )
       }
     } catch {
@@ -371,36 +474,51 @@ export function apply(ctx, rawConfig) {
 
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
-    checkParallelCap()
 
+    const sid = agentKey(payload?.agent)
+    const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
     const original = resolved?.reasoningEffort
+    const route = routeOf(resolved)
+
+    // Switched off: hand the request back untouched, but still label the step so
+    // the measurement file can compare this session with an accelerated one.
+    if (!cfg.enabled) {
+      metrics.label(sid, {
+        mode: 'off',
+        gear: 'off',
+        effort: original === undefined ? undefined : String(original),
+        route,
+      })
+      return resolved
+    }
+
+    checkParallelCap(cfg)
+
     let effort = original
     let signals
-    let route = 'unknown'
-
+    let source = route
     try {
       const provider = resolved?.provider
       const model = resolved?.model
       const found = typeof provider === 'string' && typeof model === 'string'
-        ? await planFor(provider, model, payload?.signal)
+        ? await planFor(provider, model, payload?.signal, cfg)
         : { plan: undefined, defaultEffort: undefined, source: 'unknown' }
-      route = found.source
+      source = found.source
 
-      const key = agentKey(payload?.agent)
-      resetTurn(state, key, payload?.turn)
-      signals = readSignals(state, key, {
-        window: config.window,
-        slowMs: config.slowMs,
-        bigChars: config.bigChars,
-        holdTools: config.holdTools,
+      resetTurn(state, sid, payload?.turn)
+      signals = readSignals(state, sid, {
+        window: cfg.window,
+        slowMs: cfg.slowMs,
+        bigChars: cfg.bigChars,
+        holdTools: cfg.holdTools,
       })
 
       effort = decideEffort({
         step: payload?.step,
         current: original,
-        baseline: config.baselineFromDefault ? found.defaultEffort : undefined,
+        baseline: cfg.baselineFromDefault ? found.defaultEffort : undefined,
         plan: found.plan,
-        config,
+        config: cfg,
         signals,
       })
     } catch {
@@ -408,11 +526,18 @@ export function apply(ctx, rawConfig) {
       effort = original
     }
 
-    if (config.debug) {
+    metrics.label(sid, {
+      mode: 'on',
+      gear: cfg.gear,
+      effort: effort === undefined ? undefined : String(effort),
+      route,
+    })
+
+    if (cfg.debug) {
       appendDebug(
-        config.debugFile,
-        `turn=${payload?.turn} step=${payload?.step} gear=${config.gear} ${String(original)}=>${String(effort)}`
-          + ` route=${route}`
+        cfg.debugFile,
+        `turn=${payload?.turn} step=${payload?.step} gear=${cfg.gear} ${String(original)}=>${String(effort)}`
+          + ` route=${source}`
           + ` obs=${signals?.observations ?? 0} clean=${signals?.cleanStreak ?? 0}`
           + ` err=${signals?.errors ?? 0} slow=${signals?.slowestMs ?? 0}ms`
           + ` big=${signals?.biggestChars ?? 0}c rep=${signals?.mostRepeated ?? 0}`
@@ -426,14 +551,17 @@ export function apply(ctx, rawConfig) {
   })
 
   ctx.logger?.info?.(
-    '%s active: gear=%s floor=%s deepAfter=%d slowMs=%d bigChars=%d aliases=%s holdTools=%d',
+    '%s v%s loaded: enabled=%s gear=%s floor=%s deepAfter=%d slowMs=%d bigChars=%d aliases=%s holdTools=%d metrics=%s',
     TAG,
-    config.gear,
-    config.floor,
-    config.deepAfter,
-    config.slowMs,
-    config.bigChars,
-    config.aliases === false ? 'off' : 'auto',
-    config.holdTools.length,
+    VERSION,
+    initial.enabled,
+    initial.gear,
+    initial.floor,
+    initial.deepAfter,
+    initial.slowMs,
+    initial.bigChars,
+    initial.aliases === false ? 'off' : 'auto',
+    initial.holdTools.length,
+    metrics.enabled ? metrics.file : 'off',
   )
 }
