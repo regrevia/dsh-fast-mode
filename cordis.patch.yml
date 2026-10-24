@@ -1,0 +1,8 @@
+# Bundle patch for dsh-fast-mode.
+#
+# Installed through the plugin manager, which adds the package to the profile
+# and applies this insert. Overriding `config` here is how the plugin is tuned;
+# omitting `config` uses the defaults documented in README.md.
+- insert:
+    - id: fast-mode
+      name: dsh-fast-mode

@@ -1,0 +1,48 @@
+{
+  "name": "dsh-fast-mode",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness host plugin: cuts tool-chain wall clock by spending less reasoning on execution steps. Stateless and dependency-free.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
+  },
+  "homepage": "https://github.com/regrevia/dsh-fast-mode#readme",
+  "bugs": {
+    "url": "https://github.com/regrevia/dsh-fast-mode/issues"
+  },
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./effort": "./src/effort.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "reasoning-effort",
+    "latency"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "author": "regrevia"
+}
