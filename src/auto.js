@@ -77,6 +77,20 @@ const SAFE_CALLS = Object.freeze(new Set([
 /** Bounded number of sessions the scheduler remembers. */
 export const AUTO_SESSIONS = 200
 
+/**
+ * Record the width classified from this request's text. It is only consumed by
+ * the first step of the next turn, so later steps of the same turn cannot
+ * overwrite the decision halfway through.
+ *
+ * @param {ReturnType<typeof createAutoState>} state
+ * @param {string} agent
+ * @param {number} width
+ */
+export function noteEntry(state, agent, width) {
+  const entry = entryOf(state, agent)
+  if (Number.isFinite(width) && width >= 1) entry.pendingWidth = Math.min(width, AUTO_LIMITS.parallelMax)
+}
+
 /** @returns {{sessions: Map<string, object>}} */
 export function createAutoState() {
   return { sessions: new Map() }
@@ -108,6 +122,9 @@ function entryOf(state, agent) {
     lastStepReadOnly: false,
     /** True when every call in the last step read a different target. */
     lastStepDistinct: false,
+    /** Width chosen from the request text, consumed by the turn's first step. */
+    entryWidth: undefined,
+    pendingWidth: undefined,
     readOnlyStreak: 0,
     errors: 0,
     /** @type {Map<string, {chars: number, errored: boolean}>} */
@@ -141,6 +158,8 @@ export function noteTurn(state, agent) {
   entry.stepUnsafe = 0
   entry.stepArgs.clear()
   entry.stopped = false
+  entry.entryWidth = undefined
+  entry.pendingWidth = undefined
 }
 
 /**
@@ -151,6 +170,11 @@ export function noteTurn(state, agent) {
  */
 export function noteStep(state, agent) {
   const entry = entryOf(state, agent)
+  // The first step of a turn adopts the width classified from that request.
+  if (entry.turnSteps === 0 && entry.pendingWidth !== undefined) {
+    entry.entryWidth = entry.pendingWidth
+    entry.pendingWidth = undefined
+  }
   entry.steps += 1
   entry.turnSteps += 1
   // A step that issued no calls (a final answer, say) says nothing about
@@ -256,7 +280,11 @@ export function autoSchedule(state, agent) {
   // width 1 silences the whole guidance section, so a write-heavy or
   // dependency-bound stretch is not told to batch, and pays no prompt tax.
   let parallel = 1
-  if (entry.steps === 0 && entry.calls === 0) {
+  if (entry.turnSteps === 1 && Number.isFinite(entry.entryWidth) && entry.entryWidth >= 1) {
+    // Classified from the request itself: this is the only signal available on
+    // the very first step, so it must outrank the "nothing observed" probe.
+    parallel = entry.entryWidth
+  } else if (entry.steps === 0 && entry.calls === 0) {
     // Nothing observed yet: one cheap probe block, small enough to stay honest
     // on tasks that turn out to have nothing to fan out.
     parallel = AUTO_LIMITS.parallelBase

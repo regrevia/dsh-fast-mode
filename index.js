@@ -58,11 +58,13 @@ import {
   AUTO,
   autoSchedule,
   createAutoState,
+  noteEntry,
   noteStep,
   noteTool,
   noteTurn,
 } from './src/auto.js'
 import { buildConflictMessage, buildReassertMessage, createNoticeMessage } from './src/notices.js'
+import { classifyEntry } from './src/shape.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
 import { createRecorder } from './src/metrics.js'
@@ -80,7 +82,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.2.1'
+export const VERSION = '1.3.0'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -96,6 +98,24 @@ const GLOBAL_AGENT = '__global__'
  * @param {object[]} notices
  * @returns {object[]}
  */
+/** The user's own text for this turn, from whatever message shape the host uses. */
+function latestUserText(messages) {
+  if (!Array.isArray(messages)) return ''
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (!m || m.role !== 'user') continue
+    const c = m.content
+    if (typeof c === 'string') return c
+    if (Array.isArray(c)) {
+      return c
+        .map((part) => (part && typeof part.text === 'string' ? part.text : ''))
+        .join('\n')
+    }
+    return ''
+  }
+  return ''
+}
+
 function insertAfterClaimed(messages, claimed, notices) {
   const list = Array.isArray(messages) ? messages : []
   if (notices.length === 0) return list
@@ -392,6 +412,14 @@ export function apply(ctx, rawConfig) {
         notices.push(buildReassertMessage(cfg))
       }
       if (cfg.gear === AUTO) {
+        // Classify the request's own words once, before the first tool call of
+        // the turn. It costs one regex pass and no request: unknown shapes stay
+        // native, fan-out shapes start wide instead of paying for a probe.
+        try {
+          noteEntry(auto, sid, classifyEntry(latestUserText(payload?.messages)).width)
+        } catch {
+          // Classification must never fail a step.
+        }
         // The step boundary is also the scheduling boundary: it is where the
         // turn's step count grows, and where the long-tail breaker gets to speak.
         // The message is built inside this try/catch, so a scheduler bug drops
