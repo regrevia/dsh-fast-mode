@@ -195,6 +195,15 @@ function renderSpeedups(buckets) {
   )
 }
 
+/** The dashboard's coarsest matching window for a `--since` cutoff. */
+function windowOf(since) {
+  if (since === undefined) return '7d'
+  const days = (Date.now() - since) / 86400000
+  if (days <= 1) return '1d'
+  if (days <= 7) return '7d'
+  return '30d'
+}
+
 /**
  * Ask the LAN dashboard for recent sessions and match them to what we measured.
  *
@@ -202,11 +211,16 @@ function renderSpeedups(buckets) {
  * else's service, so a shape change prints a note instead of failing the report.
  *
  * @param {any[]} rows
- * @param {{base?: string, token?: string}} settings
+ * The dashboard's own window is coarse (`1d` / `7d` / `30d`), so it follows the
+ * `--since` window instead of always asking for one day and silently dropping
+ * the sessions an experiment spent a week collecting.
+ *
+ * @param {{base?: string, token?: string, range?: string}} settings
  */
 async function fetchLanSessions(rows, settings) {
   const base = (settings.base ?? DEFAULT_BASE).replace(/\/+$/, '')
   const token = settings.token
+  const range = settings.range ?? '7d'
   if (typeof token !== 'string' || token.length === 0) {
     return { note: '--lan 需要环境变量 USAGE_TOKEN（Bearer token），未提供则跳过。' }
   }
@@ -215,7 +229,7 @@ async function fetchLanSessions(rows, settings) {
   // the local report they already have.
   let response
   try {
-    response = await fetch(`${base}/api/v1/sessions/recent?page=1&pageSize=50&range=1d`, {
+    response = await fetch(`${base}/api/v1/sessions/recent?page=1&pageSize=50&range=${range}`, {
       headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       signal: AbortSignal.timeout(15000),
     })
@@ -313,6 +327,7 @@ async function main() {
   const lan = options.lan ? await fetchLanSessions(filtered, {
     base: process.env.USAGE_BASE,
     token: process.env.USAGE_TOKEN,
+    range: windowOf(since),
   }) : undefined
 
   if (options.json) {
