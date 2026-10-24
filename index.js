@@ -80,7 +80,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.0.0'
+export const VERSION = '1.0.1'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -251,6 +251,17 @@ export function apply(ctx, rawConfig) {
       }
     }
     trackCompaction(session, event)
+    // A new turn resets only the per-turn counters; the session's memory of what
+    // has already been tried must survive, because that is what a stuck loop
+    // re-reads. Without this the 30-step breaker would be a per-session budget
+    // that fires once and stays silent forever.
+    if (event && event.type === 'turn/start') {
+      try {
+        noteTurn(auto, agentKey(session))
+      } catch {
+        // A scheduler that can fail a turn is worse than no scheduler.
+      }
+    }
   })
 
   // Experiment assignment, shipped inert: with no file there is no experiment

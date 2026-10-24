@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+**修复"每轮 30 步"实际变成"整段会话 30 步"。**
+
+- `index.js` 现在在 `session/event` 的 `turn/start` 上调用 `noteTurn()`：每轮清零 `turnSteps`、`stepCalls`、`lastStepCalls`，并重新武装停止线；跨轮保留调度记忆（试过什么、卡了多久）。
+- 修掉一个连带问题：`stop-and-report` 的去重原先按"上一次指令种类"跨轮生效，导致第二条长轮次永远不再触发。去重现在只依赖本轮的 `stopped` 标志，`turn/start` 会把它复位。
+- 新增回归测试：一轮 30 步触发一次停止提示 → `turn/start` 后下一步不再立即停止 → 再走 30 步仍会触发。
+- `docs/REFERENCE*.md` 中原先记录的"已知实现缺口"随之删除。
+
 ## 1.0.0
 
 **Fast 模式从此不碰思考强度。** 0.9.x 之前它按档位改写 `reasoningEffort`，最高档甚至发 `off`——这是错的。用户选了多深的思考，就应该是多深；开启快模式改变的是往返次数，不是智力。1.0.0 把整条降档机制**删掉**（不是关掉、不是加开关），`agent/request` 钩子现在是纯透传：`return resolved`。

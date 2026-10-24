@@ -254,7 +254,6 @@ function directiveFor(entry, stats) {
     kind = 'change-approach'
   }
   if (kind === '') return undefined
-  if (kind === entry.lastDirectiveKind && kind === 'stop-and-report') return undefined
 
   entry.lastDirectiveStep = entry.steps
   entry.lastDirectiveKind = kind
