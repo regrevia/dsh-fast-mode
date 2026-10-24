@@ -12,6 +12,7 @@
  * question cannot be answered.
  */
 import assert from 'node:assert/strict'
+import { readFile, stat } from 'node:fs/promises'
 import test from 'node:test'
 
 import { apply } from '../index.js'
@@ -293,10 +294,82 @@ test('debug writes one line per request with the signals', async () => {
     await request(ctx, { step: 2, effort: 'medium' })
     const lines = readFileSync(file, 'utf8').trim().split('\n')
     assert.equal(lines.length, 1)
-    assert.match(lines[0], /step=2 medium=>low/)
+    assert.match(lines[0], /step=2 gear=fast medium=>low/)
     assert.match(lines[0], /clean=1/)
     assert.match(lines[0], /route=provider/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a gear above safe registers execution guidance, and safe registers none', () => {
+  const sections = []
+  const services = (parallel = 10) => ({
+    llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }),
+    systemPrompt: { section: entry => sections.push(entry) },
+    agentLoop: { config: { maxParallelToolCalls: { get: () => parallel } } },
+  })
+
+  const safe = fakeContext({ services: services() })
+  apply(safe, { gear: 'safe' })
+  assert.equal(sections.length, 0, 'the safe gear must stay invisible in the prompt')
+
+  const fast = fakeContext({ services: services() })
+  apply(fast, { gear: 2 })
+  assert.equal(sections.length, 1)
+  assert.equal(sections[0].name, 'fast-mode:execution-speed')
+  assert.equal(typeof sections[0].order, 'number')
+  assert.match(sections[0].text, /up to 4 independent calls/)
+  assert.match(sections[0].text, /never report a result you have not received/)
+
+  // The fan-out number is configurable, and the text follows it.
+  const custom = fakeContext({ services: services() })
+  apply(custom, { gear: 3, parallel: 7 })
+  assert.match(sections[1].text, /up to 7 independent calls/)
+})
+
+test('a scheduler cap below the gear warns once, and never breaks the request', async () => {
+  const warnings = []
+  const ctx = fakeContext({
+    services: {
+      llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }),
+      systemPrompt: { section: () => {} },
+      agentLoop: { config: { maxParallelToolCalls: { get: () => 3 } } },
+    },
+  })
+  ctx.logger.warn = (...args) => warnings.push(args)
+  apply(ctx, { gear: 2 })
+
+  await request(ctx, { step: 2, effort: 'high' })
+  await request(ctx, { step: 3, effort: 'high' })
+  const mine = warnings.filter(args => String(args[0]).includes('maxParallelToolCalls=%d'))
+  assert.equal(mine.length, 1)
+  assert.equal(mine[0][3], 4)
+  assert.equal(mine[0][4], 3)
+})
+
+test('the manifest ships everything a plugin manager reads before activation', async () => {
+  const root = new URL('..', import.meta.url)
+  const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+
+  // The bundle entry point and its patch must exist and be listed for packing.
+  assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
+  assert.ok(await stat(new URL('cordis.patch.yml', root)))
+  for (const required of ['index.js', 'src/', 'cordis.patch.yml', 'icon.png', 'locale/*.json']) {
+    assert.ok(manifest.files.includes(required), `files[] must list ${required}`)
+  }
+
+  // Display metadata: an icon inside the package, under the documented cap, and
+  // localised title/description for both shipped locales.
+  assert.equal(manifest.icon, './icon.png')
+  assert.equal(manifest.exports['./locale/*.json'], './locale/*.json')
+  const icon = await readFile(new URL('icon.png', root))
+  assert.ok(icon.length <= 256 * 1024, `icon.png is ${icon.length} bytes, cap is 262144`)
+  assert.deepEqual([...icon.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'icon must really be a PNG')
+
+  for (const locale of ['en', 'zh']) {
+    const meta = JSON.parse(await readFile(new URL(`locale/${locale}.json`, root), 'utf8')).meta
+    assert.ok(meta.title.length > 1, `${locale}.meta.title is missing`)
+    assert.ok(meta.description.length > 20, `${locale}.meta.description is missing`)
   }
 })

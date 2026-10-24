@@ -15,7 +15,12 @@ import {
   contentChars,
   createState,
   decideEffort,
+  DEFAULT_GEAR,
+  GEARS,
+  normaliseGear,
   looksAliased,
+  matchesHold,
+  normaliseHoldTools,
   orderEfforts,
   rankOf,
   readSignals,
@@ -307,7 +312,7 @@ test('config defaults are safe', () => {
   assert.deepEqual([...defaults.ladder], [...EFFORT_LADDER])
   assert.equal(defaults.ladderExplicit, false)
   assert.equal(defaults.aliases, 'auto')
-  assert.equal(defaults.deepAfter, DEFAULTS.deepAfter)
+  assert.equal(defaults.deepAfter, GEARS[DEFAULT_GEAR].deepAfter)
   assert.equal(defaults.escalateAfterStep, 0)
   assert.equal(defaults.baselineFromDefault, true)
   assert.equal(defaults.debug, false)
@@ -327,7 +332,7 @@ test('bad thresholds fall back instead of disabling the guard', () => {
   assert.equal(resolveConfig({ slowMs: 'soon' }).slowMs, DEFAULTS.slowMs)
   assert.equal(resolveConfig({ slowMs: -1 }).slowMs, DEFAULTS.slowMs)
   assert.equal(resolveConfig({ bigChars: 0 }).bigChars, DEFAULTS.bigChars)
-  assert.equal(resolveConfig({ deepAfter: 0 }).deepAfter, DEFAULTS.deepAfter)
+  assert.equal(resolveConfig({ deepAfter: 0 }).deepAfter, GEARS[DEFAULT_GEAR].deepAfter)
   assert.equal(resolveConfig({ escalateAfterStep: 12.7 }).escalateAfterStep, 12)
   assert.equal(resolveConfig({ discoverTimeoutMs: 'later' }).discoverTimeoutMs, DEFAULTS.discoverTimeoutMs)
 })
@@ -422,4 +427,140 @@ test('the documented alias contract collapses only on routes that offer it', () 
   assert.equal(plan.indexOf('medium'), plan.indexOf('xhigh'))
   assert.equal(decideEffort({ step: 2, current: 'high', plan, config, signals: { struggling: false, cleanStreak: 0 } }), 'low')
   assert.equal(decideEffort({ step: 2, current: 'medium', plan, config, signals: { struggling: false, cleanStreak: 0 } }), 'low')
+})
+
+test('holdTools matches exactly, by prefix, and case-insensitively', () => {
+  assert.equal(matchesHold('compress', ['compress']), true)
+  assert.equal(matchesHold('Compress', ['compress']), true)
+  assert.equal(matchesHold('acp_status', ['acp_*']), true)
+  assert.equal(matchesHold('acp_retrieve', ['acp_*']), true)
+  // A prefix pattern is anchored at the start: no accidental substring hits.
+  assert.equal(matchesHold('not_acp_status', ['acp_*']), false)
+  // Exact patterns are exact; `compress` must not swallow `compress_history`.
+  assert.equal(matchesHold('compress_history', ['compress']), false)
+  assert.equal(matchesHold('bash', []), false)
+  assert.equal(matchesHold('bash', undefined), false)
+  assert.equal(matchesHold(undefined, ['compress']), false)
+})
+
+test('holdTools accepts the string shape an operator writes in YAML', () => {
+  assert.deepEqual(normaliseHoldTools('compress, acp_*'), ['compress', 'acp_*'])
+  assert.deepEqual(normaliseHoldTools(' compress\n acp_status '), ['compress', 'acp_status'])
+  assert.deepEqual(normaliseHoldTools(['compress', '', 42, 'compress']), ['compress'])
+  assert.deepEqual(normaliseHoldTools(undefined), [])
+  assert.deepEqual(normaliseHoldTools({}), [])
+
+  const resolved = resolveConfig({ holdTools: 'compress, acp_*' })
+  assert.deepEqual(resolved.holdTools, ['compress', 'acp_*'])
+  assert.deepEqual(resolveConfig(undefined).holdTools, [])
+})
+
+test('a held tool pins full effort even on an otherwise clean streak', () => {
+  const plan = planFor(SELF_HOSTED)
+  const state = createState()
+  const observation = (name, overrides = {}) => ({
+    name, argsKey: `${name}:1`, isError: false, chars: 40, durationMs: 20, ...overrides,
+  })
+
+  // Seven fast small calls: without a hold this is a deep, clean streak.
+  for (let index = 0; index < 7; index += 1) {
+    recordObservation(state, 'agent', observation('bash', { argsKey: `bash:${index}` }), 8)
+  }
+  const clean = readSignals(state, 'agent', { holdTools: ['compress'] })
+  assert.equal(clean.held, 0)
+  assert.equal(clean.struggling, false)
+  assert.equal(decideEffort({ step: 3, current: 'high', plan, config, signals: clean }), 'low')
+
+  // The same streak, but one of the calls was a compression tool: hold.
+  recordObservation(state, 'agent', observation('compress', { argsKey: 'compress:2' }), 8)
+  const held = readSignals(state, 'agent', { holdTools: ['compress'] })
+  assert.equal(held.held, 1)
+  assert.equal(held.struggling, true)
+  const heldConfig = resolveConfig({ holdTools: ['compress'] })
+  assert.equal(decideEffort({ step: 3, current: 'high', plan, config: heldConfig, signals: held }), 'high')
+
+  // A window wildcard covers a whole context-management family.
+  const wildcard = readSignals(state, 'agent', { holdTools: ['comp*'] })
+  assert.equal(wildcard.held, 1)
+})
+
+test('holdTools is inert when configured empty, and the whole-request hook stays safe', () => {
+  const plan = planFor(SELF_HOSTED)
+  const state = createState()
+  recordObservation(state, 'agent', { name: 'compress', argsKey: 'a', isError: false, chars: 20, durationMs: 10 }, 8)
+  const signals = readSignals(state, 'agent', {})
+  assert.equal(signals.held, 0)
+  // With no hold configured the ordinary single notch still applies: this route
+  // declares a real `medium`, so one notch down from `high` lands there.
+  assert.equal(decideEffort({ step: 3, current: 'high', plan, config, signals }), 'medium')
+})
+
+test('gears select a coherent stance, and explicit fields still win', () => {
+  assert.deepEqual(
+    Object.entries(GEARS).map(([name, gear]) => [name, gear.level, gear.parallel, gear.directive]),
+    [
+      ['safe', 1, 2, false],
+      ['fast', 2, 4, true],
+      ['turbo', 3, 6, true],
+      ['max', 4, 8, true],
+    ],
+  )
+
+  // A config that names no gear gets the shipped one, field by field.
+  const shipped = resolveConfig(undefined)
+  assert.equal(shipped.gear, DEFAULT_GEAR)
+  assert.equal(DEFAULT_GEAR, 'fast')
+  assert.equal(shipped.parallel, 4)
+  assert.equal(shipped.deepAfter, 4)
+  assert.equal(shipped.window, 6)
+  assert.equal(shipped.directive, true)
+  assert.equal(shipped.floor, DEFAULTS.floor)
+
+  // Gear 1 is the previous release's behaviour, so an upgrade can opt back in.
+  const legacy = resolveConfig({ gear: 'safe' })
+  assert.equal(legacy.parallel, 1)
+  assert.equal(legacy.deepAfter, DEFAULTS.deepAfter)
+  assert.equal(legacy.window, DEFAULTS.window)
+  assert.equal(legacy.directive, false)
+
+  // A name, a number and a numeric string all name the same gear.
+  for (const value of ['turbo', 3, '3', ' TURBO ']) {
+    const resolved = resolveConfig({ gear: value })
+    assert.equal(resolved.gear, 'turbo')
+    assert.equal(resolved.deepAfter, 3)
+    assert.equal(resolved.window, 5)
+    assert.equal(resolved.parallel, 6)
+  }
+
+  // An explicit field overrides the gear without discarding the rest of it.
+  const tuned = resolveConfig({ gear: 4, deepAfter: 9, parallel: 3, floor: 'high' })
+  assert.equal(tuned.deepAfter, 9)
+  assert.equal(tuned.parallel, 3)
+  assert.equal(tuned.floor, 'high')
+  assert.equal(tuned.window, 4)
+
+  // Absent means the shipped gear; unreadable means the conservative one, so
+  // that a typo cannot silently turn on prompt injection.
+  for (const absent of [null, '']) assert.equal(normaliseGear(absent), DEFAULT_GEAR)
+  for (const junk of ['warp', 9, {}, []]) {
+    assert.equal(normaliseGear(junk), 'safe')
+    assert.equal(resolveConfig({ gear: junk }).parallel, 1)
+  }
+})
+
+test('a higher gear earns its second notch earlier than the safe gear', () => {
+  const plan = planFor(SELF_HOSTED)
+  const state = createState()
+  for (let index = 0; index < 3; index += 1) {
+    recordObservation(state, 'agent', {
+      name: 'read', argsKey: `read:${index}`, isError: false, chars: 30, durationMs: 15,
+    }, 8)
+  }
+  const signals = readSignals(state, 'agent', { window: 8 })
+  assert.equal(signals.cleanStreak, 3)
+  assert.equal(signals.struggling, false)
+
+  // Three clean calls is one notch on `safe`, and the second notch on `turbo`.
+  assert.equal(decideEffort({ step: 2, current: 'high', plan, config: resolveConfig(undefined), signals }), 'medium')
+  assert.equal(decideEffort({ step: 2, current: 'high', plan, config: resolveConfig({ gear: 3 }), signals }), 'low')
 })

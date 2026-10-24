@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.3.0",
-  "description": "DeepSeek Harness host plugin: cuts tool-chain wall clock by spending less reasoning on execution steps. Stateless and dependency-free.",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness fast mode: gear-based adaptive reasoning effort plus parallel tool batching. Zero dependencies, provider-agnostic, one host plugin.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
@@ -15,22 +15,29 @@
   "exports": {
     ".": "./index.js",
     "./effort": "./src/effort.js",
+    "./guidance": "./src/guidance.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "src/",
     "cordis.patch.yml",
+    "locale/*.json",
+    "icon.png",
     "README.md",
-    "README.zh.md",
+    "README.en.md",
     "LICENSE"
   ],
   "keywords": [
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "fast-mode",
     "reasoning-effort",
-    "latency"
+    "parallel-tools",
+    "latency",
+    "deepseek"
   ],
   "engines": {
     "node": ">=20"
@@ -44,5 +51,6 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "author": "regrevia"
+  "author": "regrevia",
+  "icon": "./icon.png"
 }
