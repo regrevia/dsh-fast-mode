@@ -506,6 +506,7 @@ test('gears select a coherent stance, and explicit fields still win', () => {
       ['fast', 2, 4, true],
       ['turbo', 3, 6, true],
       ['max', 4, 8, true],
+      ['ludicrous', 5, 8, true],
     ],
   )
 

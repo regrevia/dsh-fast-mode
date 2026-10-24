@@ -87,72 +87,78 @@ window.__ModuleLoader__.load({
       { id: 'safe', speed: 1, tokens: 1 },
       { id: 'fast', speed: 1.3, tokens: 1.2 },
       { id: 'turbo', speed: 1.6, tokens: 1.5 },
-      { id: 'max', speed: 1.9, tokens: 1.9 },
+      { id: 'max', speed: 2.2, tokens: 1.9 },
+      // The only gear that reaches past ~2x, because it is the only one allowed
+      // to drop reasoning to `off`. It carries a visible asterisk for that.
+      { id: 'ludicrous', speed: 3.4, tokens: 1.3, risky: true },
     ]
 
+    /**
+     * Dictionaries, written with **dotted top-level keys on purpose**.
+     *
+     * `dsh-client-locale` resolves a key by indexing the dictionary flat —
+     * `dicts.get(ns).get(locale)?.[key]` (`dsh-client-locale/lib/client.js`
+     * lookup) — and falls back to returning the key itself. A nested
+     * `{ menu: { speed: … } }` therefore never resolves `'menu.speed'`: the chip
+     * painted raw keys (`menu.headOff`, `gears.safe`) instead of words. Flat
+     * keys make the lookup hit.
+     *
+     * Chinese is registered under `zh` *and* `zh-CN`: the active locale may be
+     * either tag, and a miss falls through to English.
+     */
     const zh = {
-      chip: {
-        on: 'Fast 模式已开启',
-        off: 'Fast 模式已关闭',
-        titleOn: 'Fast 模式：已开启 · {gear}（速度 ~{speed} · token ~{tokens}）。点击关闭',
-        titleOff: 'Fast 模式：已关闭 · {gear}（速度 ~{speed} · token ~{tokens}）。点击开启',
-        titleLoading: 'Fast 模式：正在读取配置，点击重试',
-        readonly: 'Fast 模式配置为只读，无法从界面切换',
-        error: 'Fast 模式配置读取失败：{error}',
-        absent: 'Fast 模式未在此配置中声明，点击重试',
-      },
-      menu: {
-        title: 'Fast 模式档位',
-        open: '选择加速档位',
-        headOn: 'Fast 模式：已开启',
-        headOff: 'Fast 模式：已关闭',
-        toggleOn: '点击关闭',
-        toggleOff: '点击开启',
-        speed: '速度',
-        tokens: 'token',
-        note: '倍率为预估：档位越高，越早允许降思考、每步并行目标越宽。实际收益取决于任务形态；选择档位会同时开启 Fast 模式。',
-        busy: '正在写入…',
-      },
-      gears: {
-        safe: '安全',
-        fast: '快速',
-        turbo: '涡轮',
-        max: '极限',
-      },
+      'chip.on': 'Fast 模式已开启',
+      'chip.off': 'Fast 模式已关闭',
+      'chip.titleOn': 'Fast 模式：已开启 · {gear}（速度 ~{speed} · token ~{tokens}）。点击进入设置',
+      'chip.titleOff': 'Fast 模式：已关闭 · {gear}（速度 ~{speed} · token ~{tokens}）。点击进入设置',
+      'chip.titleLoading': 'Fast 模式：正在读取配置，点击重试',
+      'chip.readonly': 'Fast 模式配置为只读，无法从这里切换',
+      'chip.error': 'Fast 模式配置读取失败：{error}',
+      'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
+      'menu.title': 'Fast 模式',
+      'menu.open': '打开 Fast 模式设置',
+      'menu.on': '已开启',
+      'menu.off': '已关闭',
+      'menu.switchOn': '已开启，点击关闭',
+      'menu.switchOff': '已关闭，点击开启',
+      'menu.busy': '写入中…',
+      'menu.note': '倍率预估：速度 · token',
+      'menu.warn': '* 关闭思考，质量会下降',
+      'gears.safe': '安全',
+      'gears.fast': '快速',
+      'gears.turbo': '涡轮',
+      'gears.max': '极限',
+      'gears.ludicrous': '极速',
     }
 
     const en = {
-      chip: {
-        on: 'Fast mode is on',
-        off: 'Fast mode is off',
-        titleOn: 'Fast mode: on · {gear} (speed ~{speed} · token ~{tokens}). Click to turn off',
-        titleOff: 'Fast mode: off · {gear} (speed ~{speed} · token ~{tokens}). Click to turn on',
-        titleLoading: 'Fast mode: reading configuration. Click to retry',
-        readonly: 'Fast mode configuration is read-only',
-        error: 'Fast mode configuration unavailable: {error}',
-        absent: 'Fast mode is not configured in this composition. Click to retry',
-      },
-      menu: {
-        title: 'Fast mode gear',
-        open: 'Choose a speed gear',
-        headOn: 'Fast mode: on',
-        headOff: 'Fast mode: off',
-        toggleOn: 'Click to turn off',
-        toggleOff: 'Click to turn on',
-        speed: 'speed',
-        tokens: 'token',
-        note: 'Multipliers are estimates: a higher gear allows the effort drop earlier and asks for wider steps. Real gains depend on the task; picking a gear also turns Fast mode on.',
-        busy: 'Writing…',
-      },
-      gears: {
-        safe: 'Safe',
-        fast: 'Fast',
-        turbo: 'Turbo',
-        max: 'Max',
-      },
+      'chip.on': 'Fast mode is on',
+      'chip.off': 'Fast mode is off',
+      'chip.titleOn': 'Fast mode: on · {gear} (speed ~{speed} · token ~{tokens}). Click for settings',
+      'chip.titleOff': 'Fast mode: off · {gear} (speed ~{speed} · token ~{tokens}). Click for settings',
+      'chip.titleLoading': 'Fast mode: reading configuration. Click to retry',
+      'chip.readonly': 'Fast mode configuration is read-only',
+      'chip.error': 'Fast mode configuration unavailable: {error}',
+      'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
+      'menu.title': 'Fast mode',
+      'menu.open': 'Open fast mode settings',
+      'menu.on': 'On',
+      'menu.off': 'Off',
+      'menu.switchOn': 'On, click to turn off',
+      'menu.switchOff': 'Off, click to turn on',
+      'menu.busy': 'Writing…',
+      'menu.note': 'Estimates: speed · token',
+      'menu.warn': '* reasoning off, quality drops',
+      'gears.safe': 'Safe',
+      'gears.fast': 'Fast',
+      'gears.turbo': 'Turbo',
+      'gears.max': 'Max',
+      'gears.ludicrous': 'Ludicrous',
     }
 
     const CSS = [
+      // The chip: one icon, nothing else. Clicking it opens the panel; the
+      // on/off switch lives inside the panel, not next to the bolt.
       '.fm-chip{display:inline-flex;align-items:center;min-width:0;flex:none;position:relative}',
       '.fm-chip__button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;',
       'width:28px;height:28px;padding:0;margin:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;',
@@ -161,45 +167,47 @@ window.__ModuleLoader__.load({
       '.fm-chip__button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));',
       'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
       '.fm-chip__button[data-on="true"]{color:var(--dsw-alias-label-primary,#141414)}',
+      '.fm-chip__button[data-open="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(77,107,254,.12))}',
       '.fm-chip__button[data-busy="true"]{opacity:.55;cursor:progress}',
       '.fm-chip__button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
       '.fm-chip__button svg{display:block;flex:none}',
-      '.fm-chip__caret{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;',
-      'width:13px;height:28px;padding:0;margin:0 0 0 -2px;border:0;border-radius:4px;background:transparent;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b);cursor:pointer;opacity:.7;transition:opacity .12s ease,background-color .12s ease}',
-      '.fm-chip__caret:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
-      '.fm-chip__caret:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
-      'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
-      '.fm-chip__caret::before{content:"";width:0;height:0;border-left:3.5px solid transparent;',
-      'border-right:3.5px solid transparent;border-top:4px solid currentColor}',
-      '.fm-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:274px;padding:6px;',
+      // The panel. Narrow on purpose: every row is `name  numbers`, and the
+      // explanatory text is one line at the bottom.
+      '.fm-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:196px;padding:5px;',
       'border-radius:12px;background:var(--dsw-alias-bg-elevated,#fff);',
       'border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.08));box-shadow:0 10px 30px rgba(0,0,0,.18);',
       'font:inherit;color:var(--dsw-alias-label-primary,#141414);text-align:left}',
       '.fm-menu--dock{left:50%;bottom:104px;transform:translateX(-50%)}',
-      '.fm-menu__head{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:7px 8px;',
+      '.fm-menu__head{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 7px;',
       'margin:0;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}',
-      '.fm-menu__head:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
-      '.fm-menu__dot{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.28}',
-      '.fm-menu__dot[data-on="true"]{opacity:1;background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
-      '.fm-menu__title{flex:none;font-size:12px;font-weight:600;letter-spacing:.02em}',
-      '.fm-menu__hint{margin-left:auto;font-size:10.5px;color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap}',
-      '.fm-menu__sep{height:1px;margin:5px 6px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
-      '.fm-menu__item{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:7px 8px;',
-      'margin:0;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12.5px;',
+      '.fm-menu__title{flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;letter-spacing:.02em;',
+      'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      // The switch: a real control, so the state reads without a sentence.
+      '.fm-menu__switch{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:flex-end;',
+      'width:28px;height:16px;padding:0 2px;margin:0;border:0;border-radius:8px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.16));',
+      'cursor:pointer;transition:background-color .14s ease}',
+      '.fm-menu__switch[data-on="true"]{background:var(--dsw-alias-state-business-primary,#4d6bfe);justify-content:flex-start}',
+      '.fm-menu__knob{flex:none;width:12px;height:12px;border-radius:50%;background:#fff;',
+      'box-shadow:0 1px 2px rgba(0,0,0,.28)}',
+      '.fm-menu__switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
+      'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
+      '.fm-menu__sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
+      '.fm-menu__item{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:5px 7px;',
+      'margin:0;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:12px;',
       'cursor:pointer;text-align:left}',
       '.fm-menu__item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
       '.fm-menu__item[data-current="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(77,107,254,.1))}',
-      '.fm-menu__name{flex:none;font-weight:600;min-width:2.4em}',
-      '.fm-menu__meter{margin-left:auto;font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;',
+      '.fm-menu__item[data-off="true"]{opacity:.5}',
+      '.fm-menu__name{flex:none;font-weight:600;white-space:nowrap}',
+      '.fm-menu__meter{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;',
       'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
-      '.fm-menu__tick{flex:none;width:9px;height:9px;border-radius:50%;',
+      '.fm-menu__tick{flex:none;width:6px;height:6px;border-radius:50%;',
       'background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
       '.fm-menu__tick[data-empty="true"]{background:transparent}',
-      '.fm-menu__note{padding:6px 8px 3px;font-size:10.5px;line-height:1.5;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
-      '.fm-menu__status{padding:7px 8px;font-size:11px;line-height:1.5;',
+      '.fm-menu__note{padding:4px 7px 2px;font-size:10px;line-height:1.4;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap}',
+      '.fm-menu__status{padding:6px 7px;font-size:11px;line-height:1.45;',
       'color:var(--dsw-alias-state-error-primary,#c9353f)}',
     ].join('')
 
@@ -554,27 +562,20 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The bolt button. Always acts: writes when the namespace is known, and
-     * otherwise re-reads it and reports why it could not — with the menu as the
-     * visible surface for that report.
+     * Flip fast mode. Called from the switch inside the panel, so the panel is
+     * already open — a refusal just leaves the reason on the status line there
+     * instead of closing the surface the user is looking at.
      *
      * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      */
-    async function clickBolt(remote) {
+    async function toggleEnabled(remote) {
       if (store.busy) return
       if (store.phase !== 'ready') {
         await refresh(remote)
-        if (store.phase !== 'ready') {
-          openMenu(undefined)
-          return
-        }
+        if (store.phase !== 'ready') return
       }
-      if (!store.writable) {
-        openMenu(undefined)
-        return
-      }
-      const accepted = await write(remote, { enabled: !store.enabled })
-      if (!accepted) openMenu(undefined)
+      if (!store.writable) return
+      await write(remote, { enabled: !store.enabled })
     }
 
     /* -------------------------------------------------------------- component */
@@ -594,7 +595,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The gear menu.
+     * The panel the bolt opens.
+     *
+     * One switch, one gear list, one line of fine print — the earlier version
+     * repeated `速度` / `token` on every row and overflowed its own box. The
+     * numbers are absolute estimates, so the footer only has to explain the pair
+     * once, and the menu stays narrow enough to sit above the composer.
      *
      * @param {{t: (key: string, params?: object) => string, remote: any}} props
      */
@@ -609,22 +615,31 @@ window.__ModuleLoader__.load({
 
       const children = [
         react.createElement(
-          'button',
-          {
-            type: 'button',
-            className: 'fm-menu__head',
-            'data-on': on ? 'true' : 'false',
-            'aria-pressed': on,
-            onClick: () => { void clickBolt(remote) },
-          },
-          react.createElement('span', { className: 'fm-menu__dot', 'data-on': on ? 'true' : 'false' }),
-          react.createElement('span', { className: 'fm-menu__title' }, on ? t('menu.headOn') : t('menu.headOff')),
-          react.createElement('span', { className: 'fm-menu__hint' }, store.busy ? t('menu.busy') : t(on ? 'menu.toggleOn' : 'menu.toggleOff')),
+          'div',
+          { className: 'fm-menu__head' },
+          react.createElement('span', { className: 'fm-menu__title' }, t('menu.title')),
+          react.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'fm-menu__switch',
+              role: 'switch',
+              'aria-checked': on,
+              'aria-label': t(on ? 'chip.on' : 'chip.off'),
+              title: t(store.busy ? 'menu.busy' : on ? 'menu.switchOn' : 'menu.switchOff'),
+              'data-on': on ? 'true' : 'false',
+              'data-busy': store.busy ? 'true' : 'false',
+              onClick: () => { void toggleEnabled(remote) },
+            },
+            react.createElement('span', { className: 'fm-menu__knob' }),
+          ),
         ),
         react.createElement('div', { className: 'fm-menu__sep' }),
       ]
 
       for (const entry of GEAR_MENU) {
+        const name = t(`gears.${entry.id}`)
+        const meter = `${formatX(entry.speed)} · ${formatX(entry.tokens)}`
         children.push(react.createElement(
           'button',
           {
@@ -632,20 +647,26 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'fm-menu__item',
             'data-current': store.gear === entry.id ? 'true' : 'false',
-            'aria-label': `${t(`gears.${entry.id}`)} ${t('menu.speed')} ~${formatX(entry.speed)} ${t('menu.tokens')} ~${formatX(entry.tokens)}`,
+            'data-off': on ? 'false' : 'true',
+            title: `${name} ${meter}`,
+            'aria-label': entry.risky === true ? `${name} ${meter} ${t('menu.warn')}` : `${name} ${meter}`,
             onClick: () => { void chooseGear(remote, entry.id) },
           },
-          react.createElement('span', { className: 'fm-menu__name' }, t(`gears.${entry.id}`)),
           react.createElement(
             'span',
-            { className: 'fm-menu__meter' },
-            `${t('menu.speed')} ~${formatX(entry.speed)} · ${t('menu.tokens')} ~${formatX(entry.tokens)}`,
+            { className: 'fm-menu__name' },
+            entry.risky === true ? `${name}*` : name,
           ),
+          react.createElement('span', { className: 'fm-menu__meter' }, meter),
           react.createElement('span', { className: 'fm-menu__tick', 'data-empty': store.gear === entry.id ? 'false' : 'true' }),
         ))
       }
 
-      children.push(react.createElement('div', { className: 'fm-menu__note' }, t('menu.note')))
+      children.push(react.createElement(
+        'div',
+        { className: 'fm-menu__note' },
+        GEAR_MENU.some(entry => entry.risky === true) ? `${t('menu.note')} ${t('menu.warn')}` : t('menu.note'),
+      ))
       if (status !== '') children.push(react.createElement('div', { className: 'fm-menu__status' }, status))
 
       return react.createElement(
@@ -661,7 +682,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The chip itself: a bolt that toggles, and a caret that opens the gear menu.
+     * The chip: one bolt, and nothing else.
+     *
+     * It is an *entry point*, not a switch: clicking it opens the panel, where
+     * the on/off control and the gear list live. A hollow bolt means fast mode
+     * is off, a filled one that it is on — that is the whole at-a-glance
+     * contract, and it is why the caret that used to sit next to it is gone.
      *
      * @param {{t: (key: string, params?: object) => string, remote: any}} props
      */
@@ -674,6 +700,7 @@ window.__ModuleLoader__.load({
       const on = store.phase === 'ready' && store.enabled
       const gear = currentGear()
       const status = statusLine(t)
+      const open = store.menu !== undefined
       const title = status !== ''
         ? status
         : t(on ? 'chip.titleOn' : 'chip.titleOff', {
@@ -691,11 +718,17 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'fm-chip__button',
             'data-on': on ? 'true' : 'false',
+            'data-open': open ? 'true' : 'false',
             'data-busy': store.busy ? 'true' : 'false',
             'aria-pressed': on,
+            'aria-haspopup': 'dialog',
+            'aria-expanded': open,
             'aria-label': t(on ? 'chip.on' : 'chip.off'),
             title,
-            onClick: () => { void clickBolt(remote) },
+            onClick: (event) => {
+              toggleMenu(event && event.currentTarget)
+              if (store.phase !== 'ready') void refresh(remote)
+            },
           },
           react.createElement(
             'svg',
@@ -710,18 +743,6 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
-        react.createElement('button', {
-          type: 'button',
-          className: 'fm-chip__caret',
-          'aria-haspopup': 'dialog',
-          'aria-expanded': store.menu !== undefined,
-          'aria-label': t('menu.open'),
-          title: t('menu.open'),
-          onClick: (event) => {
-            toggleMenu(event && event.currentTarget)
-            if (store.phase !== 'ready') void refresh(remote)
-          },
-        }),
         store.menu === undefined ? null : react.createElement(GearMenu, { t, remote }),
       )
     }
@@ -734,7 +755,9 @@ window.__ModuleLoader__.load({
      * @param {any} ctx - client root context.
      */
     function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'fast-mode: dictionaries')
+      // Registering both Chinese tags costs nothing and covers whichever tag
+      // the profile activates: `zh`, `zh-CN`, or a fallback to `en`.
+      ctx.effect(() => ctx.locale.register(NS, { zh, 'zh-CN': zh, en }), 'fast-mode: dictionaries')
 
       const t = ctx.locale.bind(NS)
 

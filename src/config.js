@@ -10,15 +10,18 @@
  *   why the on/off switch and the gear selector exist there without a line of
  *   client code.
  *
- * Every declared field is `.volatile()`: that is what makes it appear in the
- * generated form *and* what lets an edit reach a running fiber instead of
- * forcing a remount. A non-volatile declaration is invisible here — `describe()`
- * drops it from the form and `update()` refuses the path with "is not volatile".
+ * The three form fields (`enabled`, `gear`, `parallel`) are `.volatile()`: that
+ * is what makes them appear in the generated form *and* what lets an edit reach
+ * a running fiber instead of forcing a remount. A non-volatile declaration is
+ * invisible in the form — `describe()` drops it and `update()` refuses the path
+ * with "is not volatile". The measurement paths below are deliberately *not*
+ * volatile: they are read once at load, like `debugFile`.
  *
  * Only the fields that belong on a settings page are declared. Every other
  * knob (`floor`, `ladder`, `aliases`, `deepAfter`, `slowMs`, `bigChars`,
  * `window`, `holdTools`, `escalateAfterStep`, `discoverTimeoutMs`,
- * `baselineFromDefault`, `debug`, `debugFile`) is a composition-level
+ * `baselineFromDefault`, `metrics`, `metricsFile`, `benchmarkFile`, `debug`,
+ * `debugFile`) is a composition-level
  * troubleshooting value: schemastery passes undeclared keys through untouched,
  * so a hand-written patch keeps working without cluttering the form.
  *
@@ -53,7 +56,7 @@ export const Config = z.object({
     .default('fast')
     .volatile()
     .description(
-      '档位 / Gear: safe < fast < turbo < max. 越高越早允许降档，模型侧并行目标 4/6/8 次调用；档位只抬高并行上限，不改变最低档位。',
+      '档位 / Gear: safe < fast < turbo < max < ludicrous。越高越早允许降档，模型侧并行目标 4/6/8/8 次调用；档位只抬高并行上限，不改变最低档位。ludicrous 会连思考档一起取消（reasoning off），只适合明确不要质量的批量任务。',
     ),
 
   parallel: z
@@ -64,5 +67,26 @@ export const Config = z.object({
     .volatile()
     .description(
       '并行上限 / Parallel ceiling: 覆盖档位默认的每步并行目标（1 表示不注入批量提示）。',
+    ),
+
+  metrics: z
+    .boolean()
+    .default(true)
+    .description(
+      '记录每步耗时与 token / Record per-step latency and tokens: 写入 metricsFile，用于对比开启与关闭档位的真实效果。默认开启，关闭则不写任何文件。',
+    ),
+
+  metricsFile: z
+    .string()
+    .default('~/.dsh/fast-mode-metrics.jsonl')
+    .description(
+      '计量文件 / Metrics file: 每步一行的 JSONL（会话、档位、首字延迟、模型耗时、输出 token、工具调用数）。',
+    ),
+
+  benchmarkFile: z
+    .string()
+    .default('~/.dsh/fast-mode-bench.json')
+    .description(
+      '实验分配文件 / Experiment assignment file: 存在且 enabled=true 时按会话哈希分配档位（内容 {"enabled":true,"gears":[...]}）；默认文件不存在即不启用，改动最多 1 秒生效。',
     ),
 })

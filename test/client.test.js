@@ -152,16 +152,39 @@ async function mount(remote) {
   return { ctx, module, render, t }
 }
 
-/** The gear menu element, rendered (the fake react does not call components). */
+/** The panel element, rendered (the fake react does not call components). */
 function renderMenu(tree) {
-  const element = tree.children[2]
+  const element = tree.children[1]
   if (element === null || element === undefined) return undefined
   return element.type(element.props)
 }
 
-/** The four gear rows of a rendered menu: head and separator come first. */
+/** The bolt: the chip carries exactly one control. */
+function boltOf(tree) {
+  return tree.children[0]
+}
+
+/** Click the bolt and hand back the opened panel. */
+function openPanel(render) {
+  boltOf(render()).props.onClick()
+  return renderMenu(render())
+}
+
+/** The on/off switch, inside the panel head row. */
+function switchOf(menu) {
+  return menu.children[0].children[1]
+}
+
+/** The gear rows of a rendered panel, in menu order. */
 function gearRows(menu) {
-  return menu.children.slice(2, 6).map(element => element.props)
+  return menu.children
+    .filter(element => element.props && element.props.className === 'fm-menu__item')
+    .map(element => element.props)
+}
+
+/** The trailing line of a panel: the estimate note, or a status sentence. */
+function lastLine(menu) {
+  return menu.children.at(-1).children.join('')
 }
 
 test('the bundle declares the loader contract and the services it needs', () => {
@@ -192,8 +215,43 @@ test('it registers one chip on the composer slot beside the model selector, neve
   assert.equal(options.locale, 'fast-mode', 'the chip must own a dictionary namespace')
   assert.equal(options.inject().remote, remote, 'the component needs the settings remote')
   assert.equal(ctx.labels.length, 1, 'dictionaries are registered once')
-  assert.ok(ctx.labels[0].dict.zh.chip && ctx.labels[0].dict.en.chip, 'both languages are shipped inline')
-  assert.ok(ctx.labels[0].dict.zh.menu && ctx.labels[0].dict.zh.gears, 'the gear menu is translated too')
+  const dict = ctx.labels[0].dict
+  assert.equal(typeof dict.zh['chip.on'], 'string', 'both languages are shipped inline')
+  assert.equal(typeof dict.en['chip.on'], 'string')
+  assert.equal(dict['zh-CN'], dict.zh, 'the zh-CN tag falls back to the same strings')
+})
+
+test('every dictionary key is flat, because the locale lookup indexes it flat', async () => {
+  const { ctx } = await mount(fakeRemote())
+  const dict = ctx.labels[0].dict
+
+  // `dsh-client-locale` resolves a key as `dict[locale][key]`. A nested object
+  // can never answer `'menu.title'`, which is why the shipped panel painted raw
+  // keys instead of words. Every shipped key must therefore be a dotted string.
+  for (const locale of ['zh', 'en']) {
+    for (const [key, value] of Object.entries(dict[locale])) {
+      assert.equal(typeof value, 'string', `${locale}: ${key} must be a string`)
+      assert.match(key, /^[a-z]+(\.[a-zA-Z]+)+$/, `${locale}: "${key}" must be a dotted flat key`)
+    }
+  }
+  assert.match(dict.zh['menu.note'], /预估/, 'the multipliers are labelled as estimates')
+  assert.match(dict.en['menu.note'], /estimates/i)
+  assert.match(dict.zh['gears.turbo'], /涡轮/, 'the gears carry their own names')
+  assert.match(dict.zh['gears.ludicrous'], /极速/)
+  assert.match(dict.zh['menu.warn'], /质量/, 'the past-2x gear says what it costs')
+})
+
+test('the outer control is one icon: no caret, no dropdown affordance', async () => {
+  const { render } = await mount(fakeRemote())
+  const tree = render()
+
+  assert.deepEqual(tree.children.filter(Boolean).map(el => el.props.className), ['fm-chip__button'],
+    'closed: the chip is the bolt and nothing else')
+  const bolt = boltOf(tree)
+  assert.equal(bolt.props.className, 'fm-chip__button')
+  assert.equal(bolt.props['aria-haspopup'], 'dialog', 'the bolt opens the panel')
+  assert.equal(bolt.props['aria-expanded'], false)
+  assert.equal(bolt.props.title.includes('chip.title'), true, 'the icon still explains itself on hover')
 })
 
 test('the chip answers the wire envelope: a payload-only describe still resolves the namespace', async () => {
@@ -204,104 +262,106 @@ test('the chip answers the wire envelope: a payload-only describe still resolves
 
   const { render } = await mount(remote)
   const tree = render()
-  assert.equal(tree.children[0].props['data-on'], 'false')
-  assert.match(tree.children[0].props.title, /turbo/, 'the gear was read through the bare payload')
+  assert.equal(boltOf(tree).props['data-on'], 'false')
+  assert.match(boltOf(tree).props.title, /turbo/, 'the gear was read through the bare payload')
 })
 
-test('the chip starts hollow and a click writes enabled:true with the revision it read', async () => {
+test('clicking the bolt opens the panel and writes nothing by itself', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'turbo' })
   const { render } = await mount(remote)
-  const tree = render()
-  const button = tree.children[0]
 
-  assert.equal(button.props['data-on'], 'false', 'off is hollow')
-  assert.equal(button.props['aria-pressed'], false)
-  assert.equal(button.props.disabled, undefined, 'the chip is never a dead button')
-  assert.match(button.props.title, /titleOff/, 'the tooltip names the gear while off')
-  assert.match(button.props.title, /turbo/)
-  assert.equal(button.children[0].children[0].props.fill, 'none', 'the bolt is hollow when off')
+  const menu = openPanel(render)
+  assert.ok(menu !== undefined, 'the bolt opens the panel')
+  assert.equal(remote.calls.length, 0, 'opening the panel is not a configuration write')
+  assert.match(menu.props.className, /^fm-menu( |$)/)
+  assert.equal(menu.props['aria-label'], 'menu.title')
+  assert.equal(boltOf(render()).props['aria-expanded'], true, 'the icon reports the panel state')
+})
 
-  button.props.onClick()
-  await sleep(10)
+test('the switch inside the panel turns Fast mode on with the revision it read', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
+  const { render } = await mount(remote)
+  const menu = openPanel(render)
+  assert.equal(switchOf(menu).props['aria-checked'], false, 'the switch starts off (hollow bolt)')
+
+  switchOf(menu).props.onClick()
+  await sleep(20)
 
   assert.equal(remote.calls.length, 1)
-  // The call is assembled inside the vm realm, so compare fields, not identity.
   assert.equal(remote.calls[0].ns, 'fast-mode')
   assert.equal(remote.calls[0].patch.enabled, true)
   assert.equal(remote.calls[0].revision, 3)
 
-  const onButton = render().children[0]
-  assert.equal(onButton.props['data-on'], 'true', 'on is filled')
-  assert.equal(onButton.children[0].children[0].props.fill, 'currentColor')
-  assert.match(onButton.props.title, /titleOn/)
+  const after = render()
+  const onBolt = boltOf(after)
+  assert.equal(onBolt.props['data-on'], 'true', 'on is filled')
+  assert.equal(onBolt.children[0].children[0].props.fill, 'currentColor')
+  assert.match(onBolt.props.title, /titleOn/)
+  assert.equal(switchOf(renderMenu(after)).props['aria-checked'], true, 'the panel stays open and in sync')
 })
 
-test('a second click turns it back off, still echoing the current revision', async () => {
+test('a second click on the switch turns it back off, still echoing the current revision', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'fast' })
   const { render } = await mount(remote)
-  assert.equal(render().children[0].props['data-on'], 'true')
+  assert.equal(boltOf(render()).props['data-on'], 'true')
 
-  render().children[0].props.onClick()
-  await sleep(10)
+  switchOf(openPanel(render)).props.onClick()
+  await sleep(20)
 
   assert.equal(remote.calls[0].ns, 'fast-mode')
   assert.equal(remote.calls[0].patch.enabled, false)
   assert.equal(remote.calls[0].revision, 3)
-  assert.equal(render().children[0].props['data-on'], 'false')
+  assert.equal(boltOf(render()).props['data-on'], 'false')
 })
 
-test('a refused write reverts the chip and explains itself in the tooltip', async () => {
+test('a refused write reverts the chip and explains itself in the tooltip and the panel', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'fast' }, { fail: true })
   const { render } = await mount(remote)
-  render().children[0].props.onClick()
+  switchOf(openPanel(render)).props.onClick()
   await sleep(20)
 
   const after = render()
-  assert.equal(after.children[0].props['data-on'], 'false', 'the optimistic paint must roll back')
-  assert.match(after.children[0].props.title, /error/, 'the tooltip reports the failure')
-  assert.match(after.children[0].props.title, /revision conflict/)
+  assert.equal(boltOf(after).props['data-on'], 'false', 'the optimistic paint must roll back')
+  assert.match(boltOf(after).props.title, /error/, 'the tooltip reports the failure')
+  assert.match(boltOf(after).props.title, /revision conflict/)
 
   const menu = renderMenu(after)
-  assert.ok(menu !== undefined, 'a failed click opens the menu instead of doing nothing')
-  assert.match(menu.children.at(-1).children.join(''), /revision conflict/, 'the menu states the reason')
+  assert.ok(menu !== undefined, 'the panel stays open so the reason stays visible')
+  assert.match(lastLine(menu), /revision conflict/, 'the panel states the reason')
 })
 
-test('the caret opens the gear menu, and every row states its speed and token estimate', async () => {
+test('every gear row states its speed and token estimate, and the panel stays narrow', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'fast' })
-  const { ctx, render } = await mount(remote)
+  const { render } = await mount(remote)
 
-  const caret = render().children[1]
-  assert.equal(caret.props.className, 'fm-chip__caret')
-  assert.equal(caret.props['aria-haspopup'], 'dialog')
-  assert.equal(renderMenu(render()), undefined, 'the menu starts closed')
-
-  caret.props.onClick()
-  const menu = renderMenu(render())
-  assert.ok(menu !== undefined, 'the caret opens the menu')
-  assert.match(menu.props.className, /^fm-menu( |$)/, 'the menu is the fixed-position popover')
-
+  const menu = openPanel(render)
   const rows = gearRows(menu)
-  assert.equal(rows.length, 4)
-  const meters = rows.map(row => row['aria-label'])
-  assert.match(meters[0], /speed ~1\.0×/)
-  assert.match(meters[0], /tokens ~1\.0×/)
-  assert.match(meters[2], /speed ~1\.6×/)
-  assert.match(meters[2], /tokens ~1\.5×/)
-  assert.match(meters[3], /speed ~1\.9×/)
+  assert.equal(rows.length, 5, 'four tiers plus the past-2x gear')
+
+  assert.match(rows[0]['aria-label'], /1\.0× · 1\.0×/)
+  assert.match(rows[2]['aria-label'], /1\.6× · 1\.5×/)
+  assert.match(rows[3]['aria-label'], /2\.2× · 1\.9×/, 'max is the last legal cut on a route without `off`')
+  assert.match(rows[4]['aria-label'], /3\.4× · 1\.3×/, 'the opt-in gear is where 3x lives')
+  assert.match(rows[4]['aria-label'], /质量|quality|warn/, 'the risky gear carries its warning')
+  const riskyName = menu.children
+    .filter(element => element.props && element.props.className === 'fm-menu__item')[4]
+    .children[0].children.join('')
+  assert.equal(riskyName, 'gears.ludicrous*', 'and an asterisk next to its name')
+
   assert.equal(rows[1]['data-current'], 'true', 'the current gear is marked')
-  assert.equal(menu.children[6].props.className, 'fm-menu__note')
-  const dict = ctx.labels[0].dict
-  assert.match(dict.zh.menu.note, /预估/, 'the multipliers are labelled as estimates')
-  assert.match(dict.en.menu.note, /estimates/i)
-  assert.match(dict.zh.gears.turbo, /涡轮/, 'the gears carry their own names')
+  assert.equal(rows[0]['data-current'], 'false')
+  assert.equal(lastLine(menu), 'menu.note menu.warn', 'one line of fine print, not one per row')
+
+  // The earlier panel repeated `速度`/`token` on every row and overflowed its
+  // own 274px box. The rewritten one is a fixed narrow popover.
+  assert.match(menu.props.className, /^fm-menu( |$)/)
 })
 
-test('picking a gear in the menu writes it, and turns Fast mode on if it was off', async () => {
+test('picking a gear in the panel writes it, and turns Fast mode on if it was off', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'fast' })
   const { render } = await mount(remote)
 
-  render().children[1].props.onClick()
-  gearRows(renderMenu(render()))[2].onClick() // turbo
+  gearRows(openPanel(render))[2].onClick() // turbo
   await sleep(20)
 
   assert.equal(remote.calls.length, 1, 'choosing a gear is one write')
@@ -310,21 +370,20 @@ test('picking a gear in the menu writes it, and turns Fast mode on if it was off
   assert.equal(remote.calls[0].revision, 3)
 
   const after = render()
-  assert.equal(after.children[0].props['data-on'], 'true')
-  assert.equal(renderMenu(after), undefined, 'a successful pick closes the menu')
-  assert.match(after.children[0].props.title, /turbo/, 'the chip now reports the new gear')
+  assert.equal(boltOf(after).props['data-on'], 'true')
+  assert.equal(renderMenu(after), undefined, 'a successful pick closes the panel')
+  assert.match(boltOf(after).props.title, /turbo/, 'the chip now reports the new gear')
 })
 
 test('picking a gear while Fast mode is already on leaves the toggle alone', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
 
-  render().children[1].props.onClick()
-  gearRows(renderMenu(render()))[3].onClick() // max
+  gearRows(openPanel(render))[4].onClick() // ludicrous
   await sleep(20)
 
   assert.equal(remote.calls.length, 1)
-  assert.equal(remote.calls[0].patch.gear, 'max')
+  assert.equal(remote.calls[0].patch.gear, 'ludicrous')
   assert.equal('enabled' in remote.calls[0].patch, false, 'no redundant toggle field')
 })
 
@@ -333,16 +392,16 @@ test('a read-only layer refuses to write and says so instead of going dead', asy
   const { render } = await mount(remote)
 
   const tree = render()
-  assert.equal(tree.children[0].props.disabled, undefined, 'read-only is explained, not disabled')
-  assert.equal(tree.children[0].props.title, 'chip.readonly')
+  assert.equal(boltOf(tree).props.disabled, undefined, 'read-only is explained, not disabled')
+  assert.equal(boltOf(tree).props.title, 'chip.readonly')
 
-  tree.children[0].props.onClick()
+  const menu = openPanel(render)
+  assert.ok(menu !== undefined, 'the panel still opens, with the reason in it')
+  assert.equal(lastLine(menu), 'chip.readonly')
+
+  switchOf(menu).props.onClick()
   await sleep(10)
   assert.equal(remote.calls.length, 0, 'a read-only chip must never write')
-
-  const menu = renderMenu(render())
-  assert.ok(menu !== undefined)
-  assert.equal(menu.children.at(-1).children.join(''), 'chip.readonly')
 })
 
 test('a composition without this entry opens an explanation and never throws', async () => {
@@ -351,16 +410,14 @@ test('a composition without this entry opens an explanation and never throws', a
   const { render } = await mount(remote)
 
   const tree = render()
-  assert.equal(tree.children[0].props.disabled, undefined)
-  assert.equal(tree.children[0].props['data-on'], 'false')
-  assert.equal(tree.children[0].props.title, 'chip.absent')
+  assert.equal(boltOf(tree).props.disabled, undefined)
+  assert.equal(boltOf(tree).props['data-on'], 'false')
+  assert.equal(boltOf(tree).props.title, 'chip.absent')
 
-  tree.children[0].props.onClick()
-  await sleep(10)
+  const menu = openPanel(render)
+  assert.ok(menu !== undefined, 'an unknown configuration opens the panel with the reason')
+  assert.equal(lastLine(menu), 'chip.absent')
   assert.equal(remote.calls.length, 0)
-  const menu = renderMenu(render())
-  assert.ok(menu !== undefined, 'an unknown configuration opens the menu with the reason')
-  assert.equal(menu.children.at(-1).children.join(''), 'chip.absent')
 })
 
 test('a namespace with an empty value is still recognised by its declared schema', async () => {
@@ -386,9 +443,9 @@ test('a namespace with an empty value is still recognised by its declared schema
   const { render } = await mount(remote)
 
   const tree = render()
-  assert.equal(tree.children[0].props.title.includes('chip.absent'), false, 'the schema identified the namespace')
-  tree.children[0].props.onClick()
-  await sleep(10)
+  assert.equal(boltOf(tree).props.title.includes('chip.absent'), false, 'the schema identified the namespace')
+  switchOf(openPanel(render)).props.onClick()
+  await sleep(20)
   assert.equal(remote.calls.length, 1)
   assert.equal(remote.calls[0].ns, 'include:fast-mode')
   assert.equal(remote.calls[0].revision, 9)
@@ -400,8 +457,8 @@ test('an unsuccessful describe surfaces the error message rather than silence', 
   const { render } = await mount(remote)
 
   const tree = render()
-  assert.equal(tree.children[0].props.disabled, undefined)
-  assert.match(tree.children[0].props.title, /bridge is down/)
+  assert.equal(boltOf(tree).props.disabled, undefined)
+  assert.match(boltOf(tree).props.title, /bridge is down/)
 })
 
 test('styles are injected once per page, not once per apply', () => {
@@ -411,5 +468,7 @@ test('styles are injected once per page, not once per apply', () => {
   assert.equal(styles.length, 1, 'one <style> tag')
   assert.match(styles[0].textContent, /\.fm-chip__button/, 'the chip CSS travels with the bundle')
   assert.match(styles[0].textContent, /\.fm-menu__item/, 'the menu CSS travels with the bundle')
+  assert.match(styles[0].textContent, /\.fm-menu__switch/, 'so does the switch inside the panel')
+  assert.equal(styles[0].textContent.includes('.fm-chip__caret'), false, 'the caret is gone for good')
   assert.equal(styles[0].dataset.pluginCss, 'dsh-fast-mode/chip.css')
 })

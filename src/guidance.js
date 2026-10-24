@@ -33,10 +33,11 @@ const FANOUT = Object.freeze({
   fast: 'Aim for up to {n} independent calls per message. For exploratory work (reading several files, greps, status checks) prefer one wide step over a chain of narrow ones.',
   turbo: 'Aim for up to {n} independent calls per message. Plan the whole read set of a step before issuing it, then act on every result before requesting more.',
   max: 'Aim for up to {n} independent calls per message. Enumerate every file, search and status check a step needs, issue them together, and combine the results in one pass.',
+  ludicrous: 'Aim for up to {n} independent calls per message. Enumerate every file, search and status check a step needs, issue them together, and combine the results in one pass. Deliberation is off at this gear: act on the evidence you already have instead of planning further, and only stop to think again when a result contradicts the plan.',
 })
 
 /** Fan-out used in the wording when `parallel` is not a usable number. */
-const GEAR_FANOUT = Object.freeze({ fast: 4, turbo: 6, max: 8 })
+const GEAR_FANOUT = Object.freeze({ fast: 4, turbo: 6, max: 8, ludicrous: 8 })
 
 /** The prompt section name, unique so a reload replaces rather than duplicates. */
 export const GUIDANCE_SECTION = 'fast-mode:execution-speed'

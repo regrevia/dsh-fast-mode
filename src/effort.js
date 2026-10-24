@@ -115,6 +115,20 @@ export const GEARS = Object.freeze({
     parallel: 8,
     directive: true,
   }),
+  // The only honest route to 3-4x on a thinking model is to stop paying for
+  // thinking: `floor: 'off'` lets the policy settle on the route's `off` level,
+  // where the provider emits no reasoning tokens at all. Everything else the
+  // plugin owns (dropping `high` to `low`, widening a step to 8 calls) is worth
+  // roughly 2x at best. This gear therefore ships with a warning label in the
+  // picker instead of a promise: deep multi-step work gets noticeably worse.
+  ludicrous: Object.freeze({
+    level: 5,
+    floor: 'off',
+    deepAfter: 1,
+    window: 4,
+    parallel: 8,
+    directive: true,
+  }),
 })
 
 /**
@@ -176,6 +190,10 @@ export const DEFAULTS = Object.freeze({
   baselineFromDefault: true,
   /** Calls to these tools mean the work is not routine; see matchesHold. */
   holdTools: Object.freeze([]),
+  /** Per-step measurement sink; see metrics.js and bin/report.mjs. */
+  metricsFile: '~/.dsh/fast-mode-metrics.jsonl',
+  /** Experiment assignment file; absent or `{enabled:false}` means no experiment. */
+  benchmarkFile: '~/.dsh/fast-mode-bench.json',
 })
 
 /**
@@ -432,12 +450,17 @@ export function plainConfigValue(value) {
  * when the switch is on.
  *
  * @param {object} [raw]
+ * @param {Record<string, unknown>} [overrides] - resolved after unwrapping, so a
+ *   caller can pin one field (`gear`) without having to rebuild the raw config.
  */
-export function resolveConfig(raw) {
+export function resolveConfig(raw, overrides) {
   const source = plainConfigValue(raw) ?? {}
-  const config = /** @type {Record<string, unknown>} */ (Object.fromEntries(
-    Object.entries(source).map(([key, value]) => [key, plainConfigValue(value)]),
-  ))
+  const config = /** @type {Record<string, unknown>} */ ({
+    ...Object.fromEntries(
+      Object.entries(source).map(([key, value]) => [key, plainConfigValue(value)]),
+    ),
+    ...(overrides && typeof overrides === 'object' ? overrides : {}),
+  })
   const gearName = normaliseGear(config.gear)
   const gear = GEARS[gearName]
   const configured = Array.isArray(config.ladder)
@@ -492,6 +515,20 @@ export function resolveConfig(raw) {
     baselineFromDefault: config.baselineFromDefault !== false,
     debug: config.debug === true,
     debugFile: typeof config.debugFile === 'string' ? config.debugFile : '',
+    /**
+     * Measurement sink. On by default: a speed plugin nobody can verify is a
+     * claim, and the comparison needs the sessions that run *without* it just as
+     * much as the ones that run with it.
+     */
+    metrics: config.metrics !== false,
+    metricsFile: typeof config.metricsFile === 'string' && config.metricsFile.length > 0
+      ? config.metricsFile
+      : DEFAULTS.metricsFile,
+    /**
+     * Experiment assignment file. Empty by default: no experiment, and the
+     * configured gear is the only stance.
+     */
+    benchmarkFile: typeof config.benchmarkFile === 'string' ? config.benchmarkFile : DEFAULTS.benchmarkFile,
   }
 }
 
