@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/assets/logo.png" width="120" alt="dsh-fast-mode">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/assets/logo-dark.png">
+    <img src="https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/assets/logo.png" width="120" alt="dsh-fast-mode">
+  </picture>
 </p>
 
 <h1 align="center">dsh-fast-mode</h1>
@@ -101,7 +104,7 @@ Install into the current profile (DSH desktop → Plugin Manager → Install bun
 
 **Verified**: on DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop`, pointing the Plugin Manager at `github:regrevia/dsh-fast-mode` fetched the 0.4.0 tarball and applied it directly (`application: applied`, no warnings); the profile records `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`.
 
-The npm package of the same name **is not published yet** (this machine has no npm credentials), so do not use an npm spec like `dsh-fast-mode@0.4.0` — use the `github:` form above.
+The npm package of the same name **is not published yet** (`npm whoami` has no credentials on this machine), so for now do not use an npm spec like `dsh-fast-mode@0.4.0`; use the `github:` form above.
 
 Paths B / C need the plugin line inserted into the profile's `cordis.patch.yml` (path A writes it itself):
 
