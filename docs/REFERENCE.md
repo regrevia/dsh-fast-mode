@@ -28,6 +28,8 @@ README 只留结论。这里放细节：每一步怎么判定、每个字段是�
 
 第 5 档带星号：它是唯一允许把思考档压到 `off` 的档位，所以面板脚注只写这一句 —— `* 关闭思考，质量会下降`。
 
+两列倍数**不是实测值，是由延迟模型推出来的预测**：`墙钟 ≈ 720 ms × 步数 + 6.63 ms × 输出 token`（689 步的最小二乘，R² = 0.93），倍数是"这一步的独立查询有 n 条时，并行把它们并成一批"的推算；倍数只对"一步里有多个互不依赖的动作"的任务成立。真实测量在 [BENCHMARK.md](../BENCHMARK.md)：步骤被钉死的公开题上五档落在噪声里（0.95×–1.09×），而步骤多的仓库任务上 `turbo` 是 1.65× 墙钟、−40 % token（n=4 vs n=12，U 检验 p≈0.004）。同一份原始日志里 `calls/step` 的中位数在所有档位都是 1.00 —— 单文件题根本不给并行机会，这是"预测"和"实测"差在哪的确切位置。第 5 档 token 倍数反而低于第 3 档，就是因为它关掉思考、而第 3 档还留着 `low`。
+
 闪电的读法：
 
 - **空心灰** = 关闭（默认，插件完全不干预）；
@@ -147,6 +149,7 @@ README 只留结论。这里放细节：每一步怎么判定、每个字段是�
     metrics: true              # 每步一行测量，默认开
     metricsFile: ~/.dsh/fast-mode-metrics.jsonl
     benchmarkFile: ~/.dsh/fast-mode-bench.json
+    reassertAfterCompaction: true   # 上下文被压缩后补一条极短提醒，重申两条调用规则
     debug: false
     debugFile: ""
 ```
@@ -174,6 +177,7 @@ README 只留结论。这里放细节：每一步怎么判定、每个字段是�
 | `metrics` | `true` | 每个完成的步写一行 JSONL；`false` 完全不写文件 |
 | `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | 测量文件路径。**composition 旋钮**：不在设置页出现，改它要动 `cordis.patch.yml` |
 | `benchmarkFile` | `~/.dsh/fast-mode-bench.json` | 按会话分配档位的实验文件，同样只在加载/每秒重读时用 |
+| `reassertAfterCompaction` | `true` | 上下文被压缩后，在下一次请求里补一条极短的 notice（`notice` 形式、`source: plugin`，UI 会折叠它），重申批量调用与有界调用两条规则 —— 压缩会把系统提示里的这段挤掉，而挤掉之后模型最容易退回一次一个调用。`false` 只是不再补这条消息，提示段本身照常注入。**非 volatile**，改它要重新加载 |
 | `debug` / `debugFile` | 关 / `""` | 每个请求一行日志，带上决策依据 |
 
 ### 日志里的 `route=`
