@@ -45,6 +45,7 @@ import {
   resolvePlan,
   stableKey,
 } from './src/effort.js'
+import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
 
 const TAG = '[fast-mode]'
 const GLOBAL_AGENT = '__global__'
@@ -123,6 +124,49 @@ export function apply(ctx, rawConfig) {
   /** @type {Map<string, Promise<any>>} */
   const inFlight = new Map()
   let reported = false
+
+  // A gear above `safe` asks the model for wider steps. The harness schedules
+  // same-message calls concurrently, so this is the one lever that raises real
+  // fan-out; the effort policy cannot. Registration failure is contained: a
+  // plugin that cannot add its section still runs the policy it was asked for.
+  const guidance = buildGuidance(config)
+  if (guidance !== undefined) {
+    try {
+      const systemPrompt = ctx.get('systemPrompt')
+      if (systemPrompt && typeof systemPrompt.section === 'function') {
+        systemPrompt.section({ name: GUIDANCE_SECTION, order: GUIDANCE_ORDER, text: guidance })
+        ctx.logger?.info?.('%s gear=%s asks for up to %d calls per step (prompt section registered)', TAG, config.gear, config.parallel)
+      } else {
+        ctx.logger?.warn?.('%s gear=%s guidance skipped: no systemPrompt service in this composition', TAG, config.gear)
+      }
+    } catch (error) {
+      ctx.logger?.warn?.('%s gear=%s guidance not registered: %s', TAG, config.gear, String(error))
+    }
+  }
+
+  /**
+   * The guidance is only meaningful if the scheduler can actually run that many
+   * calls at once. Report the gap once rather than per request; the value is a
+   * volatile setting, so the fix is a composition patch, not a runtime poke.
+   */
+  let capChecked = false
+  const checkParallelCap = () => {
+    if (capChecked) return
+    capChecked = true
+    try {
+      const holder = ctx.get('agentLoop')?.config?.maxParallelToolCalls
+      const cap = typeof holder?.get === 'function' ? holder.get() : holder
+      if (typeof cap === 'number' && cap < config.parallel) {
+        ctx.logger?.warn?.(
+          '%s gear=%s asks for up to %d calls per step but agentLoop.maxParallelToolCalls=%d caps it; '
+            + 'raise it in cordis.patch.yml (- id: agent-loop, config: { maxParallelToolCalls: %d })',
+          TAG, config.gear, config.parallel, cap, config.parallel,
+        )
+      }
+    } catch {
+      // A diagnostic must never break a request.
+    }
+  }
 
   /**
    * Ask the harness for the current route's declared levels. Any failure is a
@@ -243,6 +287,7 @@ export function apply(ctx, rawConfig) {
 
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
+    checkParallelCap()
 
     const original = resolved?.reasoningEffort
     let effort = original
@@ -263,6 +308,7 @@ export function apply(ctx, rawConfig) {
         window: config.window,
         slowMs: config.slowMs,
         bigChars: config.bigChars,
+        holdTools: config.holdTools,
       })
 
       effort = decideEffort({
@@ -281,11 +327,12 @@ export function apply(ctx, rawConfig) {
     if (config.debug) {
       appendDebug(
         config.debugFile,
-        `turn=${payload?.turn} step=${payload?.step} ${String(original)}=>${String(effort)}`
+        `turn=${payload?.turn} step=${payload?.step} gear=${config.gear} ${String(original)}=>${String(effort)}`
           + ` route=${route}`
           + ` obs=${signals?.observations ?? 0} clean=${signals?.cleanStreak ?? 0}`
           + ` err=${signals?.errors ?? 0} slow=${signals?.slowestMs ?? 0}ms`
           + ` big=${signals?.biggestChars ?? 0}c rep=${signals?.mostRepeated ?? 0}`
+          + ` hold=${signals?.held ?? 0}`
           + `${signals?.struggling ? ' STRUGGLING' : ''}`,
       )
     }
@@ -295,12 +342,14 @@ export function apply(ctx, rawConfig) {
   })
 
   ctx.logger?.info?.(
-    '%s active: floor=%s deepAfter=%d slowMs=%d bigChars=%d aliases=%s',
+    '%s active: gear=%s floor=%s deepAfter=%d slowMs=%d bigChars=%d aliases=%s holdTools=%d',
     TAG,
+    config.gear,
     config.floor,
     config.deepAfter,
     config.slowMs,
     config.bigChars,
     config.aliases === false ? 'off' : 'auto',
+    config.holdTools.length,
   )
 }

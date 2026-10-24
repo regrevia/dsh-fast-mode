@@ -67,6 +67,97 @@ export const DOCUMENTED_ALIASES = Object.freeze({
 })
 
 /** Defaults for the adaptive thresholds. */
+/**
+ * Speed gears.
+ *
+ * A gear is one coherent stance, not a single number: how early a clean streak
+ * earns a deeper notch, how much of the run the signals look at, and how many
+ * independent tool calls the model is asked to issue per step. Raising the gear
+ * trades tokens and risk for wall clock; it never changes what the plugin is
+ * *allowed* to emit (the floor still holds, and the route still declares the
+ * ladder).
+ *
+ * `parallel` is the target fan-out the guidance asks for. The harness schedules
+ * the calls of one message concurrently only while each is declared safe and
+ * `agentLoop.maxParallelToolCalls` still has a free slot, so the target is an
+ * upper bound, never a promise.
+ */
+export const GEARS = Object.freeze({
+  safe: Object.freeze({
+    level: 1,
+    floor: 'low',
+    deepAfter: 6,
+    window: 8,
+    parallel: 2,
+    directive: false,
+  }),
+  fast: Object.freeze({
+    level: 2,
+    floor: 'low',
+    deepAfter: 4,
+    window: 6,
+    parallel: 4,
+    directive: true,
+  }),
+  turbo: Object.freeze({
+    level: 3,
+    floor: 'low',
+    deepAfter: 3,
+    window: 5,
+    parallel: 6,
+    directive: true,
+  }),
+  max: Object.freeze({
+    level: 4,
+    floor: 'low',
+    deepAfter: 2,
+    window: 4,
+    parallel: 8,
+    directive: true,
+  }),
+})
+
+/**
+ * The gear used when the config names none. A plugin called fast mode that
+ * installs itself in its do-nothing gear would be a joke, so the shipped
+ * default is `fast`; `gear: safe` restores the previous release exactly.
+ */
+export const DEFAULT_GEAR = 'fast'
+
+/**
+ * The gear an unreadable value degrades to. A typo must not silently turn on
+ * prompt injection, so an *unknown* gear is more conservative than an absent
+ * one.
+ */
+export const FALLBACK_GEAR = 'safe'
+
+/**
+ * Resolve the configured gear, accepting either the name or its level number.
+ * An unknown value falls back to the default rather than guessing.
+ *
+ * @param {unknown} value
+ * @returns {string} a key of {@link GEARS}
+ */
+export function normaliseGear(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    for (const [, gear] of Object.entries(GEARS)) if (gear.level === value) return gearName(gear)
+    return FALLBACK_GEAR
+  }
+  if (typeof value === 'string') {
+    const key = value.trim().toLowerCase()
+    if (key.length === 0) return DEFAULT_GEAR
+    if (Object.hasOwn(GEARS, key)) return key
+    if (/^[1-4]$/.test(key)) return normaliseGear(Number(key))
+    return FALLBACK_GEAR
+  }
+  return value === undefined || value === null ? DEFAULT_GEAR : FALLBACK_GEAR
+}
+
+/** @param {object} gear @returns {string} the gear's own name */
+function gearName(gear) {
+  return Object.keys(GEARS).find(name => GEARS[name] === gear) ?? FALLBACK_GEAR
+}
+
 export const DEFAULTS = Object.freeze({
   floor: 'low',
   /** Consecutive clean observations before a second notch is allowed. */
@@ -83,7 +174,44 @@ export const DEFAULTS = Object.freeze({
   discoverTimeoutMs: 250,
   /** Downgrade from the model's declared default when no effort was resolved. */
   baselineFromDefault: true,
+  /** Calls to these tools mean the work is not routine; see matchesHold. */
+  holdTools: Object.freeze([]),
 })
+
+/**
+ * Whether a tool name matches one of the `holdTools` patterns.
+ *
+ * `holdTools` exists for tools whose *next* step needs deliberation even though
+ * the calls around them look routine — context-compression tools are the case
+ * that motivated it. A `compress` call returns a small summary and succeeds
+ * quickly, so the clean-streak rule would happily cheapen the very next step:
+ * the one where the model re-orients in the freshly folded history, or decides
+ * what to compress next. Listing the tool name pins full effort instead.
+ *
+ * A pattern matches case-insensitively, either exactly or as a prefix when it
+ * ends in `*` (`acp_*` covers a whole family of context-management tools).
+ *
+ * @param {unknown} name - the tool name from a finished call.
+ * @param {readonly string[]} [patterns] - configured `holdTools` patterns.
+ * @returns {boolean}
+ */
+export function matchesHold(name, patterns) {
+  if (typeof name !== 'string' || name.length === 0) return false
+  if (!Array.isArray(patterns) || patterns.length === 0) return false
+  const candidate = name.trim().toLowerCase()
+  if (candidate.length === 0) return false
+  for (const pattern of patterns) {
+    if (typeof pattern !== 'string') continue
+    const needle = pattern.trim().toLowerCase()
+    if (needle.length === 0) continue
+    if (needle.endsWith('*')) {
+      if (candidate.startsWith(needle.slice(0, -1))) return true
+      continue
+    }
+    if (candidate === needle) return true
+  }
+  return false
+}
 
 /**
  * Semantic rank of an effort id, or undefined for an id this plugin does not
@@ -269,6 +397,8 @@ export function resolvePlan(declared, config) {
  */
 export function resolveConfig(raw) {
   const config = raw ?? {}
+  const gearName = normaliseGear(config.gear)
+  const gear = GEARS[gearName]
   const configured = Array.isArray(config.ladder)
     ? config.ladder.filter(id => typeof id === 'string' && id.length > 0)
     : []
@@ -290,10 +420,10 @@ export function resolveConfig(raw) {
   // A floor that cannot be ranked and is not on the pinned ladder would resolve
   // to the cheapest level, silently permitting a drop that disables thinking.
   // A typo must degrade to the default floor, not to no floor.
-  const requestedFloor = typeof config.floor === 'string' && config.floor.length > 0 ? config.floor : DEFAULTS.floor
+  const requestedFloor = typeof config.floor === 'string' && config.floor.length > 0 ? config.floor : gear.floor
   const floor = rankOf(requestedFloor) !== undefined || ladder.includes(requestedFloor)
     ? requestedFloor
-    : DEFAULTS.floor
+    : gear.floor
 
   return {
     enabled: config.enabled !== false,
@@ -302,16 +432,46 @@ export function resolveConfig(raw) {
     /** An operator-pinned ladder is authoritative, so it may be used without discovery. */
     ladderExplicit: configured.length >= 2,
     aliases,
-    deepAfter: Math.floor(number(config.deepAfter, DEFAULTS.deepAfter, { positive: true })),
+    gear: gearName,
+    gearLevel: gear.level,
+    /** Target fan-out the model-facing guidance asks for; 1 means no guidance. */
+    parallel: gear.directive ? Math.floor(number(config.parallel, gear.parallel, { positive: true })) : 1,
+    directive: gear.directive,
+    deepAfter: Math.floor(number(config.deepAfter, gear.deepAfter, { positive: true })),
     slowMs: Math.floor(number(config.slowMs, DEFAULTS.slowMs, { positive: true })),
     bigChars: Math.floor(number(config.bigChars, DEFAULTS.bigChars, { positive: true })),
-    window: Math.floor(number(config.window, DEFAULTS.window, { positive: true })),
+    window: Math.floor(number(config.window, gear.window, { positive: true })),
+    holdTools: normaliseHoldTools(config.holdTools),
     escalateAfterStep: Math.floor(number(config.escalateAfterStep, DEFAULTS.escalateAfterStep, { positive: true })),
     discoverTimeoutMs: Math.floor(number(config.discoverTimeoutMs, DEFAULTS.discoverTimeoutMs, { positive: true })),
     baselineFromDefault: config.baselineFromDefault !== false,
     debug: config.debug === true,
     debugFile: typeof config.debugFile === 'string' ? config.debugFile : '',
   }
+}
+
+/**
+ * Normalise the `holdTools` config into a list of patterns.
+ *
+ * Accepts an array, or the single comma/whitespace separated string a YAML
+ * scalar produces (`holdTools: compress, acp_*`), which is the shape an operator
+ * is most likely to write by hand. Junk entries are dropped rather than
+ * rejected: a malformed list must not take the whole policy down.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function normaliseHoldTools(value) {
+  const raw = typeof value === 'string' ? value.split(/[\s,]+/) : value
+  if (!Array.isArray(raw)) return []
+  const patterns = []
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue
+    const pattern = entry.trim()
+    if (pattern.length === 0) continue
+    if (!patterns.includes(pattern)) patterns.push(pattern)
+  }
+  return patterns
 }
 
 /**
@@ -434,19 +594,26 @@ export function resetTurn(state, agentId, turn) {
  * @param {number} [options.bigChars]
  */
 export function readSignals(state, agentId, options = {}) {
-  const { window = DEFAULTS.window, slowMs = DEFAULTS.slowMs, bigChars = DEFAULTS.bigChars } = options
+  const {
+    window = DEFAULTS.window,
+    slowMs = DEFAULTS.slowMs,
+    bigChars = DEFAULTS.bigChars,
+    holdTools = DEFAULTS.holdTools,
+  } = options
   const entry = state.byAgent.get(agentId)
   const recent = entry ? entry.observations.slice(-window) : []
 
   let errors = 0
   let slowestMs = 0
   let biggestChars = 0
+  let held = 0
   const keyCounts = new Map()
 
   for (const observation of recent) {
     if (observation.isError) errors += 1
     slowestMs = Math.max(slowestMs, observation.durationMs || 0)
     biggestChars = Math.max(biggestChars, observation.chars || 0)
+    if (matchesHold(observation.name, holdTools)) held += 1
     if (observation.argsKey) keyCounts.set(observation.argsKey, (keyCounts.get(observation.argsKey) ?? 0) + 1)
   }
 
@@ -471,8 +638,13 @@ export function readSignals(state, agentId, options = {}) {
     biggestChars,
     mostRepeated,
     cleanStreak,
-    /** A turn showing any struggle keeps full deliberation. */
-    struggling: errors > 0 || slowestMs >= slowMs || biggestChars >= bigChars || mostRepeated >= 2,
+    /** Calls to a `holdTools` entry in the window. */
+    held,
+    /**
+     * A turn showing any struggle keeps full deliberation, and so does a step
+     * taken right after a tool the operator asked to hold effort around.
+     */
+    struggling: errors > 0 || slowestMs >= slowMs || biggestChars >= bigChars || mostRepeated >= 2 || held > 0,
   }
 }
 
