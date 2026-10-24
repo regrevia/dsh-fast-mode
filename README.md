@@ -252,7 +252,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 |---|---|---|
 | `enabled` | `false` | 总开关，也是对话框里那枚闪电写的字段；只有 `true` 才会干预请求 |
 | `gear` | `fast` | 档位；`1..4` 或 `safe`/`fast`/`turbo`/`max`；写错退回 `safe` |
-| `parallel` | 随档位（4/6/8） | 注入提示里的并行目标；`1` 等于不注入 |
+| `parallel` | 随档位（4/6/8） | 注入提示里的并行目标；`1` 等于不注入。设置页里**留空**就是跟随档位——所以它故意没有默认值，给了默认值档位就再也抬不动它了 |
 | `floor` | `low` | 永不选比它更便宜的档位；官方路由上 `floor: high` 等于完全不降档 |
 | `deepAfter` | 随档位（6/4/3/2） | 连续干净调用几次后允许第二档降幅 |
 | `slowMs` | `5000` | 达到该耗时即保住思考 |
