@@ -34,25 +34,35 @@
 
 ## 闪电开关：默认关闭，点一下才开
 
-从 0.5.0 起这个插件是 **opt-in**：装好之后它什么都不做，直到你明确打开它。三个入口写的是同一个字段 `enabled`：
+从 0.5.0 起这个插件是 **opt-in**：装好之后它什么都不做，直到你明确打开它。两个入口写的是同一个字段 `enabled`：
 
 | 入口 | 操作 | 适合 |
 |---|---|---|
 | **对话框里的闪电**（新） | 模型选择器右边一枚闪电按钮：空心 = 关闭，实心黑色 = 开启，点一下就切换 | 日常 |
-| **设置页**（新） | 设置 → 插件 → `fast-mode`，改 `enabled` / `gear` / `parallel` | 顺手调档位 |
 | **patch** | `cordis.patch.yml` 里写 `enabled: true` | 用配置管理 profile |
 
-三处写的是同一份用户层配置（`settings/update` → `applies: live`），所以点完**下一次模型调用**就生效，不用重启。第一次装（或刚升级到带客户端半的版本）要重载一次页面 / 重启应用，让客户端 bundle 加载出来。
+两处写的是同一份用户层配置（`settings/update` → `applies: live`），所以点完**下一次模型调用**就生效，不用重启。第一次装（或刚升级到带客户端半的版本）要重载一次页面 / 重启应用，让客户端 bundle 加载出来。
+
+**档位也在闪电上**（设置页里没有）：点闪电右边的小三角，展开四档下拉，每档都标着它的预估倍率，选完立刻写入。**入口只有一个，而且一定是能用的那一个**：
+
+| 档位 | 名字 | 预估速度 | 预估 token | 并行目标 |
+|---|---|---|---|---|
+| 1 | 安全 `safe` | ~1.0× | ~1.0× | 2 |
+| 2 | 快速 `fast`（默认） | ~1.3× | ~1.2× | 4 |
+| 3 | 涡轮 `turbo` | ~1.6× | ~1.5× | 6 |
+| 4 | 极限 `max` | ~1.9× | ~1.9× | 8 |
+
+倍率是**预估**，不是实测：档位调的是"多早降档 + 一步要几个调用"，真实收益取决于你的任务里有多少独立调用可并行、上游思考有多慢。官方 API 上最狠的一刀只有 `high → low`（16384 → 2048 思考预算），所以别把 1.9× 当成承诺。
 
 闪电的读法：
 
 - **空心灰** = 关闭（默认，插件完全不干预）；
 - **实心黑** = 开启，hover 提示里带当前档位；
-- **灰掉不可点** = 这层配置只读，或本 profile 里没有声明这个插件条目 —— hover 提示会写明是哪一种，不会假装切换成功。
+- **点了一定有反应**：读不到配置（只读层 / 本 profile 没装这个条目 / 桥接还没连上）时按钮**不会灰掉**，而是展开菜单把原因写成一句话。0.5.1 那版把按钮设成 `disabled`，Chrome 对 disabled 按钮不显示 `title`，于是既不提示也点不动 —— 这个坑在 0.5.2 里用三条独立防线堵掉了（解包 `{ok, value}` 信封、每次远程调用带超时、永不 disabled）。
 
-设置页的这三个字段都声明了 `.volatile()`：`settings` 只会把 volatile 字段投影进表单，也只允许改 volatile 字段（否则 `describe` 里整个条目直接消失、`update` 报 `is not volatile`）。代价是这些字段传到插件里是**引用**而不是值——Loader 靠原地替换引用来让改动落到正在运行的 fiber 上，插件侧在 `resolveConfig` 一处统一解引用。
+这三个字段都声明了 `.volatile()`：`settings` 只会把 volatile 字段投影出来，也只允许改 volatile 字段（否则 `describe` 里整个条目直接消失、`update` 报 `is not volatile`）。代价是这些字段传到插件里是**引用**而不是值——Loader 靠原地替换引用来让改动落到正在运行的 fiber 上，插件侧在 `resolveConfig` 一处统一解引用。
 
-它注册在 `conversation.input.activity`（模型选择器右侧、停止按钮左侧），**不占用** `conversation.input.model`，所以永远不会遮住宿主自己的模型选择器。点击是乐观更新 + 回读校验：写失败会把图标退回原状，并在提示里给出错误原因。
+它注册在 `conversation.input.activity`（模型选择器右侧、停止按钮左侧），**不占用** `conversation.input.model`，所以永远不会遮住宿主自己的模型选择器。点击是乐观更新 + 回读校验：写失败会把图标退回原状，并在提示和菜单里给出错误原因。
 
 开启后的默认档位是 `fast`（档位 2），也就是上面三件事全开；想完全回到 v0.3.0 那种"不注入任何提示、只在干净连击后降档"的静默行为，用 `gear: safe`。
 
@@ -125,7 +135,7 @@
 
 **已实测**：在 DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop` 上，把插件管理器的安装目标填成 `github:regrevia/dsh-fast-mode`，它拉下 tarball 并直接生效（`application: applied`，无 warning），profile 里记录为 `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`。0.4.0 无客户端半时就这样跑通；0.5.0 多了客户端半（闪电），重装后同样 applied，只是**必须重载一次页面 / 重启应用**才会看到图标 —— 宿主只在启动时扫描 `dsh.client` 声明。
 
-同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.5.1` 这类 npm spec，用上面的 `github:` 形式。
+同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.5.2` 这类 npm spec，用上面的 `github:` 形式。
 
 方式 B / C 需要在 profile 的 `cordis.patch.yml` 里插入插件行（方式 A 会自己写）：
 
@@ -291,10 +301,10 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 ## 开发与测试
 
 ```bash
-npm test        # 80 个测试，无网络、不需要 harness
+npm test        # 89 个测试，无网络、不需要 harness
 ```
 
-策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（写错退回 `safe`）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），最后一组把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端）：证明 bundle 能解析、只 require `react`、空心画得出来、点击只发一次带 revision 的 `settings/update`、被拒时回滚并在提示里给出原因、只读层和"没有这个条目"都渲染成不可点。另一组用 schemastery 真实校验 schema：默认 `enabled: false`、四个档位名都能过、`gear: warp` 会当场报错、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
+策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（写错退回 `safe`）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），最后一组把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端，而且这个远端按真实协议回 `{ok, value}` 信封 —— 信封没解包正是 0.5.1 那个"点不动的闪电"的根因，所以它现在是测试夹具的一部分）：证明 bundle 能解析、只 require `react`、空心画得出来、点击只发一次带 revision 的 `settings/update`、被拒时回滚并在提示与菜单里给出原因；同时钉住新的交互契约 —— 按钮**永不 disabled**、只读/缺条目/`ok:false` 都渲染成"可点 + 一句原因"、小三角能展开四档、每档都带速度与 token 倍率、选档在关闭状态下顺手把 `enabled` 一起写、客户端给出的档位 id 与 host 端 `GEARS` 完全一致。另一组用 schemastery 真实校验 schema：默认 `enabled: false`、四个档位名都能过、`gear: warp` 会当场报错、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
 
 ## 许可
 
