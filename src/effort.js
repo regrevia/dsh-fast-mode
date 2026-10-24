@@ -204,6 +204,18 @@ export function resolveConfig(raw, overrides) {
      */
     stallGuard: config.stallGuard !== false,
     toolTimeoutMs: Math.floor(number(config.toolTimeoutMs, 0)),
+    /**
+     * The prompt section. `false` keeps the scheduler, width computation and
+     * watchdog exactly as they are and only stops the text from being written —
+     * the switch that separates "what the text does" from "what the harness does".
+     */
+    guidance: config.guidance !== false,
+    /**
+     * The `shell_parallel` tool. Off by default: measured 2026-10-24, the model
+     * already fans independent shell jobs out with inline `&` + `wait`, and the
+     * extra tool invited a second verification pass on the same fixture.
+     */
+    shellParallel: config.shellParallel === true,
     /** Re-state the batch/bounded-call rules once after a context compaction. */
     reassertAfterCompaction: config.reassertAfterCompaction !== false,
     debug: config.debug === true,

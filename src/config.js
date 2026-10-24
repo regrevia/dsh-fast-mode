@@ -84,6 +84,20 @@ export const Config = z.object({
       '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔（实测同一任务把每步可见输出从约 640 降到约 190 token，墙钟快约三分之一）。默认开启；关掉后只注入并行提示，不干预文风。',
     ),
 
+  shellParallel: z
+    .boolean()
+    .default(false)
+    .description(
+      'shell_parallel 工具 / Shell fan-out tool: 注册一个单次调用内跑多个独立 shell 作业的工具。默认关闭——2026-10-24 实测：模型本来就会用 `&` + `wait` 把独立命令并行起来（6 个 5 秒作业 5.1 秒跑完），而多一个工具反而诱发“再复核一遍”的额外步骤，同一 fixture 墙钟从 9.1 秒涨到 16–26 秒。需要时再打开。',
+    ),
+
+  guidance: z
+    .boolean()
+    .default(true)
+    .description(
+      '提示段 / Prompt section: 是否向模型注入并行提示与输出纪律。关闭后调度、宽度计算、看门狗都照常，只是不再往系统提示里写任何一句话——用于把“写提示词的效果”和“harness 层面的效果”分开测量。',
+    ),
+
   stallGuard: z
     .boolean()
     .default(true)
