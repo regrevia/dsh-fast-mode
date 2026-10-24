@@ -253,7 +253,7 @@ On the official API the **finest downgrade grain** is `high → low` (there is n
 |---|---|---|
 | `enabled` | `false` | the switch, and the field the composer bolt writes; only `true` makes the plugin intervene |
 | `gear` | `fast` | Gear; `1..4` or `safe`/`fast`/`turbo`/`max`; an invalid value falls back to `safe` |
-| `parallel` | follows the gear (4/6/8) | Parallel target in the injected prompt; `1` means no injection |
+| `parallel` | follows the gear (4/6/8) | Parallel target in the injected prompt; `1` means no injection. **Left blank** in the settings page means "follow the gear" — it deliberately has no schema default, because a default would pin the field and the gear could never raise it again |
 | `floor` | `low` | never choose a cheaper gear; on the official route `floor: high` means no downgrade at all |
 | `deepAfter` | follows the gear (6/4/3/2) | how many consecutive clean calls allow the second notch |
 | `slowMs` | `5000` | at or above this duration, hold thinking |
