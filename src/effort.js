@@ -4,19 +4,67 @@
  * Everything here is pure: observations in, a decision out. The plugin wires it
  * to the harness; this file holds the judgement so it can be tested without one.
  *
- * Why adaptive instead of a fixed rule: a turn that is reading twelve small
- * files in a row and succeeding needs almost no deliberation per step, while a
- * turn that just hit three errors and is looping on the same command needs full
- * deliberation. The step number alone cannot tell those apart. Tool outcomes
- * can, and the harness makes them reachable (`tools/post-execute`), so the
- * policy reads the run instead of guessing from a counter.
+ * Three concerns live here.
+ *
+ * 1. **Which effort ids exist.** Not ours to invent. Every route declares its
+ *    own levels, and the harness exposes them per provider and model
+ *    (`llm.resolveModelInfo` → `reasoning.efforts`). The plugin reads that list.
+ *
+ * 2. **Which of those ids are actually distinct.** Some upstream APIs document
+ *    compatibility aliases: the official DeepSeek API accepts `minimal`,
+ *    `medium` and `xhigh` but maps them onto `low`/`high`/`high`, so "drop one
+ *    level from `high` to `medium`" changes nothing on the wire while looking
+ *    like a working downgrade. The policy therefore notches across *effective*
+ *    levels, never across raw ids, and never claims a cut it cannot deliver.
+ *
+ * 3. **How much to cut.** The step number alone cannot tell a routine read from
+ *    a turn that is stuck; tool outcomes can, and `tools/post-execute` makes
+ *    them reachable. So the policy reads the run.
  */
 
-/** The effort ids, cheapest first. */
+/**
+ * The ladder used only when a provider cannot be interrogated and no explicit
+ * ladder is configured. It is a fallback, not an assumption.
+ */
 export const EFFORT_LADDER = Object.freeze(['off', 'minimal', 'low', 'medium', 'high'])
 
 /** Steps before this one are planning, and keep the resolved effort. */
 export const FIRST_EXECUTION_STEP = 2
+
+/**
+ * Semantic rank of well-known effort ids: 0 is cheapest, higher is more
+ * deliberation. Used to order ids and to compare a floor against what a route
+ * actually offers. Unknown ids get no rank and keep their declared order.
+ */
+const RANK_BY_ID = Object.freeze({
+  off: 0, none: 0, disabled: 0, no: 0, zero: 0, false: 0,
+  minimal: 1, min: 1, tiny: 1, lightest: 1,
+  low: 2, light: 2, fast: 2, small: 2, brief: 2, quick: 2,
+  medium: 3, mid: 3, moderate: 3, default: 3, standard: 3, normal: 3, balanced: 3,
+  high: 4, deep: 4, thorough: 4, extended: 4, heavy: 4,
+  max: 5, maximum: 5, xhigh: 5, 'extra-high': 5, ultra: 5, extreme: 5, highest: 5,
+})
+
+/**
+ * The alias contract documented by the official DeepSeek API for
+ * `reasoning_effort`: `none` disables thinking; `low`, `high` and `max` enable
+ * it at increasing effort; `minimal` maps to `low`, `xhigh` maps to `high`, and
+ * `medium` maps to `high`.
+ *
+ * Applied only when a route turns out to be this family (it declares `max`), so
+ * a gateway with genuinely distinct levels is not collapsed by mistake. Override
+ * with `aliases` in the config, or turn it off entirely.
+ */
+export const DOCUMENTED_ALIASES = Object.freeze({
+  off: 'none',
+  none: 'none',
+  minimal: 'low',
+  low: 'low',
+  medium: 'high',
+  high: 'high',
+  xhigh: 'high',
+  max: 'max',
+})
 
 /** Defaults for the adaptive thresholds. */
 export const DEFAULTS = Object.freeze({
@@ -31,7 +79,187 @@ export const DEFAULTS = Object.freeze({
   window: 8,
   /** Restore the resolved effort past this step; 0 disables. */
   escalateAfterStep: 0,
+  /** How long to wait for provider metadata before deciding without it. */
+  discoverTimeoutMs: 250,
+  /** Downgrade from the model's declared default when no effort was resolved. */
+  baselineFromDefault: true,
 })
+
+/**
+ * Semantic rank of an effort id, or undefined for an id this plugin does not
+ * recognise. Comparison is case-insensitive and ignores separators, so `x-high`
+ * and `XHIGH` land on the same rank.
+ *
+ * @param {unknown} id
+ * @returns {number|undefined}
+ */
+export function rankOf(id) {
+  if (typeof id !== 'string') return undefined
+  const key = id.trim().toLowerCase()
+  if (Object.hasOwn(RANK_BY_ID, key)) return RANK_BY_ID[key]
+  const collapsed = key.replace(/[^a-z]/g, '')
+  if (Object.hasOwn(RANK_BY_ID, collapsed)) return RANK_BY_ID[collapsed]
+  return undefined
+}
+
+/**
+ * Order declared effort ids cheapest first. When every id is recognised the
+ * semantic rank decides; otherwise the adapter's own order is kept, because it
+ * is the only information that cannot be wrong.
+ *
+ * @param {readonly string[]} ids
+ * @returns {readonly string[]}
+ */
+export function orderEfforts(ids) {
+  const unique = []
+  for (const id of ids) {
+    if (typeof id === 'string' && id.length > 0 && !unique.includes(id)) unique.push(id)
+  }
+  if (unique.length < 2) return Object.freeze(unique)
+  if (unique.some(id => rankOf(id) === undefined)) return Object.freeze(unique)
+  return Object.freeze([...unique].sort((a, b) => rankOf(a) - rankOf(b)))
+}
+
+/**
+ * Decide whether the documented alias contract applies to a route: it does when
+ * the route offers a top level (`max` / `xhigh` family), which is the family the
+ * official API belongs to. A route that stops at `high` offers distinct levels
+ * for every id it declares, and must not be collapsed.
+ *
+ * @param {readonly string[]} ids
+ * @returns {boolean}
+ */
+export function looksAliased(ids) {
+  return ids.some(id => rankOf(id) === 5)
+}
+
+/**
+ * Build the send ladder for a route: one id per effective level, cheapest first.
+ *
+ * Each entry carries the ids that collapse into it, so the policy can look up a
+ * resolved effort by its raw id and still land on the right effective level.
+ *
+ * @param {readonly string[]} declared - ids the route accepts, in its own order.
+ * @param {false|Record<string, string>|'auto'|true|undefined} aliasSetting
+ * @returns {{levels: {id: string, canonical: string, rank: number|undefined, ids: string[]}[], aliases: Record<string,string>|undefined, aliased: boolean}}
+ */
+export function buildLadder(declared, aliasSetting) {
+  const ordered = orderEfforts(declared)
+  let aliases
+  if (aliasSetting === false) aliases = undefined
+  else if (aliasSetting && typeof aliasSetting === 'object') aliases = aliasSetting
+  else if (aliasSetting === 'auto' || aliasSetting === true || aliasSetting === undefined) {
+    aliases = looksAliased(ordered) ? DOCUMENTED_ALIASES : undefined
+  } else aliases = undefined
+
+  // Without aliases, every declared id is its own level.
+  if (!aliases) {
+    return {
+      levels: ordered.map(id => ({ id, canonical: id, rank: rankOf(id), ids: [id] })),
+      aliases: undefined,
+      aliased: false,
+    }
+  }
+
+  // With aliases, ids are grouped by canonical name. If any id cannot be
+  // canonicalised the grouping would be a guess, so fall back to raw ids.
+  const canonicalOf = id => {
+    const key = id.trim().toLowerCase()
+    return aliases[key] ?? aliases[id] ?? id
+  }
+  if (ordered.some(id => rankOf(canonicalOf(id)) === undefined)) {
+    return {
+      levels: ordered.map(id => ({ id, canonical: id, rank: rankOf(id), ids: [id] })),
+      aliases: undefined,
+      aliased: false,
+    }
+  }
+
+  const byCanonical = new Map()
+  for (const id of ordered) {
+    const canonical = canonicalOf(id)
+    const bucket = byCanonical.get(canonical)
+    if (bucket) bucket.ids.push(id)
+    else byCanonical.set(canonical, { canonical, rank: rankOf(canonical), ids: [id] })
+  }
+
+  const levels = [...byCanonical.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .map(bucket => ({
+      // Prefer sending the canonical name itself when the route accepts it;
+      // otherwise send the first declared id that reaches this level.
+      id: bucket.ids.includes(bucket.canonical) ? bucket.canonical : bucket.ids[0],
+      canonical: bucket.canonical,
+      rank: bucket.rank,
+      ids: bucket.ids,
+    }))
+
+  return { levels, aliases: { ...aliases }, aliased: true }
+}
+
+/**
+ * Map a floor request onto the ladder: the cheapest level that is not cheaper
+ * than the request. Dropping below the floor is the one direction this policy
+ * must never drift.
+ *
+ * @param {{levels: {rank: number|undefined}[]}} ladder
+ * @param {string} requested
+ * @returns {number} level index
+ */
+export function floorIndex(ladder, requested) {
+  const levels = ladder.levels
+  if (levels.length === 0) return 0
+  const wanted = rankOf(requested)
+  if (wanted === undefined) return 0
+  for (let index = 0; index < levels.length; index += 1) {
+    const rank = levels[index].rank
+    if (rank !== undefined && rank >= wanted) return index
+  }
+  return levels.length - 1
+}
+
+/**
+ * Build the full decision plan for one route.
+ *
+ * @param {readonly string[]|undefined} declared - ids the route accepts.
+ * @param {object} config - normalised config.
+ * @returns {{levels: object[], aliased: boolean, floorIndex: number, indexOf: (id: string) => number, source: string, floorId: string|undefined}}
+ */
+export function resolvePlan(declared, config) {
+  const usable = Array.isArray(declared)
+    ? declared.filter(id => typeof id === 'string' && id.length > 0)
+    : []
+
+  let ladder
+  let source
+  // An empty array means the route was interrogated and declares no levels at
+  // all. That is an answer ("this model has no effort to cut"), not a missing
+  // one, so it must never fall back to a guessed ladder: sending an effort a
+  // route does not declare makes the harness reject the call before I/O.
+  if (Array.isArray(declared)) {
+    ladder = buildLadder(usable, config.aliases)
+    source = usable.length === 0 ? 'provider-none' : ladder.aliased ? 'provider+aliases' : 'provider'
+  } else {
+    ladder = buildLadder(config.ladder, config.aliases === undefined ? false : config.aliases)
+    source = config.ladderExplicit ? 'configured' : 'builtin'
+  }
+
+  const byId = new Map()
+  ladder.levels.forEach((level, index) => {
+    for (const id of level.ids) byId.set(id, index)
+    byId.set(level.id, index)
+  })
+
+  const index = floorIndex(ladder, config.floor)
+  return {
+    levels: ladder.levels,
+    aliased: ladder.aliased,
+    floorIndex: index,
+    floorId: ladder.levels[index]?.id,
+    source,
+    indexOf: id => (typeof id === 'string' ? byId.get(id) ?? -1 : -1),
+  }
+}
 
 /**
  * Normalise plugin config. Every field arrives from a loader patch, so a typo
@@ -41,9 +269,10 @@ export const DEFAULTS = Object.freeze({
  */
 export function resolveConfig(raw) {
   const config = raw ?? {}
-  const ladder = Array.isArray(config.ladder) && config.ladder.filter(id => typeof id === 'string').length >= 2
-    ? Object.freeze(config.ladder.filter(id => typeof id === 'string'))
-    : EFFORT_LADDER
+  const configured = Array.isArray(config.ladder)
+    ? config.ladder.filter(id => typeof id === 'string' && id.length > 0)
+    : []
+  const ladder = configured.length >= 2 ? Object.freeze(configured) : EFFORT_LADDER
 
   const number = (value, fallback, { positive = false } = {}) => {
     const parsed = Number(value)
@@ -52,15 +281,34 @@ export function resolveConfig(raw) {
     return parsed
   }
 
+  let aliases
+  if (config.aliases === false) aliases = false
+  else if (config.aliases === 'auto' || config.aliases === undefined || config.aliases === true) aliases = 'auto'
+  else if (config.aliases && typeof config.aliases === 'object') aliases = config.aliases
+  else aliases = 'auto'
+
+  // A floor that cannot be ranked and is not on the pinned ladder would resolve
+  // to the cheapest level, silently permitting a drop that disables thinking.
+  // A typo must degrade to the default floor, not to no floor.
+  const requestedFloor = typeof config.floor === 'string' && config.floor.length > 0 ? config.floor : DEFAULTS.floor
+  const floor = rankOf(requestedFloor) !== undefined || ladder.includes(requestedFloor)
+    ? requestedFloor
+    : DEFAULTS.floor
+
   return {
     enabled: config.enabled !== false,
-    floor: typeof config.floor === 'string' && ladder.includes(config.floor) ? config.floor : DEFAULTS.floor,
+    floor,
     ladder,
+    /** An operator-pinned ladder is authoritative, so it may be used without discovery. */
+    ladderExplicit: configured.length >= 2,
+    aliases,
     deepAfter: Math.floor(number(config.deepAfter, DEFAULTS.deepAfter, { positive: true })),
     slowMs: Math.floor(number(config.slowMs, DEFAULTS.slowMs, { positive: true })),
     bigChars: Math.floor(number(config.bigChars, DEFAULTS.bigChars, { positive: true })),
     window: Math.floor(number(config.window, DEFAULTS.window, { positive: true })),
     escalateAfterStep: Math.floor(number(config.escalateAfterStep, DEFAULTS.escalateAfterStep, { positive: true })),
+    discoverTimeoutMs: Math.floor(number(config.discoverTimeoutMs, DEFAULTS.discoverTimeoutMs, { positive: true })),
+    baselineFromDefault: config.baselineFromDefault !== false,
     debug: config.debug === true,
     debugFile: typeof config.debugFile === 'string' ? config.debugFile : '',
   }
@@ -234,43 +482,48 @@ export function readSignals(state, agentId, options = {}) {
  * @param {object} input
  * @param {number} input.step
  * @param {string|undefined} input.current - the effort the harness resolved.
- * @param {object} input.config - normalised config.
- * @param {object} [input.signals] - from {@link readSignals}.
- * @returns {string|undefined}
+ * @param {string|undefined} [input.baseline] - effort to downgrade from when `current` is absent.
+ * @param {{levels: object[], floorIndex: number, indexOf: (id: string) => number}} input.plan
+ * @param {object} input.config
+ * @param {object} [input.signals]
+ * @returns {string|undefined} the effort to send, or the original value to leave alone.
  */
 export function decideEffort(input) {
-  const { step, current, config, signals } = input ?? {}
-  const ladder = config?.ladder ?? EFFORT_LADDER
-  const floor = config?.floor ?? DEFAULTS.floor
+  const { step, config, signals, plan } = input ?? {}
+  if (!plan || !Array.isArray(plan.levels) || plan.levels.length === 0) return input?.current
+
   const deepAfter = config?.deepAfter ?? DEFAULTS.deepAfter
   const escalateAfterStep = config?.escalateAfterStep ?? DEFAULTS.escalateAfterStep
 
-  // An effort id from another provider's vocabulary: guessing a neighbour would
-  // be inventing a value, so pass it through.
-  if (typeof current !== 'string') return current
-  const index = ladder.indexOf(current)
-  if (index < 0) return current
+  // When the harness resolved no effort, the provider's own declared default is
+  // the honest baseline: it is what the request would have used anyway, so a
+  // notch below it is a real cut rather than a guess.
+  const current = typeof input?.current === 'string' ? input.current : input?.baseline
+  if (typeof current !== 'string') return input?.current
 
-  const floorIndex = Math.max(0, ladder.indexOf(floor))
+  // An id the route does not offer cannot be ranked, so guessing a neighbour
+  // would be inventing a value the provider may reject outright.
+  const index = plan.indexOf(current)
+  if (index < 0) return input?.current
 
   // Already at or below the floor: stepping up would turn a speed-up into a
   // slow-down.
-  if (index <= floorIndex) return current
+  if (index <= plan.floorIndex) return input?.current
 
   // Planning step keeps full deliberation.
-  if (!(step >= FIRST_EXECUTION_STEP)) return current
+  if (!(step >= FIRST_EXECUTION_STEP)) return input?.current
 
   // A turn that has run very long is treated as stuck.
-  if (escalateAfterStep > 0 && step > escalateAfterStep) return current
+  if (escalateAfterStep > 0 && step > escalateAfterStep) return input?.current
 
   // Struggling turns get their deliberation back. This is the quality guard:
   // errors, hangs, oversized results, and repeat calls all mean the next action
   // is not routine.
-  if (signals?.struggling) return current
+  if (signals?.struggling) return input?.current
 
   let notches = 1
   if (deepAfter > 0 && (signals?.cleanStreak ?? 0) >= deepAfter) notches = 2
 
-  const target = Math.max(floorIndex, index - notches)
-  return ladder[target]
+  const target = Math.max(plan.floorIndex, index - notches)
+  return plan.levels[target].id
 }
