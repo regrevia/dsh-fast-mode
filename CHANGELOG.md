@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.2
+
+The measurement was wrong in the one way that matters most: it counted time but
+not tokens, and it lost which step each row belonged to.
+
+- **Read the event payload where it is.** `session/event` carries its payload in
+  `event.data` (`{turn, step, usage, …}`); the recorder was reading `event.turn`
+  and `event.usage` off the envelope, so every row from 0.6.0 and 0.6.1 had
+  `turn`/`step` missing and `input`/`output` at zero while timings looked fine.
+  Rows now carry step numbers and real token counts, and both the harness
+  spelling (`inputTokens`, `reasoningTokens`, `cacheReadTokens`) and the gateway
+  spelling (`uncachedInputTokens`, `thoughtTokens`, `cachedReadTokens`) are
+  folded.
+- Two regression tests feed the wrapped shape, so this cannot come back quietly.
+- Rows already written to `~/.dsh/fast-mode-metrics.jsonl` keep their zeros;
+  delete the file or filter by `ts` when comparing against new data.
+
+147 tests.
+
 ## 0.6.1
 
 0.6.0 could compare gears, but not against the thing they are supposed to beat.

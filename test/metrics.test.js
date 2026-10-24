@@ -233,3 +233,69 @@ test('compare refuses to divide by a missing measurement', () => {
   assert.equal(result.speedupLlm, undefined)
   assert.equal(result.speedupStep, undefined)
 })
+
+test('the real feed wraps every payload in data, and both shapes are read', () => withTempFile((file) => {
+  // Regression: the harness appends `session.append(type, data)`, so the event
+  // carries `{type, time, data:{turn, step, usage}}`. Reading `event.turn` and
+  // `event.usage` produced a release whose rows had no step numbers and zero
+  // tokens while every other field looked healthy.
+  const recorder = createRecorder({ file })
+  recorder.label('wrapped', { mode: 'on', gear: 'turbo', effort: 'low', route: 'p/m' })
+  const target = session('wrapped')
+  recorder.record(target, { type: 'step/start', time: 1000, data: { turn: 7, step: 3 } })
+  recorder.record(target, {
+    type: 'tool/call',
+    time: 1100,
+    data: { turn: 7, step: 3, callId: 'c1', name: 'read', arguments: {} },
+  })
+  recorder.record(target, {
+    type: 'assistant/message',
+    time: 1500,
+    data: {
+      turn: 7,
+      step: 3,
+      message: { role: 'assistant', content: [] },
+      usage: { inputTokens: 1200, outputTokens: 90, cacheReadTokens: 4000, reasoningTokens: 12 },
+    },
+  })
+  recorder.record(target, { type: 'step/end', time: 2000, data: { turn: 7, step: 3 } })
+
+  const [row] = readRows(file)
+  assert.equal(row.turn, 7, 'small: the step number comes from the payload')
+  assert.equal(row.step, 3)
+  assert.equal(row.calls, 1)
+  assert.equal(row.input, 1200)
+  assert.equal(row.output, 90)
+  assert.equal(row.cacheRead, 4000)
+  assert.equal(row.reasoning, 12)
+  assert.equal(row.llmMs, 500)
+}))
+
+test('usage under the gateway spelling is folded too', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  recorder.label('gateway', { mode: 'off', gear: 'off', effort: 'high', route: 'p/m' })
+  const target = session('gateway')
+  recorder.record(target, { type: 'step/start', time: 10, data: { turn: 1, step: 1 } })
+  recorder.record(target, {
+    type: 'assistant/message',
+    time: 20,
+    data: {
+      turn: 1,
+      step: 1,
+      usage: {
+        uncachedInputTokens: 500,
+        outputTokens: 40,
+        thoughtTokens: 5,
+        cachedReadTokens: 900,
+        cachedWriteTokens: 60,
+      },
+    },
+  })
+  recorder.record(target, { type: 'step/end', time: 30, data: { turn: 1, step: 1 } })
+
+  const [row] = readRows(file)
+  assert.deepEqual(
+    { input: row.input, output: row.output, reasoning: row.reasoning, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite },
+    { input: 500, output: 40, reasoning: 5, cacheRead: 900, cacheWrite: 60 },
+  )
+}))

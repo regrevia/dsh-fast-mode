@@ -44,6 +44,41 @@ const isTime = value => typeof value === 'number' && Number.isFinite(value) && v
 const stepKey = (sid, turn, step) => `${sid}\u0000${String(turn)}\u0000${String(step)}`
 
 /**
+ * The payload of a session event.
+ *
+ * The feed wraps every payload in `event.data` (`step/start` appends
+ * `{turn, step}`, `assistant/message` appends `{turn, step, message, usage?}`).
+ * Reading `event.turn`/`event.usage` compiled and produced rows with no step
+ * numbers and zero tokens for a whole release, so this unwrapping is the one
+ * place that must not be guessed at again: `data` first, the event itself only
+ * as a fallback for shapes that have no wrapper.
+ *
+ * @param {any} event
+ */
+const payloadOf = (event) => {
+  const data = event && typeof event === 'object' ? event.data : undefined
+  return data && typeof data === 'object' ? data : (event ?? {})
+}
+
+/**
+ * Read one token field from a usage object.
+ *
+ * The harness reports `TokenUsage` (`inputTokens`, `outputTokens`,
+ * `cacheReadTokens`, `cacheWriteTokens`, `reasoningTokens`), while the session
+ * stats projection uses the gateway's own `uncachedInputTokens`/`thoughtTokens`
+ * spelling. Both are accepted so a provider that reports either still counts.
+ *
+ * @param {any} usage @param {string[]} names
+ */
+const tokenField = (usage, names) => {
+  for (const name of names) {
+    const value = usage[name]
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  }
+  return 0
+}
+
+/**
  * Milliseconds between two event timestamps, never negative.
  *
  * @param {number} from @param {number} to
@@ -154,49 +189,48 @@ export function createRecorder(options = {}) {
       if (sid.length === 0) return
       const kind = event.type
       const time = isTime(event.time) ? event.time : Date.now()
+      const data = payloadOf(event)
 
       if (kind === STEP_START) {
-        const { key, entry } = accum(sid, event, time)
+        const { key, entry } = accum(sid, data, time)
         entry.started = time
         steps.set(key, entry)
         return
       }
 
       if (kind === ASSISTANT) {
-        const { entry } = accum(sid, event, time)
+        const { entry } = accum(sid, data, time)
         entry.seen += 1
         if (entry.first === undefined) entry.first = time
         entry.last = time
-        const usage = event.usage
+        // The message is appended with `usage` beside it; older adapters hang it
+        // off the message instead. Both are the same numbers.
+        const usage = data.usage ?? (data.message && data.message.usage)
         if (usage && typeof usage === 'object') {
-          const add = (field, key) => {
-            const value = usage[field]
-            if (typeof value === 'number' && Number.isFinite(value) && value > 0) entry[key] += value
-          }
-          add('inputTokens', 'input')
-          add('outputTokens', 'output')
-          add('reasoningTokens', 'reasoning')
-          add('cacheReadTokens', 'cacheRead')
-          add('cacheWriteTokens', 'cacheWrite')
+          entry.input += tokenField(usage, ['inputTokens', 'uncachedInputTokens'])
+          entry.output += tokenField(usage, ['outputTokens'])
+          entry.reasoning += tokenField(usage, ['reasoningTokens', 'thoughtTokens'])
+          entry.cacheRead += tokenField(usage, ['cacheReadTokens', 'cachedReadTokens'])
+          entry.cacheWrite += tokenField(usage, ['cacheWriteTokens', 'cachedWriteTokens'])
         }
         return
       }
 
       if (kind === TOOL_CALL) {
-        const { entry } = accum(sid, event, time)
+        const { entry } = accum(sid, data, time)
         entry.calls += 1
         return
       }
 
       if (kind === TOOL_RESULT) {
-        const { entry } = accum(sid, event, time)
-        if (event.error) entry.errors += 1
+        const { entry } = accum(sid, data, time)
+        if (data.error) entry.errors += 1
         return
       }
 
       if (kind !== STEP_END) return
 
-      const key = stepKey(sid, event.turn, event.step)
+      const key = stepKey(sid, data.turn, data.step)
       const entry = steps.get(key)
       steps.delete(key)
       if (!entry) return
