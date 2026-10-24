@@ -2,8 +2,11 @@
  * Tests for the adaptive effort policy. Run with `npm test`.
  *
  * These exist because the plugin this replaces shipped a README claiming live
- * verification of behaviour its code could not produce. Every claim in the
- * README is checked here against the function itself.
+ * verification of behaviour its code could never produce. Every claim in the
+ * README is checked here against the function itself, including the
+ * provider-independence claims: the policy is exercised against the official
+ * DeepSeek ladder, a self-hosted gateway ladder, and a route that declares no
+ * ladder at all.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -12,16 +15,28 @@ import {
   contentChars,
   createState,
   decideEffort,
+  looksAliased,
+  orderEfforts,
+  rankOf,
   readSignals,
   recordObservation,
   resetTurn,
   resolveConfig,
+  resolvePlan,
   stableKey,
   DEFAULTS,
   EFFORT_LADDER,
 } from '../src/effort.js'
 
+/** What this machine's self-hosted gateway declares: medium is a real level. */
+const SELF_HOSTED = ['off', 'minimal', 'low', 'medium', 'high']
+/** What the official DeepSeek API documents, including its compatibility aliases. */
+const OFFICIAL_ALIASED = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+/** What an official route would declare if it exposed only the real levels. */
+const OFFICIAL = ['none', 'low', 'high', 'max']
+
 const config = resolveConfig(undefined)
+const planFor = (declared, overrides) => resolvePlan(declared, resolveConfig(overrides))
 
 const obs = (overrides = {}) => ({
   name: 'read',
@@ -32,18 +47,20 @@ const obs = (overrides = {}) => ({
   ...overrides,
 })
 
-const decide = (input) => decideEffort({ config, ...input })
+const decide = (declared, input) => decideEffort({ config, plan: planFor(declared), ...input })
+
+/* ------------------------------------------------------------------ policy */
 
 test('planning step keeps full effort regardless of signals', () => {
   const signals = readSignals(createState(), 'a')
-  assert.equal(decide({ step: 1, current: 'medium', signals }), 'medium')
-  assert.equal(decide({ step: 1, current: 'high', signals }), 'high')
+  assert.equal(decide(SELF_HOSTED, { step: 1, current: 'medium', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 1, current: 'high', signals }), 'high')
 })
 
 test('execution step drops one notch', () => {
   const signals = readSignals(createState(), 'a')
-  assert.equal(decide({ step: 2, current: 'high', signals }), 'medium')
-  assert.equal(decide({ step: 2, current: 'medium', signals }), 'low')
+  assert.equal(decide(SELF_HOSTED, { step: 2, current: 'high', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 2, current: 'medium', signals }), 'low')
 })
 
 test('a sustained clean streak earns a second notch but never breaks the floor', () => {
@@ -52,16 +69,14 @@ test('a sustained clean streak earns a second notch but never breaks the floor',
   const signals = readSignals(state, 'a')
   assert.equal(signals.cleanStreak, 8)
   assert.equal(signals.struggling, false)
-  // high -2 => low (floor)
-  assert.equal(decide({ step: 9, current: 'high', signals }), 'low')
-  assert.equal(decide({ step: 9, current: 'max', signals }), 'max', 'unknown id untouched')
+  assert.equal(decide(SELF_HOSTED, { step: 9, current: 'high', signals }), 'low')
 })
 
 test('a short clean streak only drops one notch', () => {
   const state = createState()
   for (let index = 0; index < 3; index += 1) recordObservation(state, 'a', obs())
   const signals = readSignals(state, 'a')
-  assert.equal(decide({ step: 4, current: 'high', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'high', signals }), 'medium')
 })
 
 test('an error in the window restores full deliberation', () => {
@@ -70,7 +85,7 @@ test('an error in the window restores full deliberation', () => {
   recordObservation(state, 'a', obs({ isError: true }))
   const signals = readSignals(state, 'a')
   assert.equal(signals.struggling, true)
-  assert.equal(decide({ step: 4, current: 'medium', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'medium', signals }), 'medium')
 })
 
 test('a slow call counts as struggling: the turn is I/O bound, not thinking bound', () => {
@@ -78,7 +93,7 @@ test('a slow call counts as struggling: the turn is I/O bound, not thinking boun
   recordObservation(state, 'a', obs({ durationMs: 30_000 }))
   const signals = readSignals(state, 'a')
   assert.equal(signals.struggling, true)
-  assert.equal(decide({ step: 4, current: 'medium', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'medium', signals }), 'medium')
 })
 
 test('an oversized result counts as struggling', () => {
@@ -86,7 +101,7 @@ test('an oversized result counts as struggling', () => {
   recordObservation(state, 'a', obs({ chars: 60_000 }))
   const signals = readSignals(state, 'a')
   assert.equal(signals.struggling, true)
-  assert.equal(decide({ step: 4, current: 'medium', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'medium', signals }), 'medium')
 })
 
 test('a repeated identical call counts as struggling', () => {
@@ -96,13 +111,13 @@ test('a repeated identical call counts as struggling', () => {
   const signals = readSignals(state, 'a')
   assert.equal(signals.mostRepeated, 2)
   assert.equal(signals.struggling, true)
-  assert.equal(decide({ step: 4, current: 'medium', signals }), 'medium')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'medium', signals }), 'medium')
 })
 
 test('never steps up toward the floor', () => {
   const signals = readSignals(createState(), 'a')
-  assert.equal(decide({ step: 9, current: 'minimal', signals }), 'minimal')
-  assert.equal(decide({ step: 9, current: 'off', signals }), 'off')
+  assert.equal(decide(SELF_HOSTED, { step: 9, current: 'minimal', signals }), 'minimal')
+  assert.equal(decide(SELF_HOSTED, { step: 9, current: 'off', signals }), 'off')
 })
 
 test('a custom floor is respected', () => {
@@ -110,21 +125,23 @@ test('a custom floor is respected', () => {
   const state = createState()
   for (let index = 0; index < 8; index += 1) recordObservation(state, 'a', obs())
   const signals = readSignals(state, 'a')
-  assert.equal(decideEffort({ step: 5, current: 'medium', config: wide, signals }), 'minimal')
-  assert.equal(decideEffort({ step: 5, current: 'low', config: wide, signals }), 'minimal')
+  const plan = resolvePlan(SELF_HOSTED, wide)
+  assert.equal(decideEffort({ step: 5, current: 'medium', config: wide, plan, signals }), 'minimal')
+  assert.equal(decideEffort({ step: 5, current: 'low', config: wide, plan, signals }), 'minimal')
 })
 
 test('escalateAfterStep lifts a long turn back to full effort', () => {
   const lifted = resolveConfig({ escalateAfterStep: 24 })
   const signals = readSignals(createState(), 'a')
-  assert.equal(decideEffort({ step: 30, current: 'medium', config: lifted, signals }), 'medium')
-  assert.equal(decideEffort({ step: 10, current: 'medium', config: lifted, signals }), 'low')
+  const plan = resolvePlan(SELF_HOSTED, lifted)
+  assert.equal(decideEffort({ step: 30, current: 'medium', config: lifted, plan, signals }), 'medium')
+  assert.equal(decideEffort({ step: 10, current: 'medium', config: lifted, plan, signals }), 'low')
 })
 
 test('an unknown effort id is passed through, never guessed', () => {
   const signals = readSignals(createState(), 'a')
-  assert.equal(decide({ step: 4, current: 'xhigh', signals }), 'xhigh')
-  assert.equal(decide({ step: 4, current: undefined, signals }), undefined)
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: 'turbo', signals }), 'turbo')
+  assert.equal(decide(SELF_HOSTED, { step: 4, current: undefined, signals }), undefined)
 })
 
 test('turn change clears the previous turn observations', () => {
@@ -175,13 +192,124 @@ test('stableKey is order-insensitive and bounded', () => {
   assert.equal(typeof stableKey(cycle), 'string')
 })
 
+/* --------------------------------------------------- provider independence */
+
+test('official DeepSeek route: a real cut, not an alias no-op', () => {
+  // The documented aliases mean `high`→`medium` changes nothing on the wire.
+  // The policy must land on `low`, which is a genuinely lower level.
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decide(OFFICIAL, { step: 3, current: 'high', signals }), 'low')
+  assert.equal(decide(OFFICIAL_ALIASED, { step: 3, current: 'high', signals }), 'low')
+  // `max` is a level of its own, so one notch reaches `high`.
+  assert.equal(decide(OFFICIAL, { step: 3, current: 'max', signals }), 'high')
+  assert.equal(decide(OFFICIAL_ALIASED, { step: 3, current: 'max', signals }), 'high')
+})
+
+test('official aliases resolve onto their canonical level', () => {
+  const signals = readSignals(createState(), 'a')
+  const plan = planFor(OFFICIAL_ALIASED)
+  assert.equal(plan.source, 'provider+aliases')
+  assert.equal(plan.indexOf('medium'), plan.indexOf('high'), 'medium is high on the wire')
+  assert.equal(plan.indexOf('xhigh'), plan.indexOf('high'), 'xhigh is high on the wire')
+  assert.equal(plan.indexOf('minimal'), plan.indexOf('low'), 'minimal is low on the wire')
+  // A resolved effort that is only an alias still notches from its real level.
+  assert.equal(decideEffort({ config, plan, step: 3, current: 'medium', signals }), 'low')
+  assert.equal(decideEffort({ config, plan, step: 3, current: 'xhigh', signals }), 'low')
+})
+
+test('a self-hosted gateway keeps every declared level distinct', () => {
+  const plan = planFor(SELF_HOSTED)
+  assert.equal(plan.aliased, false, 'no max/xhigh family, so no alias collapsing')
+  assert.equal(plan.source, 'provider')
+  assert.deepEqual(plan.levels.map(level => level.id), SELF_HOSTED)
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config, plan, step: 3, current: 'high', signals }), 'medium')
+})
+
+test('the official floor keeps thinking enabled', () => {
+  // floor `low` must prevent a drop to `none`, which would disable thinking.
+  const plan = planFor(OFFICIAL)
+  assert.equal(plan.floorId, 'low')
+  const state = createState()
+  for (let index = 0; index < 20; index += 1) recordObservation(state, 'a', obs())
+  const signals = readSignals(state, 'a')
+  assert.equal(decideEffort({ config, plan, step: 9, current: 'high', signals }), 'low')
+  assert.notEqual(decideEffort({ config, plan, step: 9, current: 'low', signals }), 'none')
+})
+
+test('a route that declares no levels is left completely alone', () => {
+  const plan = planFor([])
+  assert.equal(plan.source, 'provider-none')
+  assert.deepEqual(plan.levels, [])
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config, plan, step: 9, current: 'high', signals }), 'high')
+  assert.equal(decideEffort({ config, plan: undefined, step: 9, current: 'high', signals }), 'high')
+})
+
+test('a route declaring a single level cannot be notched', () => {
+  const plan = planFor(['high'])
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config, plan, step: 9, current: 'high', signals }), 'high')
+})
+
+test('a floor the route does not offer maps upward, never below the request', () => {
+  const plan = planFor(['high', 'max'])
+  // The cheapest level is already `high`, so a `low` floor resolves to `high`
+  // and nothing may be cut.
+  assert.equal(plan.floorId, 'high')
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config, plan, step: 9, current: 'max', signals }), 'high')
+})
+
+test('aliases can be disabled or overridden per deployment', () => {
+  const off = resolveConfig({ aliases: false })
+  const offPlan = resolvePlan(OFFICIAL_ALIASED, off)
+  assert.equal(offPlan.aliased, false)
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config: off, plan: offPlan, step: 3, current: 'high', signals }), 'medium')
+
+  const custom = resolveConfig({ aliases: { medium: 'low', high: 'high', max: 'max', none: 'none', minimal: 'low', xhigh: 'high' } })
+  const customPlan = resolvePlan(OFFICIAL_ALIASED, custom)
+  assert.equal(customPlan.indexOf('medium'), customPlan.indexOf('low'))
+})
+
+test('looksAliased separates the two documented families', () => {
+  assert.equal(looksAliased(OFFICIAL), true)
+  assert.equal(looksAliased(OFFICIAL_ALIASED), true)
+  assert.equal(looksAliased(SELF_HOSTED), false)
+  assert.equal(looksAliased(['low', 'high']), false)
+})
+
+test('unrecognised ids keep their declared order instead of being guessed', () => {
+  assert.deepEqual([...orderEfforts(['turbo', 'normal-speed', 'high'])], ['turbo', 'normal-speed', 'high'])
+  assert.equal(rankOf('turbo'), undefined)
+  // A route whose ids are all unknown still works on declared order.
+  const plan = planFor(['turbo', 'normal-speed', 'high'])
+  const signals = readSignals(createState(), 'a')
+  assert.equal(decideEffort({ config, plan, step: 3, current: 'high', signals }), 'high')
+})
+
+test('the fallback ladder is only reachable through an explicit pin', () => {
+  const pinned = resolveConfig({ ladder: ['low', 'high'], floor: 'low' })
+  assert.equal(pinned.ladderExplicit, true)
+  const signals = readSignals(createState(), 'a')
+  const plan = resolvePlan(undefined, pinned)
+  assert.equal(plan.source, 'configured')
+  assert.equal(decideEffort({ step: 3, current: 'high', config: pinned, plan, signals }), 'low')
+})
+
+/* ---------------------------------------------------------------- config */
+
 test('config defaults are safe', () => {
   const defaults = resolveConfig(undefined)
   assert.equal(defaults.enabled, true)
   assert.equal(defaults.floor, DEFAULTS.floor)
   assert.deepEqual([...defaults.ladder], [...EFFORT_LADDER])
+  assert.equal(defaults.ladderExplicit, false)
+  assert.equal(defaults.aliases, 'auto')
   assert.equal(defaults.deepAfter, DEFAULTS.deepAfter)
   assert.equal(defaults.escalateAfterStep, 0)
+  assert.equal(defaults.baselineFromDefault, true)
   assert.equal(defaults.debug, false)
 })
 
@@ -201,15 +329,97 @@ test('bad thresholds fall back instead of disabling the guard', () => {
   assert.equal(resolveConfig({ bigChars: 0 }).bigChars, DEFAULTS.bigChars)
   assert.equal(resolveConfig({ deepAfter: 0 }).deepAfter, DEFAULTS.deepAfter)
   assert.equal(resolveConfig({ escalateAfterStep: 12.7 }).escalateAfterStep, 12)
+  assert.equal(resolveConfig({ discoverTimeoutMs: 'later' }).discoverTimeoutMs, DEFAULTS.discoverTimeoutMs)
 })
 
 test('a malformed ladder falls back to the built-in one', () => {
   assert.deepEqual([...resolveConfig({ ladder: ['only-one'] }).ladder], [...EFFORT_LADDER])
   assert.deepEqual([...resolveConfig({ ladder: 'low,high' }).ladder], [...EFFORT_LADDER])
+  assert.equal(resolveConfig({ ladder: ['only-one'] }).ladderExplicit, false)
 })
 
-test('a custom ladder drives the notch', () => {
-  const custom = resolveConfig({ ladder: ['low', 'high'], floor: 'low' })
-  const signals = readSignals(createState(), 'a')
-  assert.equal(decideEffort({ step: 3, current: 'high', config: custom, signals }), 'low')
+/**
+ * What the shipped official DeepSeek adapter actually advertises to the
+ * harness, read out of `@deepseek-ai/dsh-llm-deepseek`:
+ *
+ *   REASONING_EFFORTS = [off, low, high, max]
+ *
+ * It is *not* the seven-value compatibility list from the API docs: the
+ * adapter maps the wire protocol itself (`thinking: disabled` at `off`,
+ * `output_config.effort` otherwise) and only ever offers those four. So the
+ * plugin must treat `off` as the declared lowest id, and must not invent
+ * `none`/`minimal`/`medium`/`xhigh` for this route.
+ */
+const OFFICIAL_ADAPTER = ['off', 'low', 'high', 'max']
+/** What the same adapter advertises when its connection sets `thinking: disabled`. */
+const OFFICIAL_THINKING_DISABLED = ['off']
+
+test('the official adapter ladder is cut from high to low, keeping thinking on', () => {
+  const plan = planFor(OFFICIAL_ADAPTER)
+  assert.deepEqual(plan.levels.map(level => level.id), ['off', 'low', 'high', 'max'])
+  assert.equal(plan.indexOf('high'), 2)
+  assert.equal(plan.indexOf('off'), 0)
+  // Floor is `low`: the one level that disables thinking is unreachable.
+  assert.equal(plan.floorId, 'low')
+  assert.equal(plan.floorIndex, 1)
+  assert.equal(planFor(OFFICIAL_ADAPTER).levels[plan.floorIndex].id, 'low')
+})
+
+test('the official adapter: no id outside its declared set is ever emitted', () => {
+  const plan = planFor(OFFICIAL_ADAPTER)
+  const declared = new Set(OFFICIAL_ADAPTER)
+  // Only ids the route declares can reach us as `current`, because the harness
+  // takes it from the same `reasoning.efforts` list. A foreign id is covered
+  // separately: it is passed through untouched, never translated.
+  const currentIds = [...OFFICIAL_ADAPTER]
+  const outputs = []
+  for (const current of currentIds) {
+    for (const step of [0, 1, 2, 3, 10]) {
+      for (const struggling of [false, true]) {
+        for (const cleanStreak of [0, 3, 6, 30]) {
+          outputs.push(decideEffort({
+            step,
+            current,
+            baseline: current,
+            plan,
+            config,
+            signals: { struggling, cleanStreak },
+          }))
+        }
+      }
+    }
+  }
+  for (const id of outputs) {
+    if (id === undefined) continue
+    assert.ok(declared.has(id), `emitted an undeclared effort id: ${id}`)
+  }
+  // And it does actually act: a clean execution step below the top is cut.
+  assert.equal(decideEffort({ step: 2, current: 'high', plan, config, signals: { struggling: false, cleanStreak: 0 } }), 'low')
+  // An id the route never declared is never rewritten into one of its own.
+  for (const foreign of ['none', 'minimal', 'medium', 'xhigh', 'turbo']) {
+    assert.equal(decideEffort({ step: 3, current: foreign, plan, config, signals: { struggling: false, cleanStreak: 0 } }), foreign)
+  }
+})
+
+test('the official adapter with thinking disabled is inert, not broken', () => {
+  const plan = planFor(OFFICIAL_THINKING_DISABLED)
+  assert.equal(plan.levels.length, 1)
+  assert.equal(decideEffort({ step: 5, current: 'off', plan, config, signals: { struggling: false, cleanStreak: 9 } }), 'off')
+})
+
+test('an official route that declares only real levels needs no alias table', () => {
+  // `off/low/high/max` contains no alias-only id, so collapsing it changes nothing.
+  assert.equal(looksAliased(OFFICIAL_ADAPTER), true) // it declares `max`
+  const plan = planFor(OFFICIAL_ADAPTER)
+  assert.deepEqual(plan.levels.map(level => level.ids), [['off'], ['low'], ['high'], ['max']])
+})
+
+test('the documented alias contract collapses only on routes that offer it', () => {
+  // A route that declares the full documented list must notch across effective
+  // levels: `high` -> `low`, never the `medium` no-op.
+  const plan = planFor(OFFICIAL_ALIASED)
+  assert.equal(plan.indexOf('high'), plan.indexOf('medium'))
+  assert.equal(plan.indexOf('medium'), plan.indexOf('xhigh'))
+  assert.equal(decideEffort({ step: 2, current: 'high', plan, config, signals: { struggling: false, cleanStreak: 0 } }), 'low')
+  assert.equal(decideEffort({ step: 2, current: 'medium', plan, config, signals: { struggling: false, cleanStreak: 0 } }), 'low')
 })

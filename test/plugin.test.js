@@ -5,22 +5,38 @@
  * drives them in the order the harness would: a planning request, tool calls,
  * then execution requests. This is what proves the hooks are connected — the
  * policy tests alone would still pass if `apply()` registered nothing.
+ *
+ * The fake context also exposes an `llm` service, because provider discovery is
+ * part of the contract: the plugin must ask which levels the current route
+ * declares before it lowers anything, and must do nothing at all when that
+ * question cannot be answered.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { apply } from '../index.js'
 
-/** Minimal stand-in for a Cordis context. */
-function fakeContext() {
+const SELF_HOSTED = ['off', 'minimal', 'low', 'medium', 'high']
+const OFFICIAL = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/**
+ * Minimal stand-in for a Cordis context.
+ *
+ * @param {{services?: Record<string, unknown>}} [options]
+ */
+function fakeContext(options = {}) {
   const handlers = new Map()
   const logs = []
+  const services = options.services ?? {}
   return {
     handlers,
     logs,
     on(event, handler) {
       handlers.set(event, handler)
       return () => handlers.delete(event)
+    },
+    get(name) {
+      return services[name]
     },
     logger: { info: (...args) => logs.push(args) },
     fire(event, ...args) {
@@ -31,14 +47,27 @@ function fakeContext() {
   }
 }
 
+/** An `llm` service that answers discovery from a table. */
+const llmService = (table, { delayMs = 0, fail = false } = {}) => ({
+  resolveModelInfo(provider, model) {
+    const answer = () => {
+      if (fail) throw new Error('discovery unavailable')
+      const entry = table[`${provider}/${model}`]
+      if (!entry) throw new Error(`unknown route ${provider}/${model}`)
+      return { reasoning: { efforts: entry.efforts.map(id => ({ id })), defaultEffort: entry.default } }
+    }
+    return delayMs > 0 ? new Promise(resolve => setTimeout(() => resolve(answer()), delayMs)) : Promise.resolve(answer())
+  },
+})
+
 const agent = { id: 'session-1' }
 const accept = async () => ({ kind: 'accept' })
 
 /** A request whose `next()` resolves to the harness-resolved config. */
-const request = (ctx, { step, effort, turn = 0 }) =>
+const request = (ctx, { step, effort, turn = 0, provider = 'company', model = 'deepseek-v4.1-flash' }) =>
   ctx.fire('agent/request', { agent, turn, step, signal: new AbortController().signal }, async () => ({
-    provider: 'company',
-    model: 'deepseek-v4.1-flash',
+    provider,
+    model,
     reasoningEffort: effort,
   }))
 
@@ -67,7 +96,9 @@ test('enabled:false registers nothing', () => {
 })
 
 test('planning step keeps effort; execution step after clean calls is lowered', async () => {
-  const ctx = fakeContext()
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
   apply(ctx, {})
 
   const planning = await request(ctx, { step: 1, effort: 'medium' })
@@ -80,7 +111,9 @@ test('planning step keeps effort; execution step after clean calls is lowered', 
 })
 
 test('a failing tool restores effort on the next step', async () => {
-  const ctx = fakeContext()
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
   apply(ctx, {})
 
   await runTool(ctx, { callId: 'c1', name: 'bash', args: { command: 'false' }, isError: true })
@@ -104,7 +137,9 @@ test('tool hooks never alter the tool result', async () => {
 })
 
 test('a fresh turn does not inherit the previous turn struggle', async () => {
-  const ctx = fakeContext()
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
   apply(ctx, {})
 
   await runTool(ctx, { callId: 'c1', name: 'bash', args: {}, isError: true })
@@ -120,7 +155,9 @@ test('a fresh turn does not inherit the previous turn struggle', async () => {
 })
 
 test('a long clean streak earns the second notch', async () => {
-  const ctx = fakeContext()
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
   apply(ctx, { floor: 'minimal' })
   for (let index = 0; index < 8; index += 1) {
     await runTool(ctx, { callId: `c${index}`, name: 'read', args: { path: `f${index}` } })
@@ -130,15 +167,99 @@ test('a long clean streak earns the second notch', async () => {
 })
 
 test('an unknown effort id is passed through untouched', async () => {
+  const ctx = fakeContext({ services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) } })
+  apply(ctx, {})
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const result = await request(ctx, { step: 2, effort: 'turbo' })
+  assert.equal(result.reasoningEffort, 'turbo')
+})
+
+/* ------------------------------------------------- provider independence */
+
+test('official DeepSeek route gets a real cut, not an alias no-op', async () => {
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'deepseek/deepseek-flash': { efforts: OFFICIAL, default: 'high' } }) },
+  })
+  apply(ctx, {})
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const execution = await request(ctx, {
+    step: 2,
+    effort: 'high',
+    provider: 'deepseek',
+    model: 'deepseek-flash',
+  })
+  assert.equal(execution.reasoningEffort, 'low', 'medium would be a no-op on the wire')
+})
+
+test('a route declaring no levels is left untouched', async () => {
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'deepseek/deepseek-chat': { efforts: [], default: undefined } }) },
+  })
+  apply(ctx, {})
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const execution = await request(ctx, { step: 2, effort: 'high', provider: 'deepseek', model: 'deepseek-chat' })
+  assert.equal(execution.reasoningEffort, 'high', 'no level to cut means no decision')
+})
+
+test('when discovery is unavailable the plugin does not guess', async () => {
+  // No llm service at all, and a request that still carries an effort. Sending a
+  // guessed id would make the harness reject the call before provider I/O, so
+  // the only safe action is none.
   const ctx = fakeContext()
   apply(ctx, {})
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const result = await request(ctx, { step: 2, effort: 'xhigh' })
-  assert.equal(result.reasoningEffort, 'xhigh')
+  const execution = await request(ctx, { step: 2, effort: 'high' })
+  assert.equal(execution.reasoningEffort, 'high')
+})
+
+test('a failing discovery call is treated as unknown', async () => {
+  const ctx = fakeContext({ services: { llm: llmService({}, { fail: true }) } })
+  apply(ctx, {})
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const execution = await request(ctx, { step: 2, effort: 'high' })
+  assert.equal(execution.reasoningEffort, 'high')
+})
+
+test('slow discovery never stalls the request, and later steps use the real ladder', async () => {
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }, { delayMs: 60 }) },
+  })
+  apply(ctx, { discoverTimeoutMs: 10 })
+
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const quick = await request(ctx, { step: 2, effort: 'medium' })
+  assert.equal(quick.reasoningEffort, 'medium', 'first request must not wait for metadata')
+
+  // The late answer still upgrades the cache, so the plugin does not stay blind.
+  await new Promise(resolve => setTimeout(resolve, 90))
+  const later = await request(ctx, { step: 3, effort: 'medium' })
+  assert.equal(later.reasoningEffort, 'low', 'cached ladder applied on the next request')
+})
+
+test('a pinned ladder may be used when discovery is unavailable', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ladder: ['low', 'high'], floor: 'low' })
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
+  const execution = await request(ctx, { step: 2, effort: 'high' })
+  assert.equal(execution.reasoningEffort, 'low')
+})
+
+test('the route is logged once, proving which ladder was used', async () => {
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
+  apply(ctx, {})
+  await request(ctx, { step: 1, effort: 'high' })
+  await request(ctx, { step: 2, effort: 'high' })
+  const ladderLogs = ctx.logs.filter(args => String(args[0]).includes('ladder='))
+  assert.equal(ladderLogs.length, 1, 'logged once per process, not per step')
+  assert.match(String(ladderLogs[0].join(' ')), /off>minimal>low>medium>high/)
 })
 
 test('a throwing tool payload does not break the request', async () => {
-  const ctx = fakeContext()
+  const ctx = fakeContext({
+    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+  })
   apply(ctx, {})
   // A hostile/getter-only arguments object: observation must swallow this.
   const args = {}
@@ -164,7 +285,9 @@ test('debug writes one line per request with the signals', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-'))
   const file = join(dir, 'debug.log')
   try {
-    const ctx = fakeContext()
+    const ctx = fakeContext({
+      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    })
     apply(ctx, { debug: true, debugFile: file })
     await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
     await request(ctx, { step: 2, effort: 'medium' })
@@ -172,6 +295,7 @@ test('debug writes one line per request with the signals', async () => {
     assert.equal(lines.length, 1)
     assert.match(lines[0], /step=2 medium=>low/)
     assert.match(lines[0], /clean=1/)
+    assert.match(lines[0], /route=provider/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

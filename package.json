@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness host plugin: cuts tool-chain wall clock by spending less reasoning on execution steps. Stateless and dependency-free.",
   "repository": {
     "type": "git",
