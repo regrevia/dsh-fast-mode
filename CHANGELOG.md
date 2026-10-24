@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.8.0
+
+Everything up to 0.7.0 optimised effort, and Experiment E showed effort is not the
+lever on a self-hosted route: raising it does not shorten a session. What does
+shorten a session is fewer round trips and less visible text. 0.8.0 pulls both,
+and it measures the result instead of asserting it.
+
+- **The execution-speed guidance is one system-prompt section, not a rewritten
+  prompt.** `fast-mode:execution-speed` at order 520 states the batching rules,
+  the gear's parallel target, the speculative-prefetch line and the
+  output-discipline layers. It is injected only for gears marked `directive`, so
+  `safe` injects nothing at all — it stays the pre-0.8.0 behaviour and works as
+  the control arm.
+- **Output discipline is the largest single lever.** `outputDiscipline` (default
+  `true`, not volatile, so changing it needs a reload) tells the model not to
+  narrate around tool calls, not to restate file contents, and not to write
+  end-of-step progress reports. Measured: per-step output **640 → 190 tokens**.
+- **Gears gain a `parallel` target and a `discipline` level**: safe 2 / fast 4 /
+  turbo 6 / max 8 / ludicrous 8 per step; safe injects no discipline, fast gets
+  the light version (three prohibitions), turbo and above the full version plus
+  speculative prefetch. An explicit `parallel` overrides the target — `gear:
+  turbo` + `parallel: 8` fits two more independent calls into the same round
+  trip and never adds a step.
+- **A warning when the profile caps the target.** If `agentLoop.maxParallelToolCalls`
+  sits below what the gear asks for, one warn names the cap and the line to
+  change in `cordis.patch.yml`; it fires once per distinct `parallel` value, not
+  once per request.
+- **Measurement: `bin/experiment.mjs`, and Experiment E.** 16 same-task sessions
+  assigned by hash rather than clicked, `safe` vs `turbo`: median Σ step time
+  25.9 s → 15.6 s (−40 %), median steps 7.5 → 4.5, per-session output tokens
+  3,798 → 2,180 (−43 %), Mann–Whitney p = 0.008, and all ten answer facts agreed.
+  Raw data and the caveats (uneven arms, small n) are in BENCHMARK.md.
+- **The trade, stated plainly**: this plugin does not save tokens; it spends
+  tokens to buy time. Every lever here adds tokens to the same route's request,
+  and none of them works by making the model dumber.
+
+173 tests (8 new in `test/guidance.test.js`); the suite is green.
+
 ## 0.7.0
 
 Fast mode was a global switch wearing a per-conversation costume: the bolt sits in

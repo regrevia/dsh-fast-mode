@@ -10,7 +10,7 @@
  *   why the on/off switch and the gear selector exist there without a line of
  *   client code.
  *
- * The three form fields (`enabled`, `gear`, `parallel`) are `.volatile()`: that
+ * The four form fields (`enabled`, `gear`, `parallel`, `sessions`) are `.volatile()`: that
  * is what makes them appear in the generated form *and* what lets an edit reach
  * a running fiber instead of forcing a remount. A non-volatile declaration is
  * invisible in the form — `describe()` drops it and `update()` refuses the path
@@ -56,7 +56,7 @@ export const Config = z.object({
     .default('fast')
     .volatile()
     .description(
-      '档位 / Gear: safe < fast < turbo < max < ludicrous。越高越早允许降档，模型侧并行目标 4/6/8/8 次调用；档位只抬高并行上限，不改变最低档位。ludicrous 会连思考档一起取消（reasoning off），只适合明确不要质量的批量任务。',
+      '档位 / Gear: safe < fast < turbo < max < ludicrous。档位拧的是“用 token 换往返次数”：并行目标 4/6/8/8 次调用，turbo 起再加投机预读与更严的输出纪律，同时越高的档越早把推理档压下来。safe 完全不干预；ludicrous 连思考档一起取消（reasoning off），只适合明确不要质量的批量任务。',
     ),
 
   parallel: z
@@ -75,6 +75,13 @@ export const Config = z.object({
     .volatile()
     .description(
       '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true,"gear":"turbo"}}。渲染闪电面板时按会话读写；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。',
+    ),
+
+  outputDiscipline: z
+    .boolean()
+    .default(true)
+    .description(
+      '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔（实测同一任务把每步可见输出从约 640 降到约 190 token，墙钟快约三分之一）。默认开启；关掉后只注入并行提示，不干预文风。',
     ),
 
   metrics: z

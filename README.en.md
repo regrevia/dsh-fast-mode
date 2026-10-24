@@ -126,11 +126,21 @@ The official route (`@deepseek-ai/dsh-llm-deepseek`, read out of the code, not g
 
 Self-hosted / gateway routes work the same way, only the ladder differs (for example, this machine's `company` gateway declares `off/minimal/low/medium/high` and every level really takes effect; one notch is `high → medium`). The plugin assumes no vocabulary: whatever the route declares is what it notches across; when the declaration is empty (`route=provider-none`) or cannot be obtained (`route=unknown`), it does not act at all.
 
-### 3. Batch in parallel per gear
+### 3. Trade tokens for time: three levers
 
-The effort level only decides "how long to think", not "how many calls a step issues". Multiple tool calls in one assistant message are scheduled **concurrently** by the harness (bounded by `agentLoop.maxParallelToolCalls`, default 10, and only calls declared safe are run concurrently), so the only honest way to raise real concurrency is to get the model to put independent calls in the same step — so at gear ≥ 2 the plugin registers a system-prompt section that states a different parallelism target per gear.
+One sentence: **This plugin does not save tokens; it spends tokens to buy time.** It spends them in three places, and the third is new in 0.8.0 — and the one that paid off most in measurement.
 
-It also holds three rules that must not be broken: only **mutually independent** calls are parallelized, reads and writes never go into the same batch, and a failure in a batch shrinks back to small steps. The parallelism target is only a target: if the profile pushes the scheduling cap below the gear's target, the plugin logs a warn telling you which line to change in `cordis.patch.yml`.
+| Lever | How | Why it is faster | Who pays |
+|---|---|---|---|
+| **1. Wider steps** | The gear states a per-step parallel target (4/6/8/8) and tells the model to put independent calls into one assistant message | Calls in one message are scheduled **concurrently** by the harness (bounded by `agentLoop.maxParallelToolCalls`, default 10, and only calls declared safe are run concurrently), so N reads collapse from N round trips into one | Input tokens: a step carries more tool results |
+| **2. Speculative prefetch** | At gear ≥ `turbo` one extra line: when the evidence already implies which file the next step will read, **read it in the same batch** | Reading one file you did not need costs a few hundred input tokens; an extra round trip costs a whole step (≈0.7 s of fixed overhead plus prefill) | Input tokens: the occasional wasted read |
+| **3. Less narration** | Tells the model not to narrate around tool calls, not to restate file contents, and not to close a step with a "done" progress report | On this route a step costs ≈ `720 ms + 6.6 ms × output tokens` (R²=0.93), so **visible text is the single largest cost** | Output tokens: the answer states only conclusions |
+
+All three touch exactly one thing: **spending more tokens on the request to the same route.** None of them works by "making the model dumber", and none of them lowers effort — on this self-hosted route reasoning tokens are 0, so lowering effort saves nothing at all (see [BENCHMARK.md](BENCHMARK.md)).
+
+The third is on by default and can be turned off with `outputDiscipline: false` (the parallel and prefetch prompts stay; the writing style is left alone). `fast` gets the light version (three prohibitions); `turbo` and above get the full version (plus "if this step needs no prose, write none"). `safe` injects nothing.
+
+The parallel prompt also holds four rules that must not be broken: only **mutually independent** calls are parallelized, reads and writes never go into the same batch, a failure in a batch shrinks back to small steps, and a step is **never** split narrow again just to save tokens. The parallelism target is only a target: if the profile pushes the scheduling cap below the gear's target, the plugin logs a warn telling you which line to change in `cordis.patch.yml`.
 
 ### 4. State follows the conversation
 
@@ -176,20 +186,22 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 
 A gear is not a set of switches but **one posture**: how early downgrading is allowed, how far back the signals look, and how many calls the model is asked to issue per step.
 
-| Gear | Name | `floor` | `deepAfter` | `window` | Parallel target | Good for |
-|---|---|---|---|---|---|---|
-| 1 | Safe `safe` | `low` | 6 | 8 | 2 per step | Critical changes, wanting to read the logs first, zero prompt-change requirements |
-| 2 | Fast `fast` | `low` | 4 | 6 | 4 per step | **Default, recommended for daily use** |
-| 3 | Turbo `turbo` | `low` | 3 | 5 | 6 per step | Heavy code reading, research, bulk triage |
-| 4 | Max `max` | `low` | 2 | 4 | 8 per step | Mechanical batch work; not recommended for critical changes unattended |
-| 5 | Ludicrous `ludicrous` * | `off` | 1 | 4 | 8 per step | Batch work where you explicitly do not want quality: thinking off, fastest and riskiest |
+| Gear | Name | `floor` | `deepAfter` | `window` | Parallel target | Output discipline | Good for |
+|---|---|---|---|---|---|---|---|
+| 1 | Safe `safe` | `low` | 6 | 8 | 2 per step | none (safe, no injection) | Critical changes, wanting to read the logs first, zero prompt-change requirements |
+| 2 | Fast `fast` | `low` | 4 | 6 | 4 per step | light (3 rules) | **Default, recommended for daily use** |
+| 3 | Turbo `turbo` | `low` | 3 | 5 | 6 per step | full + prefetch | **Pick this gear when you want faster**; heavy code reading, research, bulk triage |
+| 4 | Max `max` | `low` | 2 | 4 | 8 per step | full + prefetch | Mechanical batch work; not recommended for critical changes unattended |
+| 5 | Ludicrous `ludicrous` * | `off` | 1 | 4 | 8 per step | full + prefetch | Batch work where you explicitly do not want quality: thinking off, fastest and riskiest |
 
 - Use a name (`gear: turbo`): the schema accepts exactly `safe`/`fast`/`turbo`/`max`/`ludicrous`. A number or a typo (`gear: 5`, `gear: warp`) is a **load-time error**, not a silent fallback to some gear. The policy layer still normalises defensively, so a bad value can never become "unlimited".
 - Explicit fields always beat the gear: `gear: turbo` + `deepAfter: 8` is "turbo parallelism with a conservative downgrade rhythm".
 - Apart from `ludicrous`, whose own `floor` is `off`, no gear ever goes below `floor` (default `low`). To push harder, set `floor: minimal` or `floor: off` yourself; that amounts to allowing thinking to be turned off, and the quality risk is yours.
 - `ludicrous` is the only gear that actually emits `reasoningEffort: 'off'`: the official route declares `off`, which is where the 3–4× lives; the quality drop is part of the design, and the panel marks it with an asterisk and one line of fine print.
-- `safe`'s parallel target is 2, but it is the only gear that **injects no guidance** (`directive: false`), so that target never reaches the model — its behaviour is the pre-fast-mode release.
+- `safe`'s parallel target is 2, but it is the only gear that **injects no guidance** (`directive: false`), so that target never reaches the model — its behaviour is the pre-fast-mode release, and it is the control arm in the controlled experiment.
 - The higher the gear, the more input tokens a step usually carries (more tool results per step) and the fewer round trips — exactly the "trade tokens for time" deal.
+- **To go faster still, raise `parallel` to 8 first** (`gear: turbo` + `parallel: 8`): turbo's own target is 6, and 8 fits two more independent calls into the same round trip without adding a step. It needs the profile's `agentLoop.maxParallelToolCalls` to be at least 8 (default 10); otherwise the plugin warns you that the cap is holding it down.
+- Measured: on one and the same task — count lines per file, count test cases, look at git status — `turbo` (with output discipline) against `safe` gave median wall clock −32 %, steps −27 %, output tokens flat to slightly down. The full method and raw data are in Experiment E of [BENCHMARK.md](BENCHMARK.md).
 
 ## Using it with context-compression plugins: more tokens, faster
 
@@ -239,6 +251,33 @@ Two further points are facts, not advice: billion-context's own summarizer calls
 Plugins like `image-guard` and `intellif-litellm-adapter` fix a different failure: rewriting the message list before the request goes out (moving old images away, forcing another compression round, retrying the 400 from `too_many_images`) so the request fits through a gateway's image-count / pixel / context caps. They share no field with this plugin and need no configuration change; if you want their retry steps to keep full thinking, you can also put the relevant offload / compaction tool names into `holdTools`.
 
 Keep **only one image reducer** in a profile (billion-context also folds media server-side), otherwise the two compressions step on each other.
+
+## Coexistence and conflicts: what works alongside it, what does not
+
+This plugin touches exactly three things, so compatibility can be stated precisely: **① one section in the system prompt** (`fast-mode:execution-speed`, order 520); **② `reasoningEffort` on `agent/request`** (only ids the route declared); **③ reading `agentLoop.maxParallelToolCalls` once** (read-only, to warn). It does not write the message history, does not take over tool results, does not intercept `fetch`, and makes no network requests of its own (measurement only writes a local JSONL file).
+
+### They coexist fine
+
+| Plugin | Relationship |
+|---|---|
+| Context-compression plugins (billion-context / built-in compaction / historical image compression / gateway adapters) | Orthogonal and complementary: they cut input, this plugin cuts round trips and output. See the previous section |
+| Any plugin that only adds UI and does not change the model (status bar, themes, notifications…) | No overlap: the bolt lives in its own cell of `conversation.input.activity` |
+| Read-only observation / measurement / telemetry plugins | No overlap: this plugin consumes nobody else's section and changes nobody else's fields |
+
+### They conflict
+
+| Conflicting thing | Why |
+|---|---|
+| **Another plugin that writes `reasoningEffort` / `output_config.effort`** ("thinking strength", "reasoning boost", billion-context's `effortRouting`) | A knob can have only one owner. Each pincer cannot see why the other raised the effort, the last writer wins, and both judgements stop working. Pick one, or turn the other path off |
+| **Another plugin that is also called "fast mode"** | The `settings` namespace and the `- id:` in `cordis.patch.yml` both collide; two system prompts of the same kind also get billed twice |
+| **Another plugin that renders into `conversation.input.activity` and assumes it owns the row** | The slot is shared, so two chips crowd each other. Not data corruption — just an uglier UI |
+| **A plugin that takes over `agent/request` and pushes `maxParallelToolCalls` back down to 1–2** (some "save tokens" / "serialize everything" implementation) | The gear's parallel target becomes empty words: the model still puts 8 calls into one message, the harness runs them one after another, and all that is left is a fake "8 calls in one round trip" |
+| **A strict audit gateway that demands verbatim quoting / forbids parallel tool calls** | A semantic conflict, not a technical one: output discipline deletes the narration. Set `outputDiscipline: false` and consider `gear: safe` |
+| A second agent preset that injects prompt text of the same kind | The preset's prompt is concatenated first, and two "batch your calls" passages pointing at different numbers dilute each other. When the preset has its own rules, do not use a `directive` gear |
+
+### The one-line rule
+
+**In one profile, `reasoningEffort` gets exactly one owner; the system prompt gets exactly one voice on "how to issue tool calls".** Satisfy those two and everything else can stack freely.
 
 ## Official API support
 
@@ -365,6 +404,7 @@ While an experiment runs, **new sessions run as assigned** (anything but `off` a
     enabled: true              # the shared default switch, default false; conversations without their own entry inherit it
     gear: fast                 # safe / fast / turbo / max / ludicrous (default: fast)
     parallel: 4                # optional: overrides the gear's parallel target (only the number in the prompt and the warning are affected)
+    outputDiscipline: true     # less narration, conclusions only; false = keep the parallel/prefetch prompts and leave the style alone
     floor: low                 # never choose a cheaper gear than this
     deepAfter: 4               # clean calls before the second notch is allowed (default follows the gear)
     slowMs: 5000               # at or above this duration, hold thinking
@@ -389,6 +429,7 @@ While an experiment runs, **new sessions run as assigned** (anything but `off` a
 | `gear` | `fast` | Gear, one of `safe`/`fast`/`turbo`/`max`/`ludicrous`; a number or a typo is a load-time error. Conversations without an entry of their own inherit it |
 | `parallel` | follows the gear (4/6/8) | Parallel target in the injected prompt; `1` means no injection. **Left blank** in the settings page means "follow the gear" — it deliberately has no schema default, because a default would pin the field and the gear could never raise it again |
 | `sessions` | `""` | per-conversation overrides, maintained by the plugin (**do not edit**): `{"<sessionId>":{"enabled":true,"gear":"turbo","ts":…}}`; past 200 entries the oldest `ts` are dropped and those conversations fall back to the shared default. Volatile; a text input in the settings page |
+| `outputDiscipline` | `true` | keeps the model from narrating its work (no commentary around tool calls, no restating file contents, no progress reports), conclusions only. This is the strongest lever in "trade tokens for time": measured, per-step output drops from 640 to 190 tokens and wall clock falls by about a third. `false` keeps the parallel and prefetch prompts and drops only the style constraint. **Not volatile** — changing it needs a reload |
 | `floor` | `low` | never choose a cheaper gear; on the official route `floor: high` means no downgrade at all |
 | `deepAfter` | follows the gear (6/4/3/2/1) | how many consecutive clean calls allow the second notch |
 | `slowMs` | `5000` | at or above this duration, hold thinking |
@@ -434,7 +475,7 @@ If every line reads `high=>high`, check in this order: whether the step number r
 ## Development and tests
 
 ```bash
-npm test        # 165 tests, no network, no harness required
+npm test        # 173 tests, no network, no harness required
 ```
 
 The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (a bad value never becomes "unlimited"). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1. The metrics group proves that **sessions with the switch off are recorded too** (one row per step, time-to-first-token taken from the first assistant message), and covers token/error summing, per-session isolation, lazy directory creation, and an empty path turning the sink off. The state group covers 0.7.0's per-conversation overrides: the browser copy of the column logic is loaded from the shipped `client.js` into a `vm` and fed the same fixtures as the host's `src/state.js`, proving both read and write one format — a drift between the two is a switch that looks on and does nothing — and it covers pruning at the 200-entry cap, garbage columns degrading to "no overrides", and the host applying each conversation's own entry while a conversation without one inherits the shared pair. The experiment-assignment group proves the hash is stable and covers every gear, an explicit pin wins, a single session can be pinned, the file takes effect within a second, no file or `enabled:false` keeps it completely inert, and a broken file complains once. The report group runs the real `bin/report.mjs`: both tables, a text-only refusal when only one arm has samples, `--since` (which also widens the dashboard window), `--json`, `--help` reading no file, skipping `--lan` without a token, matching by session id when a token is present while **never printing the token**, and degrading to a note when the dashboard is unreachable. One last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs. The same group also checks the client-half manifest contract (`dsh.client.platform === "web"`, `exports["./client"]`, `client.js` packed, the bundle id equal to the package name, and the registered slot being `conversation.input.activity` rather than the one that would shadow the model selector), and runs the shipped `client.js` verbatim in a `vm` sandbox with a stub `__ModuleLoader__` and a fake `settings` remote that answers with the real wire envelope (`{ok, value}`) — the missing unwrap is what made 0.5.1's bolt inert, so the envelope is part of the fixture now: the bundle parses, requires only `react`, paints hollow when off, a click only opens the panel and writes nothing, the switch inside sends exactly one `settings/update` carrying the revision it read, a second click turns it back off, rolls back with a stated reason when that write is refused, and pins the new interaction contract — the outer control is **one icon** (no caret, no inline dropdown), the button is **never** disabled, read-only / absent / `ok:false` all render as "clickable with a reason", the five rows are labelled with their speed and token multipliers, `ludicrous` carries its asterisk, picking a gear while off arms `enabled` in the same write, picking one while already on leaves the toggle alone, and the client gear ids match the host `GEARS` exactly; the panel's scope line exists in both dictionaries (the Chinese one asserted verbatim as `仅本会话生效`, the English one non-empty). Another group validates the schema against real schemastery: `enabled` defaults to `false`, all five gear names pass, `gear: warp` fails loudly, measurement is on by default, exactly `enabled`/`gear`/`parallel`/`sessions` are volatile (`sessions` is machine-written, not a knob), and patch-level keys the schema does not declare (`floor`, `holdTools`) survive untouched.

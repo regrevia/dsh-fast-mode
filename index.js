@@ -88,7 +88,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.7.0'
+export const VERSION = '0.8.0'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
 
