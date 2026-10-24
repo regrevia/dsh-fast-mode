@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.4.0",
-  "description": "DeepSeek Harness fast mode: gear-based adaptive reasoning effort plus parallel tool batching. Zero dependencies, provider-agnostic, one host plugin.",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
@@ -14,6 +14,7 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./effort": "./src/effort.js",
     "./guidance": "./src/guidance.js",
     "./locale/*.json": "./locale/*.json",
@@ -21,14 +22,15 @@
   },
   "files": [
     "index.js",
+    "client.js",
     "src/",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.png",
     "README.md",
     "README.en.md",
-    "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "keywords": [
     "deepseek-harness",
@@ -40,6 +42,9 @@
     "latency",
     "deepseek"
   ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -50,6 +55,16 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots",
+        "locale",
+        "remote",
+        "remote.settings"
+      ],
+      "immediately": true
     }
   },
   "author": "regrevia",

@@ -426,7 +426,11 @@ export function resolveConfig(raw) {
     : gear.floor
 
   return {
-    enabled: config.enabled !== false,
+    // Opt-in, never opt-out: fast mode trades deliberation for latency, so the
+    // absence of a decision means "leave the harness alone". Only an explicit
+    // `true` turns it on; `1`/`'yes'`/a stray string stay off rather than
+    // silently changing how the model thinks.
+    enabled: config.enabled === true,
     floor,
     ladder,
     /** An operator-pinned ladder is authoritative, so it may be used without discovery. */

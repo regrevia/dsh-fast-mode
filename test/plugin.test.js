@@ -63,6 +63,8 @@ const llmService = (table, { delayMs = 0, fail = false } = {}) => ({
 
 const agent = { id: 'session-1' }
 const accept = async () => ({ kind: 'accept' })
+/** Fast mode is opt-in, so every behavioural test arms it explicitly. */
+const ON = { enabled: true }
 
 /** A request whose `next()` resolves to the harness-resolved config. */
 const request = (ctx, { step, effort, turn = 0, provider = 'company', model = 'deepseek-v4.1-flash' }) =>
@@ -84,7 +86,7 @@ const runTool = async (ctx, { callId, name, args, isError = false, text = 'ok' }
 
 test('the plugin registers both tool hooks and the request hook', () => {
   const ctx = fakeContext()
-  apply(ctx, {})
+  apply(ctx, ON)
   for (const event of ['agent/request', 'tools/pre-execute', 'tools/post-execute']) {
     assert.ok(ctx.handlers.has(event), `missing ${event}`)
   }
@@ -96,11 +98,19 @@ test('enabled:false registers nothing', () => {
   assert.equal(ctx.handlers.size, 0)
 })
 
+test('a bare composition registers nothing: fast mode is opt-in', () => {
+  for (const config of [undefined, {}, { gear: 'max' }, { enabled: 'yes' }]) {
+    const ctx = fakeContext()
+    apply(ctx, config)
+    assert.equal(ctx.handlers.size, 0, `config ${JSON.stringify(config)} must stay inert`)
+  }
+})
+
 test('planning step keeps effort; execution step after clean calls is lowered', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
 
   const planning = await request(ctx, { step: 1, effort: 'medium' })
   assert.equal(planning.reasoningEffort, 'medium', 'step 1 untouched')
@@ -115,7 +125,7 @@ test('a failing tool restores effort on the next step', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
 
   await runTool(ctx, { callId: 'c1', name: 'bash', args: { command: 'false' }, isError: true })
   const after = await request(ctx, { step: 2, effort: 'medium' })
@@ -124,7 +134,7 @@ test('a failing tool restores effort on the next step', async () => {
 
 test('tool hooks never alter the tool result', async () => {
   const ctx = fakeContext()
-  apply(ctx, {})
+  apply(ctx, ON)
   const decision = await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' }, text: 'contents' })
   assert.deepEqual(decision, { kind: 'accept' }, 'observer forwarded the unmodified decision')
 
@@ -141,7 +151,7 @@ test('a fresh turn does not inherit the previous turn struggle', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
 
   await runTool(ctx, { callId: 'c1', name: 'bash', args: {}, isError: true })
   const sameTurn = await request(ctx, { step: 2, effort: 'medium', turn: 0 })
@@ -159,7 +169,7 @@ test('a long clean streak earns the second notch', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, { floor: 'minimal' })
+  apply(ctx, { enabled: true, floor: 'minimal' })
   for (let index = 0; index < 8; index += 1) {
     await runTool(ctx, { callId: `c${index}`, name: 'read', args: { path: `f${index}` } })
   }
@@ -169,7 +179,7 @@ test('a long clean streak earns the second notch', async () => {
 
 test('an unknown effort id is passed through untouched', async () => {
   const ctx = fakeContext({ services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) } })
-  apply(ctx, {})
+  apply(ctx, ON)
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const result = await request(ctx, { step: 2, effort: 'turbo' })
   assert.equal(result.reasoningEffort, 'turbo')
@@ -181,7 +191,7 @@ test('official DeepSeek route gets a real cut, not an alias no-op', async () => 
   const ctx = fakeContext({
     services: { llm: llmService({ 'deepseek/deepseek-flash': { efforts: OFFICIAL, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, {
     step: 2,
@@ -196,7 +206,7 @@ test('a route declaring no levels is left untouched', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'deepseek/deepseek-chat': { efforts: [], default: undefined } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, { step: 2, effort: 'high', provider: 'deepseek', model: 'deepseek-chat' })
   assert.equal(execution.reasoningEffort, 'high', 'no level to cut means no decision')
@@ -207,7 +217,7 @@ test('when discovery is unavailable the plugin does not guess', async () => {
   // guessed id would make the harness reject the call before provider I/O, so
   // the only safe action is none.
   const ctx = fakeContext()
-  apply(ctx, {})
+  apply(ctx, ON)
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, { step: 2, effort: 'high' })
   assert.equal(execution.reasoningEffort, 'high')
@@ -215,7 +225,7 @@ test('when discovery is unavailable the plugin does not guess', async () => {
 
 test('a failing discovery call is treated as unknown', async () => {
   const ctx = fakeContext({ services: { llm: llmService({}, { fail: true }) } })
-  apply(ctx, {})
+  apply(ctx, ON)
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, { step: 2, effort: 'high' })
   assert.equal(execution.reasoningEffort, 'high')
@@ -225,7 +235,7 @@ test('slow discovery never stalls the request, and later steps use the real ladd
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }, { delayMs: 60 }) },
   })
-  apply(ctx, { discoverTimeoutMs: 10 })
+  apply(ctx, { enabled: true, discoverTimeoutMs: 10 })
 
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const quick = await request(ctx, { step: 2, effort: 'medium' })
@@ -239,7 +249,7 @@ test('slow discovery never stalls the request, and later steps use the real ladd
 
 test('a pinned ladder may be used when discovery is unavailable', async () => {
   const ctx = fakeContext()
-  apply(ctx, { ladder: ['low', 'high'], floor: 'low' })
+  apply(ctx, { enabled: true, ladder: ['low', 'high'], floor: 'low' })
   await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
   const execution = await request(ctx, { step: 2, effort: 'high' })
   assert.equal(execution.reasoningEffort, 'low')
@@ -249,7 +259,7 @@ test('the route is logged once, proving which ladder was used', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
   await request(ctx, { step: 1, effort: 'high' })
   await request(ctx, { step: 2, effort: 'high' })
   const ladderLogs = ctx.logs.filter(args => String(args[0]).includes('ladder='))
@@ -261,7 +271,7 @@ test('a throwing tool payload does not break the request', async () => {
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
-  apply(ctx, {})
+  apply(ctx, ON)
   // A hostile/getter-only arguments object: observation must swallow this.
   const args = {}
   Object.defineProperty(args, 'path', { enumerable: true, get() { throw new Error('boom') } })
@@ -289,7 +299,7 @@ test('debug writes one line per request with the signals', async () => {
     const ctx = fakeContext({
       services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
     })
-    apply(ctx, { debug: true, debugFile: file })
+    apply(ctx, { enabled: true, debug: true, debugFile: file })
     await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
     await request(ctx, { step: 2, effort: 'medium' })
     const lines = readFileSync(file, 'utf8').trim().split('\n')
@@ -311,11 +321,11 @@ test('a gear above safe registers execution guidance, and safe registers none', 
   })
 
   const safe = fakeContext({ services: services() })
-  apply(safe, { gear: 'safe' })
+  apply(safe, { enabled: true, gear: 'safe' })
   assert.equal(sections.length, 0, 'the safe gear must stay invisible in the prompt')
 
   const fast = fakeContext({ services: services() })
-  apply(fast, { gear: 2 })
+  apply(fast, { enabled: true, gear: 2 })
   assert.equal(sections.length, 1)
   assert.equal(sections[0].name, 'fast-mode:execution-speed')
   assert.equal(typeof sections[0].order, 'number')
@@ -324,7 +334,7 @@ test('a gear above safe registers execution guidance, and safe registers none', 
 
   // The fan-out number is configurable, and the text follows it.
   const custom = fakeContext({ services: services() })
-  apply(custom, { gear: 3, parallel: 7 })
+  apply(custom, { enabled: true, gear: 3, parallel: 7 })
   assert.match(sections[1].text, /up to 7 independent calls/)
 })
 
@@ -338,7 +348,7 @@ test('a scheduler cap below the gear warns once, and never breaks the request', 
     },
   })
   ctx.logger.warn = (...args) => warnings.push(args)
-  apply(ctx, { gear: 2 })
+  apply(ctx, { enabled: true, gear: 2 })
 
   await request(ctx, { step: 2, effort: 'high' })
   await request(ctx, { step: 3, effort: 'high' })
@@ -372,4 +382,20 @@ test('the manifest ships everything a plugin manager reads before activation', a
     assert.ok(meta.title.length > 1, `${locale}.meta.title is missing`)
     assert.ok(meta.description.length > 20, `${locale}.meta.description is missing`)
   }
+
+  // The client half: the composer chip. A package that declares `dsh.client`
+  // must also export './client', the file must be packed, and the bundle must be
+  // in the loader's own format with this package's id.
+  assert.equal(manifest.dsh.client.platform, 'web')
+  assert.equal(manifest.dsh.client.immediately, true)
+  for (const service of ['slots', 'locale', 'remote', 'remote.settings']) {
+    assert.ok(manifest.dsh.client.inject.includes(service), `client must inject ${service}`)
+  }
+  assert.equal(manifest.exports['./client'], './client.js')
+  assert.ok(manifest.files.includes('client.js'), 'client.js must be packed')
+  const client = await readFile(new URL('client.js', root), 'utf8')
+  assert.match(client, /__ModuleLoader__\.load\(/)
+  assert.match(client, /id: 'dsh-fast-mode'/)
+  assert.match(client, /const SLOT = 'conversation\.input\.activity'/)
+  assert.doesNotMatch(client, /const SLOT = 'conversation\.input\.model'/, 'never shadow the shipped model selector')
 })

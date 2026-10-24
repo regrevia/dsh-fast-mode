@@ -14,6 +14,16 @@
  * is written to the session, so the policy adds no context and no tokens to the
  * conversation — it only decides how much the model deliberates.
  *
+ * ## Switching it on
+ *
+ * `enabled` defaults to **false**. Fast mode trades deliberation for latency, so
+ * it stays out of the way until asked. Turn it on from the lightning chip beside
+ * the model selector, from the plugin's page under Settings, or from a
+ * composition patch — all three write the same `enabled` field, because the chip
+ * is this package's client half (`dsh.client` in package.json) reading and
+ * writing through the `settings` service. When it is off, `apply` registers
+ * nothing at all: no hooks, no prompt section, no token cost.
+ *
  * ## Provider independence
  *
  * The plugin never assumes a vocabulary. Before it can lower an effort it asks
@@ -46,6 +56,13 @@ import {
   stableKey,
 } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
+
+/**
+ * The settings-page schema. Re-exported from here because the Loader reads
+ * `Config` off the plugin module itself, and the `settings` service projects it
+ * into the Web UI's plugin page.
+ */
+export { Config } from './src/config.js'
 
 const TAG = '[fast-mode]'
 const GLOBAL_AGENT = '__global__'

@@ -307,7 +307,7 @@ test('the fallback ladder is only reachable through an explicit pin', () => {
 
 test('config defaults are safe', () => {
   const defaults = resolveConfig(undefined)
-  assert.equal(defaults.enabled, true)
+  assert.equal(defaults.enabled, false, 'fast mode is opt-in')
   assert.equal(defaults.floor, DEFAULTS.floor)
   assert.deepEqual([...defaults.ladder], [...EFFORT_LADDER])
   assert.equal(defaults.ladderExplicit, false)
@@ -323,9 +323,12 @@ test('a typo in floor degrades to the default, not to no floor', () => {
   assert.equal(resolveConfig({ floor: 'off' }).floor, 'off')
 })
 
-test('enabled:false is the off switch', () => {
+test('only an explicit true arms the policy', () => {
+  assert.equal(resolveConfig({}).enabled, false)
   assert.equal(resolveConfig({ enabled: false }).enabled, false)
-  assert.equal(resolveConfig({}).enabled, true)
+  assert.equal(resolveConfig({ enabled: true }).enabled, true)
+  assert.equal(resolveConfig({ enabled: 1 }).enabled, false, 'a truthy non-boolean never arms it')
+  assert.equal(resolveConfig({ enabled: 'yes' }).enabled, false)
 })
 
 test('bad thresholds fall back instead of disabling the guard', () => {
