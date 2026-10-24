@@ -27,6 +27,8 @@ Both go through `settings/update` (`applies: live`), so a click takes effect on 
 
 Gear 5 carries an asterisk: it is the only gear allowed to push the thinking gear down to `off`, so the panel's footnote says exactly that one sentence — `* 关闭思考，质量会下降` (thinking off, quality will drop).
 
+Those two multiplier columns are **predictions from the latency model, not measurements**: `wall clock ≈ 720 ms × steps + 6.63 ms × output tokens` (least squares over 689 steps, R² = 0.93), and the multiplier is what "batch the n independent queries in one step" is worth. It only holds for a task where one step has several independent actions. The real measurements live in [BENCHMARK.md](../BENCHMARK.md): on step-starved public problems all five gears land inside the noise (0.95×–1.09×), while the step-rich repo task gives `turbo` 1.65× wall clock at −40 % tokens (n=4 vs n=12, U test p≈0.004). In that same raw log the median `calls/step` is 1.00 on every gear — a single-file problem gives batching nothing to work with, and that is exactly where prediction and measurement part ways. Gear 5's token multiplier sits below gear 3's because it turns thinking off while gear 3 keeps `low`.
+
 How to read the bolt:
 
 - **Hollow grey** = off (the default; the plugin does not intervene at all);
@@ -146,6 +148,7 @@ The prompt half moved too: the guidance section now tells the model to bound she
     metrics: true              # one row per step, on by default
     metricsFile: ~/.dsh/fast-mode-metrics.jsonl
     benchmarkFile: ~/.dsh/fast-mode-bench.json
+    reassertAfterCompaction: true   # after a compaction, one very short reminder restating the two calling rules
     debug: false
     debugFile: ""
 ```
@@ -173,6 +176,7 @@ The prompt half moved too: the guidance section now tells the model to bound she
 | `metrics` | `true` | write one JSONL row per completed step; `false` writes no file at all |
 | `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | the measurement file. A **composition knob**: it does not appear on the settings page, and changing it means editing `cordis.patch.yml` |
 | `benchmarkFile` | `~/.dsh/fast-mode-bench.json` | the per-session gear-assignment file of the experiment, likewise only read at load time and re-read once a second |
+| `reassertAfterCompaction` | `true` | after the context is compacted, one very short notice is added to the next request (`notice` form, `source: plugin`, so the UI folds it) restating the batch and the bounded-call rules — compaction squeezes that section out of the system prompt, and right after it the model is most likely to slip back to one call at a time. `false` only drops the reminder; the prompt section is still injected. **Not volatile** — changing it needs a reload |
 | `debug` / `debugFile` | off / `""` | one log line per request, carrying the decision basis |
 
 ### `route=` in the log
