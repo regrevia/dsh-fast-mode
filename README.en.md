@@ -8,9 +8,8 @@
 <h1 align="center">dsh-fast-mode</h1>
 
 <p align="center">
-  <b>Same thinking effort, fewer round trips.</b><br>
-  Fast mode never touches the model, the thinking effort, or the request protocol —
-  it just makes each step take fewer trips, say less, and get stuck less.
+  <b>Same thinking strength. Speed only where reads can run together.</b><br>
+  Wide when there is evidence, native when there is not; the request body is untouched.
 </p>
 
 <p align="center">
@@ -23,25 +22,48 @@
 
 ---
 
-## The principle
+## What it does
 
-A step costs two things: **about 720 ms of fixed round trip**, plus **about 6.6 ms per output token** (`ms = 720 + 6.63 × outputTokens`, 689 steps, R² = 0.93), plus tool wait. Thinking effort is not a variable in that ledger — reasoning tokens measured 0, so lowering effort buys no time and only makes the answer shallower. That is why the `agent/request` hook in 1.0.0 is a pass-through: **whatever thinking depth you chose is what every request gets.**
+A step costs round-trip overhead × steps + decode time × output tokens + tool wait. Model and thinking strength are not in that equation, so fast mode only moves three programmatic quantities:
 
-Three things do move the number: **packing independent tool calls into one step** (pay the fixed cost fewer times), **trimming narration without touching the answer**, and **putting a cancellable ceiling on foreground commands** (an unbounded `tail` or server start can eat minutes). Parallel width 2–8 is chosen by a scheduler from how the last few steps actually went: 4 by default, widening when steps go well, narrowing on errors or stalls.
+- **Parallel fan-out.** The scheduler asks whether this step is "several reads of different targets"; only then does it go wide (up to 8) and remember that shape across turns. Write steps, single-call steps, erroring or stalled turns **stay native** — the whole batching section is not rendered, so it costs no input tokens.
+- **Output discipline.** It trims process narration (no call previews, no restating results, no progress reports); the final answer is untouched.
+- **Stall watchdog.** Shell/script calls get a 120–300 s adaptive cap; a stuck call is cancelled and "change the approach" is written back into the context.
 
-## The conclusion
+No model switch, no `reasoningEffort` rewrite, no request-body injection. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
 
-- Single-file, few-step tasks (HumanEval, AIME and friends) have nothing to parallelize, so fast mode **shows no measurable difference**: in the 0.8-era runs every gear landed within 0.95×–1.09× of the control, i.e. noise.
-- The −40 % step-time result from 0.8 does **not** transfer to 1.0: those gears also lowered thinking effort, and that lever has been deleted. 1.0 keeps only fan-out, output discipline and stall protection, and **has not yet been A/B measured at scale** — so we do not claim "40 % faster".
-- What we can honestly promise is the mechanism: same thinking effort, same answer quality, possibly more tokens (reading several places at once), and fewer steps — when the task really has independent queries to fan out.
+## Three words, defined
 
-The full derivation, every control and the half that did not reproduce are in [BENCHMARK.md](BENCHMARK.md), including the ledger for why lowering effort cannot help.
+- **Wall clock**: end-to-end time from the task being issued to the headless process exiting, including model latency, tool waits and plugin overhead. Every "X s" below is this.
+- **Rate**: the reciprocal of wall clock (1/wall). 10 s → 8 s is a 1.25× rate.
+- **Speedup**: `wall(off) / wall(on)`. **Above 1 means faster**: 1.28× means 22 % less time; 0.8× means 25 % slower. A 95 % CI that crosses 1 means "indistinguishable from off".
 
-## Using it
+## Measured on v1.2.0 (relative only)
+
+Same model (`deepseek-v4.1-flash`), same route, same `reasoningEffort: medium`; the only difference between arms is the plugin switch. 8 multi-file tasks × 5 ABBA pairs = 80 real headless runs, deterministic quality gate **80/80 passed** (5/5 per arm per task).
+
+| Task (shape) | Wall: off → on | Speedup | 95 % CI |
+|---|---|---|---|
+| t1: summarize 8 files | 8.6 s → 11.3 s | 0.78× | 0.43–1.30 |
+| t2: count markers across 40 independent files | 7.2 s → 6.4 s | 1.14× | 0.93–1.24 |
+| t3: per-directory sums, shell-heavy | 5.0 s → 6.5 s | 0.81× | 0.53–1.20 |
+| t4: audit 12 modules into a report | 8.7 s → 13.1 s | 0.71× | 0.55–1.21 |
+| t5: hot symbols across 12 modules × 5 files | 13.9 s → 12.2 s | 1.14× | 0.90–1.82 |
+| t6: sum 24 log files by level | 5.7 s → 5.2 s | 1.28× | 0.68–1.59 |
+| t7: follow an 18-node dependency chain (serial) | 4.6 s → 5.6 s | 0.98× | 0.38–1.51 |
+| t8: duplicate deps across 16 manifests | 6.8 s → 6.0 s | 1.04× | 0.68–1.27 |
+
+**All 40 pairs: median speedup 0.96×, CI 0.80–1.14×, 19/40 pairs faster.** In other words this version does **not** prove a universal win; the reproducible gains are on "many independent reads" (t2/t5/t6, 1.1–1.3×), while summarization and auditing shapes are slower.
+
+Why "accelerate only the parallel shape" has not fully landed yet: the scheduler's evidence comes from calls that have **already happened**, and these eight tasks are single-turn — they see only the 4-wide probe of a fresh session before they finish. In multi-turn conversations the second request inherits the first turn's shape; a single-turn task never gets that chance.
+
+Method, raw numbers and failure modes: [BENCHMARK.md](BENCHMARK.md).
+
+## Install
 
 1. **Install**: DSH desktop → plugin manager → install bundle, target `github:regrevia/dsh-fast-mode`. Terminal equivalent: `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`.
-2. **Turn on**: reload the page, click the small bolt next to the composer, flip the switch. There is no gear to pick — the scheduler decides the width per step.
-3. **It applies**: the next request, no restart and no new conversation. The switch is per conversation.
+2. **Enable**: reload the page, click the small lightning bolt next to the composer. No mode to pick.
+3. **Takes effect** on the next request — no restart, no new conversation.
 
 ```yaml
 - insert:
@@ -49,27 +71,22 @@ The full derivation, every control and the half that did not reproduce are in [B
       name: dsh-fast-mode
       config:
         enabled: true   # off by default; this line is the real switch
-        gear: auto      # the only meaningful gear: the scheduler
 ```
 
-Legacy `fast` / `turbo` / `max` / `ludicrous` values resolve to `auto` and log a deprecation warning; they will **not** touch your thinking effort. `safe` remains for experiment scripts as a control arm (fixed width 2, no call ceiling, no prompt section).
+Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a deprecation log; they **never** lower thinking strength.
 
 ## The switch
 
-The bolt *is* the switch: one click on, another click off. No popover, no dropdown, no gears, no multiplier estimates — those choices no longer exist. Every conversation keeps its own state, written on click and restored after a restart, so "medium + fast" comes back as "medium + fast" in that conversation. What makes it faster and what it changes live in the plugin description, not in the composer.
+The bolt is the switch: one click writes on/off, per conversation, restored on reload. No panel, no dropdown, no multiplier estimate.
 
-Do not enable it together with `dsh-batch-tool-calls` or `dsh-ops` — their prompt guidance overlaps, so both would be paying twice for the same advice. Compression plugins (billion-context, image compression, gateway adapters) compose fine: one shrinks the input, the other shrinks the round trips. Details in [docs/REFERENCE.en.md](docs/REFERENCE.en.md).
+The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded execution), but their widths are static while this width comes from the conversation's own call evidence; do not install all three. Context-compaction plugins coexist.
 
-## What's next
+## Limits and next step
 
-- **A/B on multi-file tasks**: fan-out only pays when a step has several independent queries. The next comparison moves to multi-repository, multi-file work instead of more single-file problems.
-- **How much stall protection actually saves**: the ceiling is policy plus adaptation today; we have not measured the minutes it prevents.
-- **Real TTFT**: we measure request-level latency now; it only becomes true TTFT once streaming signals are wired in.
+There are only two programmatic signals for "is this step worth accelerating" today: whether the last step's calls were all read-only with pairwise-distinct targets, and how many read-only steps in a row. The next step is to make **the shape of the incoming request** a signal too (how many independent files/directories it names) and to pick the width online (bandit), so single-turn tasks can go wide on the first request instead of paying for a probe.
 
-## More
-
-[Measurements and reproduction](BENCHMARK.md) · [Principle, configuration, boundaries (reference)](docs/REFERENCE.en.md) · [What changed](CHANGELOG.md) · [中文](README.md)
+[Measurements](BENCHMARK.md) · [Reference](docs/REFERENCE.en.md) · [Changelog](CHANGELOG.md) · [中文](README.md)
 
 ## License
 
-MIT. The logo is a whale with a lightning bolt — fast, but not allowed to fool itself.
+MIT.
