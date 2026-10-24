@@ -18,11 +18,19 @@
  *
  * `enabled` defaults to **false**. Fast mode trades deliberation for latency, so
  * it stays out of the way until asked. Turn it on from the lightning chip beside
- * the model selector, from the plugin's page under Settings, or from a
- * composition patch — all three write the same `enabled` field, because the chip
- * is this package's client half (`dsh.client` in package.json) reading and
- * writing through the `settings` service. When it is off, `apply` registers
- * nothing at all: no hooks, no prompt section, no token cost.
+ * the model selector, or from a composition patch — both write the same
+ * `enabled` field, because the chip is this package's client half (`dsh.client`
+ * in package.json) reading and writing through the `settings` service.
+ *
+ * The gear is chosen **only** from the chip's caret menu. There is deliberately
+ * no speed form on a settings page: this harness renders no form from a plugin's
+ * schema (`autoGenerate` is host bookkeeping, no shipped client reads it), and a
+ * second, half-working entry point is worse than none. Settings stays for the
+ * composition-level knobs (`enabled`, `parallel`, `debug`).
+ *
+ * When it is off, `apply` registers nothing at all: no hooks, no prompt section,
+ * no token cost. A `debug` file, if configured, still gets one line per load —
+ * that is the trace an operator reads when the chip cannot switch anything on.
  *
  * ## Provider independence
  *
@@ -65,6 +73,11 @@ import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.
 export { Config } from './src/config.js'
 
 const TAG = '[fast-mode]'
+/**
+ * Shipped identity of this build. Traced into the debug log so a stale install is
+ * visible at a glance, and pinned by a test against `package.json`.
+ */
+export const VERSION = '0.5.2'
 const GLOBAL_AGENT = '__global__'
 const TIMED_OUT = Symbol('discovery-timeout')
 
@@ -75,6 +88,48 @@ function appendDebug(file, line) {
     appendFileSync(file, `${new Date().toISOString()} ${line}\n`)
   } catch {
     // A diagnostic sink must never break the request it observes.
+  }
+}
+
+/**
+ * Log, once per load, whether this entry's namespace is actually served by the
+ * `settings` service — the fact the chip's state depends on.
+ *
+ * The client half reads `settings/describe`; when the namespace is missing it can
+ * only report "not configured", which looks the same as a broken plugin. Tracing
+ * the answer host-side turns that guess into one line in the debug file. Deferred
+ * by a couple of seconds so the entry is mounted by the time it is described, and
+ * gated on `debug` so a normal install schedules nothing.
+ *
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {ReturnType<typeof resolveConfig>} config
+ */
+function traceSettings(ctx, config) {
+  const report = (line) => { appendDebug(config.debugFile, `settings v${VERSION}: ${line}`) }
+  try {
+    ctx.inject(['settings'], (child) => {
+      child.effect(() => {
+        const timer = setTimeout(() => {
+          void (async () => {
+            try {
+              const described = await child.settings.describe()
+              const views = Array.isArray(described) ? described : []
+              const names = views.map(view => (view && typeof view.ns === 'string' ? view.ns : '?')).join(',')
+              const own = views.find((view) => {
+                const ns = view && typeof view.ns === 'string' ? view.ns : ''
+                return ns === 'fast-mode' || ns.endsWith(':fast-mode')
+              })
+              report(`entries=${names || '(none)'} own=${own ? own.ns : 'MISSING'} writable=${child.settings.writable === true}`)
+            } catch (error) {
+              report(`describe failed: ${error && error.message ? error.message : String(error)}`)
+            }
+          })()
+        }, 2000)
+        return () => clearTimeout(timer)
+      }, 'fast-mode: settings trace')
+    })
+  } catch (error) {
+    report(`trace not scheduled: ${error && error.message ? error.message : String(error)}`)
   }
 }
 
@@ -131,7 +186,19 @@ function raceTimeout(value, ms) {
  */
 export function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig)
-  if (!config.enabled) return
+
+  // Traceability before everything else, including the early return for a
+  // disabled plugin: "the module never loaded" and "the module loaded but is
+  // switched off" look identical from the UI, and that ambiguity already cost a
+  // debugging round. Only a `debug` file is written to, and only one line.
+  if (config.debug) {
+    appendDebug(config.debugFile, `apply v${VERSION} entered enabled=${config.enabled} gear=${config.gear} parallel=${config.parallel}`)
+    traceSettings(ctx, config)
+  }
+  if (!config.enabled) {
+    if (config.debug) appendDebug(config.debugFile, `inactive v${VERSION}: enabled=false, no hooks registered`)
+    return
+  }
 
   const state = createState()
   /** @type {Map<string, number>} */

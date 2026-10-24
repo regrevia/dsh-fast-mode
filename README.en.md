@@ -35,25 +35,35 @@ It does three things, all of them acting on the same request's **thinking gear**
 
 ## The lightning switch: off by default, one click to arm
 
-Since 0.5.0 this plugin is **opt-in**: once installed it does nothing until you explicitly turn it on. All three entry points write the same `enabled` field:
+Since 0.5.0 this plugin is **opt-in**: once installed it does nothing until you explicitly turn it on. Both entry points write the same `enabled` field:
 
 | Entry point | Action | Good for |
 |---|---|---|
 | **The lightning in the composer** (new) | A bolt button right of the model selector: hollow = off, filled black = on, one click toggles | Everyday use |
-| **The settings page** (new) | Settings → Plugins → `fast-mode`, edit `enabled` / `gear` / `parallel` | Tweaking the gear |
 | **The patch** | Write `enabled: true` in `cordis.patch.yml` | Profiles managed by configuration |
 
-All three write the same user-layer configuration (`settings/update` → `applies: live`), so a click takes effect on the **next model call** with no restart. The first install (or a fresh upgrade to a build with a client half) needs one page reload / app restart so the client bundle is loaded.
+Both write the same user-layer configuration (`settings/update` → `applies: live`), so a click takes effect on the **next model call** with no restart. The first install (or a fresh upgrade to a build with a client half) needs one page reload / app restart so the client bundle is loaded.
+
+**The gear lives on the bolt too** — there is no settings-page form. Click the small caret on its right and a four-row dropdown opens; each row is labelled with its estimated multipliers, and picking one writes it immediately. One entry point, and it is the one that works:
+
+| Gear | Name | Est. speed | Est. tokens | Parallel target |
+|---|---|---|---|---|
+| 1 | Safe `safe` | ~1.0× | ~1.0× | 2 |
+| 2 | Fast `fast` (default) | ~1.3× | ~1.2× | 4 |
+| 3 | Turbo `turbo` | ~1.6× | ~1.5× | 6 |
+| 4 | Max `max` | ~1.9× | ~1.9× | 8 |
+
+The multipliers are **estimates**, not measurements: a gear changes how early a downgrade is allowed and how many calls the model is asked to batch into one step. On the official API the biggest legal cut is only `high → low` (16384 → 2048 thinking budget), so do not read 1.9× as a promise.
 
 How to read the bolt:
 
 - **Hollow grey** = off (the default; the plugin does not intervene at all);
 - **Filled black** = on, and the hover tooltip carries the current gear;
-- **Greyed out and unclickable** = this layer of configuration is read-only, or this profile declares no entry for the plugin — the tooltip says which, and it never pretends the toggle worked.
+- **A click always does something.** When the configuration cannot be read (read-only layer, no entry in this profile, bridge not connected yet) the button is **never disabled**; it opens the menu with the reason spelled out. 0.5.1 set `disabled`, and Chrome suppresses `title` on a disabled button, so it neither explained nor switched — 0.5.2 closes that hole with three independent defences: unwrapping the `{ok, value}` envelope, a deadline on every remote call, and never disabling the button.
 
-Those three settings fields are declared `.volatile()`: `settings` projects only volatile fields into a form and only accepts edits to volatile ones — a non-volatile field makes the entry vanish from `describe` and the write fail with `is not volatile`. The price is that such a field reaches the plugin as a **reference** rather than a value (that is how the Loader lands an edit on a running fiber), so the plugin dereferences once, in `resolveConfig`.
+Those three fields are declared `.volatile()`: `settings` projects only volatile fields and only accepts edits to volatile ones — a non-volatile field makes the entry vanish from `describe` and the write fail with `is not volatile`. The price is that such a field reaches the plugin as a **reference** rather than a value (that is how the Loader lands an edit on a running fiber), so the plugin dereferences once, in `resolveConfig`.
 
-It registers on `conversation.input.activity` (right of the model selector, left of the stop button) and **never** occupies `conversation.input.model`, so it cannot shadow the harness's own model selector. A click is an optimistic update plus a read-back check: if the write fails the icon reverts and the tooltip explains why.
+It registers on `conversation.input.activity` (right of the model selector, left of the stop button) and **never** occupies `conversation.input.model`, so it cannot shadow the harness's own model selector. A click is an optimistic update plus a read-back check: if the write fails the icon reverts and both the tooltip and the menu explain why.
 
 Once armed, the default gear is `fast` (gear 2), which is all three mechanisms above turned on; to go fully back to the silent v0.3.0 behavior — no prompt injected, downgrades only after a clean streak — use `gear: safe`.
 
@@ -126,7 +136,7 @@ Install into the current profile (DSH desktop → Plugin Manager → Install bun
 
 **Verified**: on DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop`, pointing the Plugin Manager at `github:regrevia/dsh-fast-mode` fetched the tarball and applied it directly (`application: applied`, no warnings); the profile records `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`. That was 0.4.0, which had no client half. 0.5.0 adds the client half (the bolt) and applies just the same, but you **must reload the page / restart the app once** to see the icon — the host only scans `dsh.client` declarations at startup.
 
-The npm package of the same name **is not published yet** (`npm whoami` has no credentials on this machine), so for now do not use an npm spec like `dsh-fast-mode@0.5.1`; use the `github:` form above.
+The npm package of the same name **is not published yet** (`npm whoami` has no credentials on this machine), so for now do not use an npm spec like `dsh-fast-mode@0.5.2`; use the `github:` form above.
 
 Paths B / C need the plugin line inserted into the profile's `cordis.patch.yml` (path A writes it itself):
 
@@ -279,7 +289,7 @@ If every line reads `high=>high`, check in this order: whether the step number r
 - **Emit only ids the route declared.** A property test guarantees that no input can produce a gear the route did not declare; the worst case is "did nothing", never "broke the turn".
 - **No session writes.** Observation data stays in memory, isolated per agent and reset per turn; it does not occupy a single token of context.
 - **Failure is silent.** An unreachable provider, a timeout, an unwritable log file — all degrade silently.
-- **The client half cannot take the composer down.** Every remote call behind the bolt sits in a try/catch; an unreadable configuration renders an unclickable grey button that states why, and a slot registration taken by another plugin only logs a warn instead of escaping `apply`.
+- **The client half cannot take the composer down.** Every remote call behind the bolt sits in a try/catch behind a deadline; an unreadable configuration keeps the button clickable and states the reason in words, and a slot registration taken by another plugin only logs a warn instead of escaping `apply`.
 
 ## Honest limitations
 
@@ -292,10 +302,10 @@ If every line reads `high=>high`, check in this order: whether the step number r
 ## Development and tests
 
 ```bash
-npm test        # 80 tests, no network, no harness required
+npm test        # 89 tests, no network, no harness required
 ```
 
-The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (an invalid value falls back to `safe`). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1; one last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs. The same group also checks the client-half manifest contract (`dsh.client.platform === "web"`, `exports["./client"]`, `client.js` packed, the bundle id equal to the package name, and the registered slot being `conversation.input.activity` rather than the one that would shadow the model selector); the last group runs the shipped `client.js` verbatim in a `vm` sandbox with a stub `__ModuleLoader__` and a fake `settings` remote: the bundle parses, requires only `react`, paints hollow when off, sends exactly one `settings/update` carrying the revision it read, rolls back with a stated reason when that write is refused, and renders an unclickable chip over a read-only layer or an absent entry; another group validates the schema against real schemastery — `enabled` defaults to `false`, all four gear names pass, `gear: warp` fails loudly, and patch-level keys the schema does not declare (`floor`, `holdTools`) survive untouched.
+The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (an invalid value falls back to `safe`). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1; one last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs. The same group also checks the client-half manifest contract (`dsh.client.platform === "web"`, `exports["./client"]`, `client.js` packed, the bundle id equal to the package name, and the registered slot being `conversation.input.activity` rather than the one that would shadow the model selector); the last group runs the shipped `client.js` verbatim in a `vm` sandbox with a stub `__ModuleLoader__` and a fake `settings` remote that answers with the real wire envelope (`{ok, value}`) — the missing unwrap is what made 0.5.1's bolt inert, so the envelope is part of the fixture now: the bundle parses, requires only `react`, paints hollow when off, sends exactly one `settings/update` carrying the revision it read, rolls back with a stated reason when that write is refused, and pins the new interaction contract — the button is **never** disabled, read-only / absent / `ok:false` all render as "clickable with a reason", the caret opens four rows labelled with their speed and token multipliers, picking a gear while off arms `enabled` in the same write, and the client gear ids match the host `GEARS` exactly; another group validates the schema against real schemastery — `enabled` defaults to `false`, all four gear names pass, `gear: warp` fails loudly, and patch-level keys the schema does not declare (`floor`, `holdTools`) survive untouched.
 
 ## License
 

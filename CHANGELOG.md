@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.2
+
+0.5.1 shipped the switch but left it inert, and the reason was one wrong field
+access:
+
+- **The remote protocol wraps every answer in `{ ok, value }`.** The chip read
+  `remote.settings.describe().namespaces` straight off the envelope, so it always
+  got `undefined`, classified this plugin as "not configured", and rendered a
+  `disabled` button. Chrome suppresses `title` on a disabled button, so hovering
+  said nothing, and the click handler's guard swallowed every click — a control
+  that was fully explained inside the code and completely dead on screen.
+  `unwrap()` now handles the envelope (and a bare payload, so a service stub
+  still works), `ok: false` surfaces `error.message`, and every remote call has a
+  deadline so a pending bridge becomes a visible error instead of an endless
+  "loading".
+- **The chip is never disabled.** Read-only, unknown and missing-namespace states
+  all stay clickable and open the menu with the reason in words.
+- **The gear lives on the chip.** The caret opens a dropdown listing the four
+  gears, each row showing its estimated speed and token multiplier
+  (`速度 ~1.6× · token ~1.5×`) and marking the current one. Picking a gear while
+  fast mode is off turns it on in the same write. There is deliberately no gear
+  form on the plugin page: this harness renders no generic schema form, so one
+  working entry point beats a second half-working one.
+- **Host-side traceability.** With `debug` on, `apply` writes one line per load
+  before the `enabled` check (`apply v0.5.2 entered enabled=… gear=…`), then one
+  more saying it registered nothing; after two seconds it also reports whether
+  `settings.describe()` actually serves this namespace. A future "the chip does
+  nothing" report is now one log line away from an answer.
+
+Tests 89: the client suite runs the real bundle against the real wire envelope,
+including the bare-payload tolerance, the refused write, the read-only chip, the
+missing namespace, and the gear multipliers.
+
 ## 0.5.1
 
 0.5.0 shipped a settings switch that could not be switched. Two defects, both

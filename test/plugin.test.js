@@ -303,13 +303,44 @@ test('debug writes one line per request with the signals', async () => {
     await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
     await request(ctx, { step: 2, effort: 'medium' })
     const lines = readFileSync(file, 'utf8').trim().split('\n')
-    assert.equal(lines.length, 1)
-    assert.match(lines[0], /step=2 gear=fast medium=>low/)
-    assert.match(lines[0], /clean=1/)
-    assert.match(lines[0], /route=provider/)
+
+    // The load trace comes first, so a log that stops there still proves the
+    // module ran and says which build and which switch state produced it.
+    assert.match(lines[0], /apply v\d+\.\d+\.\d+ entered enabled=true gear=fast parallel=4/)
+
+    const requests = lines.filter(line => / step=/.test(line))
+    assert.equal(requests.length, 1, 'one line per request, no per-hook noise')
+    assert.match(requests[0], /step=2 gear=fast medium=>low/)
+    assert.match(requests[0], /clean=1/)
+    assert.match(requests[0], /route=provider/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a disabled plugin still traces the load, then registers nothing', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-off-'))
+  const file = join(dir, 'debug.log')
+  try {
+    const ctx = fakeContext()
+    apply(ctx, { enabled: false, debug: true, debugFile: file })
+    const lines = readFileSync(file, 'utf8').trim().split('\n')
+    assert.match(lines[0], /apply v\d+\.\d+\.\d+ entered enabled=false/)
+    assert.ok(lines.some(line => /inactive v\d+\.\d+\.\d+: enabled=false, no hooks registered/.test(line)))
+    assert.equal(ctx.handlers.size, 0, 'off means off: no hooks at all')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the traced version is the version the package ships', async () => {
+  const { VERSION } = await import('../index.js')
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(VERSION, manifest.version, 'a stale log line must be impossible to mistake for a current build')
 })
 
 test('a gear above safe registers execution guidance, and safe registers none', () => {
