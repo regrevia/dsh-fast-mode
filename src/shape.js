@@ -37,6 +37,14 @@ const SHELLISH = [
 ]
 
 /** Phrases that mean "the same operation over many targets". */
+const PER_ITEM = [
+  /\bone\s+(?:object|entry|row|line|record)\s+(?:keyed|per)\b/i,
+  /\bkeyed\s+by\s+(?:file|name|module|path)\b/i,
+  /\bone\s+(?:entry|row|object)\s+(?:for|per)\s+each\b/i,
+  /每个文件.{0,12}(?:一项|一条|一个对象|汇总|报告)/,
+  /逐文件.{0,10}(?:汇总|报告|列举)/,
+]
+
 const FANOUT = [
   /\bindependent(?:ly)?\b/i,
   /\b(?:every|all|each)\s+(?:of\s+)?(?:the\s+)?(?:files?|modules?|manifests?|logs?|directories|dirs?)\b/i,
@@ -82,6 +90,8 @@ export function classifyEntry(input) {
   if (serial.length > 0) signals.push('serial')
   const shell = SHELLISH.filter((re) => re.test(text))
   if (shell.length > 0) signals.push('shell')
+  const perItem = PER_ITEM.filter((re) => re.test(text))
+  if (perItem.length > 0) signals.push('per-item-output')
   const fanout = FANOUT.filter((re) => re.test(text))
   if (fanout.length > 0) signals.push('fanout')
 
@@ -90,6 +100,10 @@ export function classifyEntry(input) {
 
   // A chain is a chain even when it names many files.
   if (serial.length > 0) return { width: 1, reason: 'serial', targets, signals }
+  // A per-item output table grows with the fan-out: gathering everything into
+  // one block turns into one enormous decode, which costs more than the round
+  // trip it saves (measured: 0.85x on the eight-file summary task).
+  if (perItem.length > 0) return { width: 1, reason: 'per-item-output', targets, signals }
   // Many independent shell jobs (one per directory, one per job) still save a
   // round trip each when they share a block; the harness runs them one after
   // another, but the model no longer pays a step per job.

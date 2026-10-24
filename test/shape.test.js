@@ -37,3 +37,16 @@ test('a chain that names many files is still a chain', () => {
   assert.equal(r.width, 1)
   assert.equal(r.reason, 'serial')
 })
+
+test('a per-item output table stays native', () => {
+  // Measured 0.85x on this shape with a 15-pair ABBA run: gathering eight files
+  // into one block replaces four round trips with one enormous decode.
+  const w = classifyEntry('Audit the eight files under data/ independently. For each file, report its final "token:" line and its total line count. Then write summary.json: one object keyed by file name, each value {"token": "...", "lines": N}.')
+  assert.equal(w.width, 1)
+  assert.equal(w.reason, 'per-item-output')
+})
+
+test('an aggregate-only report still fans out', () => {
+  const w = classifyEntry('The ten files under data/ are independent event logs. Produce report.json: {"files": <count>, "lines": <total>, "critical": <how many files contain critical>}.')
+  assert.equal(w.width, 8)
+})
