@@ -126,7 +126,7 @@ In the profile's `cordis.patch.yml`:
     enabled: true
     gear: auto
     # parallel: 4            # optional starting width; auto adjusts it later
-    # outputDiscipline: true
+    # outputDiscipline: true   # or late / false
     # stallGuard: true
     # toolTimeoutMs: 0
     # reassertAfterCompaction: true
@@ -141,7 +141,7 @@ In the profile's `cordis.patch.yml`:
 | `gear` | `'auto'` | Scheduling mode. `auto` is the only user-facing gear; `safe` is kept for experiment scripts; `fast`/`turbo`/`max`/`ludicrous` are the old fixed widths and a config naming one resolves to `auto` with a deprecation log. |
 | `parallel` | derived, 4 under `auto` | Starting parallel ceiling, 1–8. `auto` treats it as a starting point only; `1` means "no batching section". |
 | `sessions` | `''` | Plugin-maintained per-conversation overrides, see above. **Do not edit by hand.** |
-| `outputDiscipline` | `true` | Whether to inject output discipline. Off still injects batching and bounded-call rules; it only stops steering the prose. |
+| `outputDiscipline` | `true` | Output discipline. `true` applies for the whole turn; `late` keeps the prompt clean and has the scheduler ask once after step 4, so short tasks pay nothing and long tasks still save (measured over 8 pairs: steps 16.5→10.5, output −26 %, wall 1.49×, correctness 16/16 unchanged); `false` still injects batching and bounded-call rules. |
 | `stallGuard` | `true` | Whether to cap a single shell/script call. Under `auto` the budget self-tunes between 2 and 5 minutes. |
 | `toolTimeoutMs` | `0` | Per-call ceiling in milliseconds. `0` = adaptive (see `stallGuard`), negative = no guard, positive = that value for every gear. |
 | `guidance` | `true` | Whether to inject the prompt section. Off keeps the scheduler, width computation and watchdog exactly as they are and only stops the text, so "what the text does" can be measured apart from "what the harness does". |

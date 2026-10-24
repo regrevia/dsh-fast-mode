@@ -134,7 +134,7 @@
     enabled: true
     gear: auto
     # parallel: 4            # 可选：初始并行目标，auto 会随后续步骤调整
-    # outputDiscipline: true
+    # outputDiscipline: true   # 或 late / false
     # stallGuard: true
     # toolTimeoutMs: 0
     # reassertAfterCompaction: true
@@ -149,7 +149,7 @@
 | `gear` | `'auto'` | 调度方式。`auto` 是唯一面向用户的档位；`safe` 保留给实验脚本；`fast`/`turbo`/`max`/`ludicrous` 是旧的固定宽度，写在配置里会被解析成 `auto` 并打一条弃用日志。 |
 | `parallel` | 由档位推导，`auto` 下为 4 | 并行上限的初始值，1–8。`auto` 只把它当起点；设为 1 表示不注入批量提示段。 |
 | `sessions` | `''` | 插件自动维护的会话级覆盖，见上一节。**不要手改。** |
-| `outputDiscipline` | `true` | 是否注入输出纪律。关掉后仍然注入并行与有界调用规则，只是不干预文风。 |
+| `outputDiscipline` | `true` | 输出纪律。`true` 全程生效；`late` 只在第 4 步之后由调度器提醒一次（短任务零成本，长任务实测 8 对：步数 16.5→10.5、输出 −26%、墙钟 1.49×、正确性 16/16 不变）；`false` 关闭，仍注入并行与有界调用规则。 |
 | `stallGuard` | `true` | 是否给单次 shell/脚本类调用加上限。`auto` 下预算在 2–5 分钟之间自适应。 |
 | `toolTimeoutMs` | `0` | 单次调用上限，单位毫秒。`0` = 自适应（见 `stallGuard`），负数 = 关闭看门狗，正数 = 所有档位统一用这个值。 |
 | `guidance` | `true` | 是否向模型注入提示段。关掉后调度、宽度计算、看门狗照常，只是不写任何提示文字——用来把“提示词的效果”和“harness 层面的效果”分开测。 |

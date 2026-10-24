@@ -60,6 +60,7 @@ import {
   autoSchedule,
   createAutoState,
   noteEntry,
+  notePolicy,
   noteStep,
   noteTool,
   noteTurn,
@@ -84,7 +85,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.4.2'
+export const VERSION = '1.4.3'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -472,6 +473,7 @@ export function apply(ctx, rawConfig) {
         // The message is built inside this try/catch, so a scheduler bug drops
         // the reminder instead of failing the step it was meant to protect.
         noteStep(auto, sid)
+        notePolicy(auto, sid, cfg)
         const schedule = autoSchedule(auto, sid)
         autoBudgets.set(sid, schedule.stallBudgetMs)
         if (schedule.directive) {

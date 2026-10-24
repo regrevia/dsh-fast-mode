@@ -8,6 +8,7 @@ import {
   autoSchedule,
   createAutoState,
   describeSchedule,
+  notePolicy,
   noteStep,
   noteTool,
   noteTurn,
@@ -280,4 +281,32 @@ test('a shell-writing streak does not make the next turn start wide', () => {
   noteTurn(state, 's1')
   // Mixed read/write steps are not a fan-out shape: the next turn stays native.
   assert.equal(autoSchedule(state, 's1').parallel, 1)
+})
+
+test("outputDiscipline 'late' stays silent until the turn is long, then clears its own flag", () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: true })
+  noteTurn(state, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps - 1; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'a short turn pays no prompt cost and no reminder')
+
+  cleanStep(state, 's1', 1)
+  const fired = autoSchedule(state, 's1')
+  assert.equal(fired.directive?.kind, 'compress-output')
+  assert.match(fired.directive.text, /remaining steps/)
+
+  // One reminder per turn, and the next turn may ask again.
+  for (let step = 0; step < AUTO_LIMITS.directiveCooldown + 1; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive, undefined)
+  noteTurn(state, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'compress-output')
+})
+
+test('without the late policy the scheduler never emits the compression reminder', () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false })
+  noteTurn(state, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps + 2; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive, undefined)
 })

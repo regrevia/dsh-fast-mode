@@ -78,10 +78,10 @@ export const Config = z.object({
     ),
 
   outputDiscipline: z
-    .boolean()
-    .default(true)
+    .union([z.boolean(), z.const('late')])
+    .default('late')
     .description(
-      '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔（实测同一任务把每步可见输出从约 640 降到约 190 token，墙钟快约三分之一）。默认开启；关掉后只注入并行提示，不干预文风。',
+      '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔。`late`（默认）不往系统提示里放文风规则，第 4 步之后由调度器提醒一次——短任务零成本，长任务实测 6 对：墙钟中位 2.68×、步数 10.5→7.5、输出 token −52%、正确性 12/12 不变。`true` 全程生效；`false` 关闭。',
     ),
 
   shellParallel: z

@@ -122,6 +122,14 @@ test('output discipline can be turned off without turning the fan-out off', () =
   assert.ok(cfg.parallel > 1)
 })
 
+test("outputDiscipline 'late' drops the system-prompt rules and arms the scheduler instead", () => {
+  const cfg = resolveConfig({ gear: 'auto', outputDiscipline: 'late' })
+  assert.equal(cfg.discipline, 'off', 'no prose rules in the static prompt')
+  assert.equal(cfg.lateDiscipline, true, 'the per-step reminder takes over')
+  assert.ok(cfg.parallel > 1, 'the fan-out section is untouched')
+  assert.equal(resolveConfig({ gear: 'auto', outputDiscipline: true }).lateDiscipline, false)
+})
+
 test('volatile references are unwrapped, plain data passes through', () => {
   const ref = {
     [Symbol.for('cosmokit.volatile.write')]: true,
