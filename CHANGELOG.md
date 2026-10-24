@@ -14,7 +14,7 @@ Speed becomes a stance, not a single threshold, and the plugin now installs itse
   independent calls. The number in the text follows the gear, or `parallel`.
 - **A loud cap warning.** If `agentLoop.maxParallelToolCalls` is below the gear's
   target, the plugin logs the exact `cordis.patch.yml` line that raises it, once.
-- **Display metadata.** `icon.png` at the package root (PNG, 11.6 KiB) plus
+- **Display metadata.** `icon.png` at the package root (PNG, 11,607 bytes) plus
   `locale/zh.json` and `locale/en.json` with `meta.title` / `meta.description`, so
   the Plugin Manager and Settings show a real icon and localized copy.
 - **Docs.** Chinese README is now the default, English moved to `README.en.md`,
