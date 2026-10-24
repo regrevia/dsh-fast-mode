@@ -53,7 +53,7 @@ test('start writes an experiment the plugin can read, and stop removes it', () =
   assert.match(started.stdout, /实验开始/)
   const file = JSON.parse(readFileSync(bench, 'utf8'))
   assert.equal(file.enabled, true)
-  assert.deepEqual(file.gears, ['safe', 'fast', 'turbo', 'max'])
+  assert.deepEqual(file.gears, ['off', 'safe', 'fast', 'turbo', 'max'], 'off is the control arm')
 
   const stopped = await call('stop')
   assert.match(stopped.stdout, /实验已结束/)
@@ -86,6 +86,12 @@ test('a single gear is not an experiment', () => scratch(async ({ call, bench })
   assert.equal(failed.code, 2)
   assert.match(String(failed.stderr), /至少需要两个档位/)
   assert.equal(existsSync(bench), false, 'a refused start leaves no file behind')
+}))
+
+test('a run without the control arm says it cannot answer "faster than off"', () => scratch(async ({ call }) => {
+  const started = await call('start', '--gears', 'fast,turbo')
+  assert.match(started.stdout, /没有 off 对照组/)
+  assert.doesNotMatch(started.stdout, /对照组：被分到的会话/)
 }))
 
 test('unknown gear names are dropped instead of written', () => scratch(async ({ call, bench }) => {
