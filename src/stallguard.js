@@ -45,6 +45,10 @@ export const STALL_BUDGET = Object.freeze({
   safe: 0,
   fast: 300_000,
   turbo: 180_000,
+  // The starting ceiling for `auto`; the live one comes from the session's own
+  // observed call latency (`src/auto.js`), so this is only the pre-evidence
+  // value.
+  auto: 120_000,
   max: 120_000,
   ludicrous: 90_000,
 })

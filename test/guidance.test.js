@@ -1,12 +1,12 @@
 /**
- * The model-facing guidance: what it says, at which gear, and what it costs.
+ * The model-facing guidance: what it says, at which width, and what it costs.
  *
  * These are the assertions that keep the prompt honest. A paragraph of text in
  * every request of every agent is a real token bill, so every block here has to
- * earn its place: the fan-out target must match the resolved config, the
- * speculative-read sentence must not appear before the gear is wide enough for
- * it, the output discipline must be switchable off, and `parallel: 1` must cost
- * nothing at all.
+ * earn its place: the fan-out target must match the resolved width, the
+ * speculative-read sentence must not appear before a step is wide enough for it,
+ * the output discipline must be switchable off, `parallel: 1` must cost nothing,
+ * and — the line that must never blur — no text may ask the model to think less.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -31,58 +31,77 @@ test('the section identity is stable, because a reload must replace it', () => {
   assert.equal(GUIDANCE_ORDER, 520)
 })
 
-test('every directive gear asks for the fan-out it was configured with', () => {
-  for (const [gear, expected] of [['fast', 4], ['turbo', 6], ['max', 8], ['ludicrous', 8]]) {
-    const text = buildGuidance(resolve({ gear }))
-    assert.match(text, new RegExp(`up to ${expected} independent calls per message`), `${gear} default fan-out`)
+test('the text asks for the width it was configured with', () => {
+  for (const width of [2, 4, 6, 8]) {
+    assert.match(
+      buildGuidance(resolveConfig(BASE, { parallel: width })),
+      new RegExp(`up to ${width} independent calls per message`),
+      `width ${width}`,
+    )
   }
-  // `parallel` overrides the gear default; that is the documented way to push a
-  // gear past its own number.
-  assert.match(buildGuidance(resolve({ gear: 'turbo', parallel: 8 })), /up to 8 independent calls per message/)
+  // The start width of the scheduler is what the default gear ships.
+  assert.match(buildGuidance(resolve({ gear: 'auto' })), /up to \d+ independent calls per message/)
 })
 
 test('parallel: 1 is the documented "switch on, no fan-out" setting and costs nothing', () => {
-  const live = resolve({ gear: 'turbo', parallel: 1 })
+  const live = resolve({ gear: 'auto', parallel: 1 })
   assert.equal(live.enabled, true)
   assert.equal(live.parallel, 1)
   assert.equal(buildGuidance(live), undefined, 'no text to pay for when no fan-out is asked for')
 })
 
-test('the output discipline is present at every directive gear, and heavier at the top', () => {
-  const fast = buildGuidance(resolve({ gear: 'fast' }))
-  const turbo = buildGuidance(resolve({ gear: 'turbo' }))
-  for (const text of [fast, turbo]) {
-    assert.match(text, /visible text is charged at the same rate/, 'the reason must be stated')
-    assert.match(text, /Do not announce a tool call/, 'no narration around calls')
-    assert.match(text, /the answer the user actually asked for still gets written out/, 'the user-facing answer survives')
-  }
-  assert.doesNotMatch(fast, /a bare call is cheaper than a narrated one/, 'fast keeps the light variant')
-  assert.match(turbo, /a bare call is cheaper than a narrated one/, 'turbo asks for bare calls')
+test('the output discipline is present by default and does not cost the user-facing answer', () => {
+  const text = buildGuidance(resolve({ gear: 'auto' }))
+  assert.match(text, /visible text is charged at the same rate/, 'the reason must be stated')
+  assert.match(text, /Do not announce a tool call/, 'no narration around calls')
+  assert.match(text, /the answer the user actually asked for still gets written out/, 'the answer survives')
+  assert.match(text, /a bare call is cheaper than a narrated one/)
 })
 
 test('the speculative-read sentence only ships where a step is wide enough to hold it', () => {
-  assert.equal(resolve({ gear: 'fast' }).discipline, 'light')
-  assert.doesNotMatch(buildGuidance(resolve({ gear: 'fast' })), /a wasted read costs a few hundred/)
-  for (const gear of ['turbo', 'max', 'ludicrous']) {
-    assert.match(buildGuidance(resolve({ gear })), /a wasted read costs a few hundred/, gear)
+  assert.doesNotMatch(buildGuidance(resolveConfig(BASE, { parallel: 2 })), /a wasted read costs a few hundred/)
+  for (const width of [4, 6, 8]) {
+    assert.match(buildGuidance(resolveConfig(BASE, { parallel: width })), /a wasted read costs a few hundred/, `width ${width}`)
   }
 })
 
 test('outputDiscipline: false keeps the fan-out and drops the prose rules', () => {
-  const live = resolve({ gear: 'turbo', outputDiscipline: false })
+  const live = resolve({ gear: 'auto', outputDiscipline: false })
   assert.equal(live.discipline, 'off')
   const text = buildGuidance(live)
-  assert.match(text, /up to 6 independent calls per message/, 'fan-out is independent of the prose rules')
+  assert.match(text, /up to \d+ independent calls per message/, 'fan-out is independent of the prose rules')
   assert.doesNotMatch(text, /visible text is charged at the same rate/, 'the user asked for verbose answers')
 })
 
-test('the guidance grows with the gear and stays small in absolute terms', () => {
-  const sizes = ['fast', 'turbo', 'max'].map(gear => buildGuidance(resolve({ gear })).length)
-  assert.deepEqual(sizes, [...sizes].sort((a, b) => a - b), 'a higher gear must not ship less guidance')
-  // ~4 chars per token: even the biggest gear stays under ~800 input tokens on
-  // a request that already carries a system prompt. The batching block is ~1 KB
-  // and the bounded-calls block ~0.5 KB; both are amortised over a step that
-  // costs ~90 k prompt tokens, so they are noise next to the round trips and the
-  // cancelled calls they remove.
-  assert.ok(sizes.at(-1) < 3000, `guidance is ${sizes.at(-1)} chars`)
+test('the discipline can be light without touching the width', () => {
+  // `fast` survived only as an experiment arm; a patch naming it runs `auto`, so
+  // this assertion has to pin the arm explicitly.
+  const light = buildGuidance(resolveConfig(BASE, { enabled: true, gear: 'fast' }))
+  assert.match(light, /up to 4 independent calls per message/)
+  assert.match(light, /visible text is charged at the same rate/)
+  assert.doesNotMatch(light, /a bare call is cheaper than a narrated one/, 'fast keeps the light variant')
+})
+
+test('the guidance stays small in absolute terms', () => {
+  const text = buildGuidance(resolve({ gear: 'auto', parallel: 8 }))
+  // ~4 chars per token: the whole section stays under ~200 input tokens on a
+  // request that already carries a system prompt and a transcript. Both blocks
+  // are amortised over a step that costs tens of thousands of prompt tokens, so
+  // they are noise next to the round trips and the cancelled calls they remove.
+  assert.ok(text.length < 3000, `guidance is ${text.length} chars`)
+})
+
+test('no prompt text ever asks the model to think less', () => {
+  // The whole contract of fast mode: same thinking strength, sooner. A sentence
+  // that trades depth for speed would break it just as surely as rewriting
+  // `reasoningEffort` does, and it would be much harder to notice.
+  for (const gear of ['safe', 'fast', 'auto', 'turbo', 'max', 'ludicrous']) {
+    const text = buildGuidance(resolve({ gear, parallel: 8 })) ?? ''
+    for (const banned of [
+      /don't think/i, /do not think/i, /think less/i, /skip the (check|verification|test)/i,
+      /reasoning is off/i, /deliberation is off/i, /lower (the )?effort/i, /less careful/i,
+    ]) {
+      assert.doesNotMatch(text, banned, `${gear} must not trade depth for speed`)
+    }
+  }
 })

@@ -1,31 +1,35 @@
 /**
- * The model-facing half of a speed gear.
+ * The model-facing half of fast mode.
  *
- * A step costs two things the plugin can actually move, and a third it cannot:
+ * A step costs three things, and the plugin can only move two of them:
  *
  * - **Round trips.** Every step pays a fixed ~700 ms overhead before the first
- *   token, so merging independent work into one step is pure profit. The
- *   harness already schedules same-message calls concurrently (up to
+ *   token, so merging independent work into one step is pure profit. The harness
+ *   already schedules same-message calls concurrently (up to
  *   `agentLoop.maxParallelToolCalls`, and only for calls declared safe), so the
  *   only honest way for a plugin to raise real concurrency is to ask the model
  *   for wider steps.
  * - **Visible output.** Measured on this gateway, a step costs
- *   `720 ms + 6.6 ms per output token` (R² = 0.93): prose is the dominant
- *   term, and trimming narration is a bigger win than any effort change.
- * - **Decode speed.** Not ours. No prompt can make the provider emit tokens
- *   faster.
+ *   `720 ms + 6.6 ms per output token` (R² = 0.93): prose is the dominant term,
+ *   and trimming narration is a bigger win than any effort change.
+ * - **Thinking depth.** Not ours, on purpose. Fast mode runs at exactly the
+ *   effort the user chose — that is the whole contract — so there is no prompt
+ *   text here that asks the model to think less, plan less, or skip a check.
+ *   "Faster at the same depth" is bought with parallelism, not with shallowness.
+ * - **Decode speed.** Not ours either. No prompt can make the provider emit
+ *   tokens faster.
  *
- * Both texts are deliberately short: they are prepended to every request of
- * every agent, so they cost input tokens on every call. They also state the
- * trade in the open, because a model told "batch" without a reason will drop it
- * the first time a narrow step looks cheaper.
+ * The texts are deliberately short: they are prepended to every request of every
+ * agent, so they cost input tokens on every call. They also state the trade in
+ * the open, because a model told "batch" without a reason will drop it the first
+ * time a narrow step looks cheaper.
  *
  * Measured effect (identical task, six fresh agents): the output rules cut
  * visible output from ~640 to ~190 tokens per step and the wall clock of the
  * task by roughly a third, even though the terse runs needed more steps.
  */
 
-/** Rules that hold at every gear: they are what keeps batching safe. */
+/** Rules that hold at every width: they are what keeps batching safe. */
 const BATCH_RULES = `Several independent tool calls may share one assistant message: the harness starts them together and returns the results in your order. Batching independent work is how a step gets faster; one call per step is how a task becomes slow.
 
 Batching rules:
@@ -51,20 +55,12 @@ const STALL_RULES = `Bounded calls:
 - After a cancelled or malformed call, change the command before retrying; the same call fails the same way.`
 
 /**
- * Per-gear fan-out wording. The number is substituted from the resolved
- * `parallel`, so the text never promises a different count than the config.
+ * The fan-out sentence. Only the number changes with the schedule, so the target
+ * the model is told and the target the scheduler computed can never drift apart.
  */
-const FANOUT = Object.freeze({
-  fast: 'Aim for up to {n} independent calls per message. For exploratory work (reading several files, greps, status checks) prefer one wide step over a chain of narrow ones.',
-  turbo: 'Aim for up to {n} independent calls per message. Plan the whole read set of a step before issuing it, then act on every result before requesting more.',
-  max: 'Aim for up to {n} independent calls per message. Enumerate every file, search and status check a step needs, issue them together, and combine the results in one pass.',
-  ludicrous: 'Aim for up to {n} independent calls per message. Enumerate every file, search and status check a step needs, issue them together, and combine the results in one pass. Deliberation is off at this gear: act on the evidence you already have instead of planning further, and only stop to think again when a result contradicts the plan.',
-})
+const FANOUT = 'Aim for up to {n} independent calls per message: the target is chosen from how your recent steps went — it widens after clean multi-call steps and narrows after errors. Plan the whole read set of a step before issuing it, then act on every result before requesting more. The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
 
-/**
- * The speculative-read sentence. It only becomes true once a step is wide
- * enough for the extra call to fit, so it ships at turbo and above.
- */
+/** Prefetch only becomes true once a step is wide enough to hold the extra call. */
 const PREFETCH = 'If the evidence already implies which file, search or status check the next step will need, fetch it in this same block: a wasted read costs a few hundred input tokens, an extra round trip costs a whole step.'
 
 /**
@@ -78,15 +74,9 @@ const OUTPUT_LIGHT = `Your visible text is charged at the same rate as your thin
 - Do not end a step with a progress report or a summary of work already finished: the next step reads the transcript.
 - The last step of a turn is the exception — the answer the user actually asked for still gets written out in full.`
 
-/** The full-intensity variant, used once the gear has already given up depth. */
+/** The full variant: used when the discipline is on, adding the bare-call rule. */
 const OUTPUT_FULL = `${OUTPUT_LIGHT}
 - When a step needs no prose at all, send the tool calls and nothing else; a bare call is cheaper than a narrated one.`
-
-/** Fan-out used in the wording when `parallel` is not a usable number. */
-const GEAR_FANOUT = Object.freeze({ fast: 4, turbo: 6, max: 8, ludicrous: 8 })
-
-/** Gears that also get the speculative-read sentence. */
-const PREFETCH_GEARS = Object.freeze({ fast: false, turbo: true, max: true, ludicrous: true })
 
 /** The prompt section name, unique so a reload replaces rather than duplicates. */
 export const GUIDANCE_SECTION = 'fast-mode:execution-speed'
@@ -105,17 +95,14 @@ export const GUIDANCE_ORDER = 520
  */
 export function buildGuidance(config) {
   if (!config || config.directive !== true) return undefined
-  const template = FANOUT[config.gear]
-  if (typeof template !== 'string') return undefined
-  const parallel = Number.isFinite(config.parallel) ? Math.floor(config.parallel) : GEAR_FANOUT[config.gear]
+  const parallel = Number.isFinite(config.parallel) ? Math.floor(config.parallel) : 0
   // `parallel: 1` is the documented way to keep the switch on without asking
   // for fan-out, so it silences the whole section rather than asking for one
   // call per message.
   if (!(parallel > 1)) return undefined
   const parts = [BATCH_RULES]
-  let fanout = template.replace('{n}', String(parallel))
-    + ' The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
-  if (PREFETCH_GEARS[config.gear] === true && parallel > 1) fanout += ' ' + PREFETCH
+  let fanout = FANOUT.replace('{n}', String(parallel))
+  if (parallel >= 4) fanout += ` ${PREFETCH}`
   parts.push(fanout)
   if (config.stallGuard !== false) parts.push(STALL_RULES)
   const discipline = config.discipline ?? 'light'

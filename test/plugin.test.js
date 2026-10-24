@@ -182,7 +182,7 @@ test('an on request is labelled with the gear and the resolved effort', async ()
     const ctx = fakeContext({
       services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
     })
-    apply(ctx, { enabled: true, gear: 'turbo', benchmarkFile: '', metricsFile: file })
+    apply(ctx, { enabled: true, gear: 'auto', benchmarkFile: '', metricsFile: file })
     await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.ts' } })
     await request(ctx, { step: 2, effort: 'medium' })
 
@@ -196,175 +196,84 @@ test('an on request is labelled with the gear and the resolved effort', async ()
 
     const [row] = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
     assert.equal(row.mode, 'on')
-    assert.equal(row.gear, 'turbo')
+    assert.equal(row.gear, 'auto')
     assert.equal(row.calls, 1)
     assert.equal(row.stepMs, 900)
     assert.equal(row.route, 'company/deepseek-v4.1-flash')
-    assert.ok(['low', 'medium'].includes(row.effort), 'the label records what the plugin actually resolved')
+    assert.equal(row.effort, 'medium', 'the label records the effort that was actually sent')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('planning step keeps effort; execution step after clean calls is lowered', async () => {
+test('the effort the user chose survives every step, error, and turn', async () => {
+  // Regression for the 0.9.x defect: the plugin lowered `reasoningEffort` from
+  // step 2 onwards, the rewrite reached the provider as a request header, and the
+  // composer capsule (which projects "last used effort") drifted from the user's
+  // Medium to Low and stayed there after a restart. Fast mode must not touch it.
   const ctx = fakeContext({
     services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
   })
   apply(ctx, ON)
 
-  const planning = await request(ctx, { step: 1, effort: 'medium' })
-  assert.equal(planning.reasoningEffort, 'medium', 'step 1 untouched')
-
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.ts' } })
-  const execution = await request(ctx, { step: 2, effort: 'medium' })
-  assert.equal(execution.reasoningEffort, 'low', 'medium drops one notch to low')
-  assert.equal(execution.provider, 'company', 'the rest of the config is preserved')
-})
-
-test('a failing tool restores effort on the next step', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
-  })
-  apply(ctx, ON)
-
-  await runTool(ctx, { callId: 'c1', name: 'bash', args: { command: 'false' }, isError: true })
-  const after = await request(ctx, { step: 2, effort: 'medium' })
-  assert.equal(after.reasoningEffort, 'medium', 'a failure means the next action is not routine')
-})
-
-test('tool hooks never alter the tool result', async () => {
-  const ctx = fakeContext()
-  apply(ctx, ON)
-  const decision = await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' }, text: 'contents' })
-  assert.deepEqual(decision, { kind: 'accept' }, 'observer forwarded the unmodified decision')
-
-  const failing = await ctx.fire(
-    'tools/post-execute',
-    { callId: 'c2', name: 'bash', arguments: {}, agent },
-    { isError: true, content: [{ type: 'text', text: 'boom' }] },
-    async () => ({ kind: 'block', feedback: [{ type: 'text', text: 'denied' }] }),
-  )
-  assert.deepEqual(failing, { kind: 'block', feedback: [{ type: 'text', text: 'denied' }] })
-})
-
-test('a fresh turn does not inherit the previous turn struggle', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
-  })
-  apply(ctx, ON)
-
-  await runTool(ctx, { callId: 'c1', name: 'bash', args: {}, isError: true })
-  const sameTurn = await request(ctx, { step: 2, effort: 'medium', turn: 0 })
-  assert.equal(sameTurn.reasoningEffort, 'medium')
-
-  const nextTurn = await request(ctx, { step: 1, effort: 'medium', turn: 1 })
-  assert.equal(nextTurn.reasoningEffort, 'medium', 'planning step of the new turn')
-
-  await runTool(ctx, { callId: 'c2', name: 'read', args: { path: 'b' } })
-  const nextTurnExecution = await request(ctx, { step: 2, effort: 'medium', turn: 1 })
-  assert.equal(nextTurnExecution.reasoningEffort, 'low', 'clean new turn earns the notch')
-})
-
-test('a long clean streak earns the second notch', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
-  })
-  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, floor: 'minimal' })
-  for (let index = 0; index < 8; index += 1) {
-    await runTool(ctx, { callId: `c${index}`, name: 'read', args: { path: `f${index}` } })
+  const chosen = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
+  for (const step of [1, 2, 3, 4]) {
+    const resolved = await request(ctx, { step, effort: 'medium' })
+    assert.deepEqual(resolved, chosen, `step ${step} must carry the chosen effort unchanged`)
+    await runTool(ctx, { callId: `c${step}`, name: 'read', args: { path: `f${step}` } })
   }
-  const deep = await request(ctx, { step: 9, effort: 'high' })
-  assert.equal(deep.reasoningEffort, 'low', 'high minus two notches')
+
+  // A failure and a new turn change what the scheduler does, never the effort.
+  await runTool(ctx, { callId: 'boom', name: 'bash', args: {}, isError: true })
+  assert.deepEqual(await request(ctx, { step: 5, effort: 'medium' }), chosen)
+  assert.deepEqual(await request(ctx, { step: 1, turn: 1, effort: 'high' }), { ...chosen, reasoningEffort: 'high' })
+
+  // A route with no declared levels, an unknown id, and no llm service at all.
+  assert.deepEqual(await request(ctx, { step: 6, effort: 'turbo' }), { ...chosen, reasoningEffort: 'turbo' })
 })
 
-test('an unknown effort id is passed through untouched', async () => {
-  const ctx = fakeContext({ services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) } })
-  apply(ctx, ON)
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const result = await request(ctx, { step: 2, effort: 'turbo' })
-  assert.equal(result.reasoningEffort, 'turbo')
-})
+test('an old gear id in the patch becomes the scheduler, not a pinned ladder', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
 
-/* ------------------------------------------------- provider independence */
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-fast-mode-legacy-'))
+  const file = join(dir, 'metrics.jsonl')
+  try {
+    const ctx = fakeContext({
+      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    })
+    const debugFile = file.replace('metrics', 'debug')
+    apply(ctx, {
+      enabled: true,
+      gear: 'turbo',
+      debug: true,
+      debugFile,
+      benchmarkFile: '',
+      metricsFile: file,
+    })
 
-test('official DeepSeek route gets a real cut, not an alias no-op', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'deepseek/deepseek-flash': { efforts: OFFICIAL, default: 'high' } }) },
-  })
-  apply(ctx, ON)
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const execution = await request(ctx, {
-    step: 2,
-    effort: 'high',
-    provider: 'deepseek',
-    model: 'deepseek-flash',
-  })
-  assert.equal(execution.reasoningEffort, 'low', 'medium would be a no-op on the wire')
-})
+    const session = { id: 'session-legacy' }
+    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
+    const payload = { agent: session, turn: 0, step: 2, signal: new AbortController().signal }
+    assert.equal(await ctx.handlers.get('agent/request')(payload, async () => resolved), resolved)
+    for (const event of [
+      { type: 'step/start', turn: 0, step: 2, time: 1000 },
+      { type: 'assistant/message', turn: 0, step: 2, time: 1800, usage: { inputTokens: 10, outputTokens: 5 } },
+      { type: 'step/end', turn: 0, step: 2, time: 1900 },
+    ]) ctx.handlers.get('session/event')(session, event)
 
-test('a route declaring no levels is left untouched', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'deepseek/deepseek-chat': { efforts: [], default: undefined } }) },
-  })
-  apply(ctx, ON)
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const execution = await request(ctx, { step: 2, effort: 'high', provider: 'deepseek', model: 'deepseek-chat' })
-  assert.equal(execution.reasoningEffort, 'high', 'no level to cut means no decision')
-})
-
-test('when discovery is unavailable the plugin does not guess', async () => {
-  // No llm service at all, and a request that still carries an effort. Sending a
-  // guessed id would make the harness reject the call before provider I/O, so
-  // the only safe action is none.
-  const ctx = fakeContext()
-  apply(ctx, ON)
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const execution = await request(ctx, { step: 2, effort: 'high' })
-  assert.equal(execution.reasoningEffort, 'high')
-})
-
-test('a failing discovery call is treated as unknown', async () => {
-  const ctx = fakeContext({ services: { llm: llmService({}, { fail: true }) } })
-  apply(ctx, ON)
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const execution = await request(ctx, { step: 2, effort: 'high' })
-  assert.equal(execution.reasoningEffort, 'high')
-})
-
-test('slow discovery never stalls the request, and later steps use the real ladder', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }, { delayMs: 60 }) },
-  })
-  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, discoverTimeoutMs: 10 })
-
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const quick = await request(ctx, { step: 2, effort: 'medium' })
-  assert.equal(quick.reasoningEffort, 'medium', 'first request must not wait for metadata')
-
-  // The late answer still upgrades the cache, so the plugin does not stay blind.
-  await new Promise(resolve => setTimeout(resolve, 90))
-  const later = await request(ctx, { step: 3, effort: 'medium' })
-  assert.equal(later.reasoningEffort, 'low', 'cached ladder applied on the next request')
-})
-
-test('a pinned ladder may be used when discovery is unavailable', async () => {
-  const ctx = fakeContext()
-  apply(ctx, { metrics: false, benchmarkFile: '', enabled: true, ladder: ['low', 'high'], floor: 'low' })
-  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a' } })
-  const execution = await request(ctx, { step: 2, effort: 'high' })
-  assert.equal(execution.reasoningEffort, 'low')
-})
-
-test('the route is logged once, proving which ladder was used', async () => {
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
-  })
-  apply(ctx, ON)
-  await request(ctx, { step: 1, effort: 'high' })
-  await request(ctx, { step: 2, effort: 'high' })
-  const ladderLogs = ctx.logs.filter(args => String(args[0]).includes('ladder='))
-  assert.equal(ladderLogs.length, 1, 'logged once per process, not per step')
-  assert.match(String(ladderLogs[0].join(' ')), /off>minimal>low>medium>high/)
+    const [row] = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.equal(row.gear, 'auto', 'the retired name is not honoured as a width/effort pair')
+    assert.equal(row.effort, 'medium', 'and the effort is the one that was asked for')
+    assert.match(
+      readFileSync(debugFile, 'utf8'),
+      /legacyGear=turbo resolved=auto/,
+      'the load trace names the retired id so the operator can clean the patch up',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('a throwing tool payload does not break the request', async () => {
@@ -385,10 +294,10 @@ test('a throwing tool payload does not break the request', async () => {
   assert.deepEqual(decision, { kind: 'accept' }, 'tool result unaffected')
 
   const after = await request(ctx, { step: 2, effort: 'medium' })
-  assert.ok(['low', 'medium'].includes(after.reasoningEffort), 'request still resolves')
+  assert.equal(after.reasoningEffort, 'medium', 'request still resolves, effort untouched')
 })
 
-test('debug writes one line per request with the signals', async () => {
+test('debug writes one line per request with the schedule', async () => {
   const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -406,13 +315,13 @@ test('debug writes one line per request with the signals', async () => {
 
     // The load trace comes first, so a log that stops there still proves the
     // module ran and says which build and which switch state produced it.
-    assert.match(lines[0], /apply v\d+\.\d+\.\d+ entered enabled=true gear=fast parallel=4/)
+    assert.match(lines[0], /apply v\d+\.\d+\.\d+ entered enabled=true gear=auto parallel=4/)
 
     const requests = lines.filter(line => / step=/.test(line))
     assert.equal(requests.length, 1, 'one line per request, no per-hook noise')
-    assert.match(requests[0], /step=2 gear=fast medium=>low/)
-    assert.match(requests[0], /clean=1/)
-    assert.match(requests[0], /route=provider/)
+    assert.match(requests[0], /step=2 gear=auto effort=medium \(unchanged\)/)
+    assert.match(requests[0], /parallel=4/)
+    assert.match(requests[0], /route=company\/deepseek-v4\.1-flash/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -471,9 +380,17 @@ test('the guidance section is registered once and renders per request', () => {
   assert.match(text, /up to 4 independent calls/)
   assert.match(text, /never report a result you have not received/)
 
-  // The fan-out number is configurable, and the text follows it.
+  // The fan-out number is configurable, and the text follows it. A pinned
+  // session arm is how a fixed width is expressed now that a patch gear means
+  // "run the scheduler".
   const custom = fakeContext({ services: services() })
-  apply(custom, { enabled: true, gear: 3, parallel: 7, metrics: false, benchmarkFile: '' })
+  apply(custom, {
+    enabled: true,
+    parallel: 7,
+    sessions: JSON.stringify({ 'session-1': { enabled: true, gear: 'max' } }),
+    metrics: false,
+    benchmarkFile: '',
+  })
   assert.match(sections[2].text(context), /up to 7 independent calls/)
 
   // Switched off, the section renders to nothing — an off plugin adds no prompt.
@@ -545,32 +462,39 @@ test('the manifest ships everything a plugin manager reads before activation', a
 })
 
 test('an experiment assignment picks the gear and turns the mode on by itself', async () => {
-  // The assignment, not the user, decides the arm — so it must not depend on a
-  // switch that the user could forget to click, or a forgotten click would
-  // silently land the session in the control arm.
-  const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }) },
+  // The assignment, not the user, decides the arm — and the arm is only a width
+  // and a ceiling now. The request object must come back identical in every arm:
+  // an experiment is allowed to change how much work one step may carry, never
+  // what the model was asked to think about.
+  const sections = []
+  const services = () => ({
+    llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }),
+    systemPrompt: { section: entry => sections.push(entry) },
+    agentLoop: { config: { maxParallelToolCalls: { get: () => 16 } } },
   })
+  const context = { scope: { id: 'session-assigned' } }
   const bench = join(await mkdtemp(join(tmpdir(), 'dsh-fast-mode-assign-')), 'bench.json')
   try {
     await writeFile(bench, JSON.stringify({ enabled: true, gears: ['turbo'] }))
+    const ctx = fakeContext({ services: services() })
     apply(ctx, { metrics: false, benchmarkFile: bench, enabled: false, gear: 'safe' })
 
-    const handler = ctx.handlers.get('agent/request')
     const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
     const payload = { agent: { id: 'session-assigned' }, turn: 0, step: 2, signal: new AbortController().signal }
-    const out = await handler(payload, async () => resolved)
-    assert.notEqual(out, resolved, 'an assignment is an experiment: it cannot leave the request untouched')
-    assert.notEqual(out.reasoningEffort, 'medium', 'the assigned gear must reach the request')
+    const out = await ctx.handlers.get('agent/request')(payload, async () => resolved)
+    assert.equal(out, resolved, 'no arm may rewrite the request')
+    assert.match(sections.at(-1).text(context), /up to 6 independent calls/, 'the arm reaches the prompt, not the effort')
 
-    // With the experiment stopped, the configured switch and gear win again.
+    // With the experiment stopped, the configured switch wins again: off stays off.
     await rm(bench)
-    const off = fakeContext({
-      services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'medium' } }) },
-    })
+    const off = fakeContext({ services: services() })
     apply(off, { metrics: false, benchmarkFile: bench, enabled: false, gear: 'safe' })
     const untouched = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'medium' }
-    assert.equal(await off.handlers.get('agent/request')(payload, async () => untouched), untouched)
+    assert.equal(
+      await off.handlers.get('agent/request')(payload, async () => untouched),
+      untouched,
+      'without an assignment the switch decides',
+    )
   } finally {
     await rm(bench, { force: true })
     await rm(dirname(bench), { recursive: true, force: true })
@@ -580,13 +504,18 @@ test('an experiment assignment picks the gear and turns the mode on by itself', 
 test('a session assigned to the control arm runs switched off, not accelerated', async () => {
   // The baseline has to be an assignment too. If the control arm were "whatever
   // the switch happens to be", the trial would silently lose its comparison.
+  const sections = []
   const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    services: {
+      llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }),
+      systemPrompt: { section: entry => sections.push(entry) },
+      agentLoop: { config: { maxParallelToolCalls: { get: () => 16 } } },
+    },
   })
   const bench = join(await mkdtemp(join(tmpdir(), 'dsh-fast-mode-control-')), 'bench.json')
   try {
     await writeFile(bench, JSON.stringify({ enabled: true, gears: ['off'] }))
-    apply(ctx, { metrics: false, benchmarkFile: bench, enabled: true, gear: 'turbo' })
+    apply(ctx, { metrics: false, benchmarkFile: bench, enabled: true, gear: 'auto' })
 
     const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' }
     const payload = { agent: { id: 'session-control' }, turn: 0, step: 4, signal: new AbortController().signal }
@@ -595,6 +524,7 @@ test('a session assigned to the control arm runs switched off, not accelerated',
       resolved,
       'the control arm is untouched even though the plugin is switched on globally',
     )
+    assert.equal(sections.at(-1).text({ scope: { id: 'session-control' } }), '', 'and it injects no prompt')
   } finally {
     await rm(bench, { force: true })
     await rm(dirname(bench), { recursive: true, force: true })
@@ -606,8 +536,13 @@ test('two conversations, one settings column: each runs at its own entry', async
   // must not silently change what a conversation running next to it does. The
   // shared `enabled` / `gear` stay the default ("last choice"), and an entry is
   // the only thing that outranks it.
+  const sections = []
   const ctx = fakeContext({
-    services: { llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }) },
+    services: {
+      llm: llmService({ 'company/deepseek-v4.1-flash': { efforts: SELF_HOSTED, default: 'high' } }),
+      systemPrompt: { section: entry => sections.push(entry) },
+      agentLoop: { config: { maxParallelToolCalls: { get: () => 16 } } },
+    },
   })
   apply(ctx, {
     enabled: true,
@@ -616,33 +551,30 @@ test('two conversations, one settings column: each runs at its own entry', async
     benchmarkFile: '',
     sessions: JSON.stringify({
       'session-quiet': { enabled: false },
-      'session-turbo': { enabled: true, gear: 'turbo' },
+      'session-pinned': { enabled: true, gear: 'fast' },
     }),
   })
 
   const handler = ctx.handlers.get('agent/request')
-  const run = (id, effort = 'high') => {
-    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: effort }
+  const run = async (id) => {
+    const resolved = { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' }
     const payload = { agent: { id }, turn: 0, step: 2, signal: new AbortController().signal }
-    return handler(payload, async () => resolved).then(out => ({ out, resolved }))
+    const out = await handler(payload, async () => resolved)
+    assert.equal(out, resolved, 'no entry may rewrite the request')
+    return sections.at(-1).text({ scope: { id } })
   }
 
-  const quiet = await run('session-quiet')
-  assert.equal(quiet.out, quiet.resolved, 'a conversation that turned the mode off is handed back untouched')
+  assert.equal(await run('session-quiet'), '', 'a conversation that turned the mode off is handed back untouched')
+  assert.match(await run('session-pinned'), /up to 4 independent calls/, 'the pinned entry sets its own width')
 
-  const turbo = await run('session-turbo')
-  assert.notEqual(turbo.out, turbo.resolved, 'the conversation that pinned a gear is accelerated')
-  assert.notEqual(turbo.out.reasoningEffort, 'high', 'and its gear reached the request')
-
-  // A conversation with no entry inherits the shared pair, which is what a fresh
-  // session starts from: the last choice made anywhere.
-  const fresh = await run('session-never-seen')
-  assert.notEqual(fresh.out, fresh.resolved, 'a fresh conversation inherits the shared switch')
 
   // An entry is authoritative for its conversation and inapplicable to the
   // others: the quiet one stays quiet even though the shared default is on.
-  const quietAgain = await run('session-quiet')
-  assert.equal(quietAgain.out, quietAgain.resolved)
+  assert.equal(await run('session-quiet'), '', 'the quiet one stays quiet')
+
+  // A conversation with no entry inherits the shared pair, which is what a fresh
+  // session starts from: the last choice made anywhere.
+  assert.match(await run('session-never-seen'), /up to \d+ independent calls/, 'inherits the shared gear')
 })
 
 test('the third lever is wired: the stall guard, the compaction reminder, the peer probe', () => {
