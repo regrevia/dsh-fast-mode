@@ -18,17 +18,16 @@
  * volatile: they are read once at load, like `debugFile`.
  *
  * Only the fields that belong on a settings page are declared. Every other
- * knob (`floor`, `ladder`, `aliases`, `deepAfter`, `slowMs`, `bigChars`,
- * `window`, `holdTools`, `escalateAfterStep`, `discoverTimeoutMs`,
- * `baselineFromDefault`, `metrics`, `metricsFile`, `benchmarkFile`, `debug`,
- * `debugFile`, `stallGuard`, `toolTimeoutMs`, `reassertAfterCompaction`) is a
- * composition-level
- * troubleshooting value: schemastery passes undeclared keys through untouched,
- * so a hand-written patch keeps working without cluttering the form.
+ * knob (`metrics`, `metricsFile`, `benchmarkFile`, `debug`, `debugFile`,
+ * `toolTimeoutMs`, `stallGuard`, `reassertAfterCompaction`) is a
+ * composition-level troubleshooting value: schemastery passes undeclared keys
+ * through untouched, so a hand-written patch keeps working without cluttering
+ * the form.
  *
- * `enabled` defaults to **false** on purpose. Fast mode changes how much the
- * model deliberates, so it is opt-in: the composer chip starts hollow and the
- * user turns it on when they want speed over depth.
+ * `enabled` defaults to **false** on purpose: opt-in is what makes "off means
+ * completely off" verifiable. Nothing here can change the model's thinking
+ * effort — the old `floor` / `ladder` / `aliases` knobs are gone, along with the
+ * code that read them.
  *
  * @module dsh-fast-mode/config
  */
@@ -50,14 +49,14 @@ export const Config = z.object({
     .boolean()
     .default(false)
     .volatile()
-    .description('开启 Fast 模式 / Turn fast mode on. 关闭时不改写档位、不注入提示词。'),
+    .description('开启 Fast 模式 / Turn fast mode on. 触发更宽的工具并行、更少的过程文字、单次工具调用上限；不改动思考强度。关闭时完全回到原生行为。'),
 
   gear: z
     .union(GEAR_NAMES.map(name => z.const(name)))
-    .default('fast')
+    .default('auto')
     .volatile()
     .description(
-      '档位 / Gear: safe < fast < turbo < max < ludicrous。档位拧的是“用 token 换往返次数”：并行目标 4/6/8/8 次调用，turbo 起再加投机预读与更严的输出纪律，同时越高的档越早把推理档压下来。safe 完全不干预；ludicrous 连思考档一起取消（reasoning off），只适合明确不要质量的批量任务。',
+      '调度 / Schedule: auto 是唯一面向用户的档位——按会话实测的步数与工具延迟自选并行宽度和单次调用上限。safe 表示完全不干预；fast/turbo/max/ludicrous 是旧的固定宽度，保留给实验脚本，配置里写它们会被当作 auto 并打一条弃用日志。所有档位都不改变思考强度。',
     ),
 
   parallel: z
@@ -67,7 +66,7 @@ export const Config = z.object({
     .max(8)
     .volatile()
     .description(
-      '并行上限 / Parallel ceiling: 覆盖档位默认的每步并行目标（1 表示不注入批量提示）。',
+      '并行上限 / Parallel ceiling: 覆盖每步并行目标；auto 下只作为初始值，调度器会随后续步骤调整（1 表示不注入批量提示）。',
     ),
 
   sessions: z
@@ -75,7 +74,7 @@ export const Config = z.object({
     .default('')
     .volatile()
     .description(
-      '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true,"gear":"turbo"}}。渲染闪电面板时按会话读写；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。',
+      '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true}}。渲染闪电面板时按会话读写；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。',
     ),
 
   outputDiscipline: z
@@ -89,14 +88,14 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description(
-      '卡顿看门狗 / Stall guard: 给单次工具调用加按档位收紧的上限（safe 不限；fast 300s、turbo 180s、max 120s、ludicrous 90s）。超时就取消这次调用并把“换个做法重试”写回给模型。只作用于 shell/脚本类工具，问用户、等后台任务、等子代理这类本来就要等的调用不受影响。',
+      '卡顿看门狗 / Stall guard: 给单次工具调用加上限。auto 下默认 120 秒，并按最近调用的实际延迟在 2–5 分钟之间自适应；safe 不限。超时就取消这次调用并把“换个做法重试”写回给模型。只作用于 shell/脚本类工具，问用户、等后台任务、等子代理这类本来就要等的调用不受影响。',
     ),
 
   toolTimeoutMs: z
     .number()
     .default(0)
     .description(
-      '单次工具调用上限 / Per-call ceiling in milliseconds: 0 = 按档位（见 stallGuard），负数 = 关闭看门狗，正数 = 所有档位都用这个值。',
+      '单次工具调用上限 / Per-call ceiling in milliseconds: 0 = 自适应（见 stallGuard），负数 = 关闭看门狗，正数 = 一律使用这个值。',
     ),
 
   reassertAfterCompaction: z

@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.9.1",
-  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching, a per-gear stall guard that bounds a single tool call, and a built-in speed/token benchmark. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness fast mode: same thinking effort, fewer round trips. An adaptive parallel tool fan-out, output discipline that never trims the answer, and a cancellable stall guard. Never changes reasoning effort, the model, or the request body. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
@@ -37,6 +37,7 @@
     "README.en.md",
     "CHANGELOG.md",
     "BENCHMARK.md",
+    "docs/",
     "LICENSE"
   ],
   "keywords": [
@@ -44,8 +45,8 @@
     "dsh",
     "dsh-plugin",
     "fast-mode",
-    "reasoning-effort",
-    "parallel-tools",
+    "tool-fanout",
+    "adaptive-parallel",
     "latency",
     "deepseek"
   ],

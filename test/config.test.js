@@ -29,15 +29,15 @@ const parse = (input) => {
   ]))
 }
 
-test('the schema defaults to off with the fast gear', () => {
+test('the schema defaults to off with the scheduler', () => {
   const value = parse({})
   assert.equal(value.enabled, false)
-  assert.equal(value.gear, 'fast')
+  assert.equal(value.gear, 'auto')
 })
 
-test('every gear the policy knows is selectable', () => {
-  for (const gear of ['safe', 'fast', 'turbo', 'max']) {
-    assert.equal(parse({ gear }).gear, gear)
+test('a retired gear id is still accepted, so an old patch loads', () => {
+  for (const gear of ['safe', 'auto', 'fast', 'turbo', 'max', 'ludicrous']) {
+    assert.equal(parse({ gear }).gear, gear, 'the schema accepts it; resolveConfig maps it')
   }
 })
 
@@ -51,9 +51,12 @@ test('the parallel ceiling round-trips through the schema', () => {
 })
 
 test('undeclared composition keys survive the schema', () => {
+  // Pass-through is generic: the retired effort knobs still parse (so an old
+  // patch does not fail to load) but nothing reads them any more, which is what
+  // test/effort.test.js pins.
   const value = parse({ enabled: true, floor: 'high', holdTools: ['bash'], debug: true })
   assert.equal(value.enabled, true)
-  assert.equal(value.floor, 'high', 'the floor is a patch-level knob, not a form field')
+  assert.equal(value.floor, 'high', 'unknown keys pass through untouched')
   assert.deepEqual(value.holdTools, ['bash'])
   assert.equal(value.debug, true)
 })
@@ -120,15 +123,16 @@ test('a volatile field arrives as a reference and the plugin still reads it', ()
 test('an override pins one field without rebuilding the config', () => {
   // This is what the experiment harness uses: the session's gear comes from the
   // assignment, everything else from the composition.
-  const raw = Config({ enabled: true, gear: 'fast', slowMs: 1234 })
-  const pinned = resolveConfig(raw, { gear: 'turbo' })
-  assert.equal(pinned.gear, 'turbo')
-  assert.equal(pinned.slowMs, 1234, 'only the overridden field moves')
+  const raw = Config({ enabled: true, gear: 'turbo', toolTimeoutMs: 1234 })
+  const pinned = resolveConfig(raw, { gear: 'max' })
+  assert.equal(pinned.gear, 'max')
+  assert.equal(pinned.toolTimeoutMs, 1234, 'only the overridden field moves')
   assert.equal(pinned.enabled, true)
   assert.ok(pinned.gearLevel > resolveConfig(raw).gearLevel, 'the override reaches the derived plan, not just the name')
 
   const again = resolveConfig(raw)
-  assert.equal(again.gear, 'fast', 'the override must not mutate what it read')
+  assert.equal(again.gear, 'auto', 'the note never appeared, so resolve-time mapping is unchanged by an override')
+  assert.equal(again.legacyGear, 'turbo', 'and the override must not mutate what it read')
 
   // The schema is the one place that refuses an unknown gear; at runtime a typo
   // degrades to the default gear, because throwing here would take the turn down.
@@ -136,7 +140,7 @@ test('an override pins one field without rebuilding the config', () => {
 })
 
 test('a gear override survives a volatile gear reference', () => {
-  const raw = Config({ enabled: true, gear: 'fast' })
+  const raw = Config({ enabled: true, gear: 'auto' })
   assert.equal(typeof raw.gear, 'object', 'the switch is a reference at runtime')
   assert.equal(resolveConfig(raw, { gear: 'turbo' }).gear, 'turbo')
 })

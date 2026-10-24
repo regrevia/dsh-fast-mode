@@ -30,20 +30,23 @@ import { resolveConfig } from '../src/effort.js'
 test('the ceiling follows the gear, and every escape hatch is spelled out', () => {
   const budget = (gear, extra = {}) => stallBudgetFor(resolveConfig({ enabled: true, gear, ...extra }))
 
-  // The documented shape of the ladder: safe intervenes in nothing, and each
-  // higher gear is a tighter bound than the one below it.
+  // Only two stances are user-facing now: `safe` intervenes in nothing and
+  // `auto` bounds a call at two minutes before its own scheduler refines the
+  // number. The fixed ids survive as experiment arms, so they are reachable
+  // through an override and never through a patch.
   assert.equal(budget('safe'), 0)
-  assert.equal(budget('fast'), 300_000)
-  assert.equal(budget('turbo'), 180_000)
-  assert.equal(budget('max'), 120_000)
-  assert.equal(budget('ludicrous'), 90_000)
-  const enabled = ['fast', 'turbo', 'max', 'ludicrous'].map(gear => budget(gear))
-  assert.deepEqual(enabled, [...enabled].sort((a, b) => b - a), 'a higher gear must not allow a longer call')
+  assert.equal(budget('auto'), 120_000)
+  assert.equal(budget('turbo'), 120_000, 'a retired patch gear runs auto, so it runs the auto ceiling')
+  const arm = (gear) => stallBudgetFor(resolveConfig({ enabled: true }, { enabled: true, gear }))
+  assert.equal(arm('fast'), 300_000)
+  assert.equal(arm('turbo'), 180_000)
+  assert.equal(arm('max'), 120_000)
+  assert.equal(arm('ludicrous'), 90_000)
 
   // A positive `toolTimeoutMs` overrides the table for every gear; a negative
   // one is the kill switch; `stallGuard: false` is the same kill switch.
   assert.equal(budget('safe', { toolTimeoutMs: 5_000 }), 5_000)
-  assert.equal(budget('ludicrous', { toolTimeoutMs: 7_500 }), 7_500)
+  assert.equal(budget('auto', { toolTimeoutMs: 7_500 }), 7_500)
   assert.equal(budget('turbo', { toolTimeoutMs: -1 }), 0)
   assert.equal(budget('turbo', { stallGuard: false }), 0)
 

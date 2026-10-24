@@ -31,13 +31,14 @@
  * the menu with the reason spelled out. Nothing is hidden behind a tooltip that
  * cannot show.
  *
- * ## The gear menu
+ * ## The panel
  *
- * Gear selection lives here rather than on the generated Settings page: the page
- * is for composition-level knobs, the chip is where speed is chosen. Each row
- * states the trade it offers as an *estimate* — speed multiplier and token
- * multiplier — derived from what a gear actually changes (`deepAfter` and the
- * model-facing fan-out target), never presented as a guarantee.
+ * One switch and one honest sentence. Fast mode has no gears to choose any
+ * more: it always runs at the thinking effort the user picked (that is the
+ * contract), and the scheduler decides the rest per step, so a picker would be
+ * offering choices that no longer exist. The panel therefore shows the switch,
+ * what the scheduler is currently allowed to do, and the two reasons the mode
+ * can be faster without being shallower.
  *
  * Failure containment, because a UI half must never take the composer down:
  * every remote call is awaited inside a try/catch, an unreadable configuration
@@ -69,45 +70,6 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'remote', 'remote.settings']
 
     /**
-     * The gear ladder as the menu presents it.
-     *
-     * `speed` / `tokens` are **estimates** relative to `safe`, not measurements,
-     * and the footer says so in both locales. Our own runs do not support a
-     * per-gear ratio: on single-file tasks every enabled gear lands within noise
-     * of `safe`, and the one confirmatory fan-out experiment measured `turbo`
-     * only. The one *measured* number in the panel is `stall`, which is a policy
-     * budget rather than a prediction.
-     * A gear changes two things: how early the policy is allowed to drop the
-     * effort notch (`deepAfter`) and how many tool calls the model-facing
-     * guidance asks for per step (`parallel`). Both cut wall-clock time by doing
-     * more work per step; neither can reorder the serial part of a turn, and
-     * wider steps cost input tokens for the extra calls. The numbers are rounded
-     * from that trade, and every row says so in the footer.
-     *
-     * The ids must match `GEARS` in `src/effort.js`; `test/client.test.js`
-     * asserts that they do, because a client-side id the host does not know
-     * would be rejected by the schema union.
-     */
-    const GEAR_MENU = [
-      { id: 'safe', speed: 1, tokens: 1, stall: 0 },
-      { id: 'fast', speed: 1.3, tokens: 1.2, stall: 300_000 },
-      { id: 'turbo', speed: 1.6, tokens: 1.5, stall: 180_000 },
-      { id: 'max', speed: 2.2, tokens: 1.9, stall: 120_000 },
-      // The only gear allowed to drop reasoning to `off`. It carries a visible
-      // asterisk for that. `stall: 0` on `safe` means "intervene in nothing".
-      { id: 'ludicrous', speed: 3.4, tokens: 1.3, stall: 90_000, risky: true },
-    ]
-
-    /**
-     * The per-gear ceiling on one guarded tool call, formatted for the footer.
-     *
-     * The numbers are the `STALL_BUDGET` table in `src/stallguard.js`; 90 s reads
-     * as "1.5 分", not "2 分", because rounding a budget up would advertise more
-     * patience than the guard actually has.
-     */
-    const formatMinutes = ms => `${Math.round((ms / 60_000) * 10) / 10}`
-
-    /**
      * Dictionaries, written with **dotted top-level keys on purpose**.
      *
      * `dsh-client-locale` resolves a key by indexing the dictionary flat —
@@ -123,8 +85,8 @@ window.__ModuleLoader__.load({
     const zh = {
       'chip.on': 'Fast 模式已开启',
       'chip.off': 'Fast 模式已关闭',
-      'chip.titleOn': 'Fast 模式：已开启 · {gear}（速度 ~{speed} · token ~{tokens}）。点击进入设置',
-      'chip.titleOff': 'Fast 模式：已关闭 · {gear}（速度 ~{speed} · token ~{tokens}）。点击进入设置',
+      'chip.titleOn': 'Fast 模式：已开启 · 自动调度，思考强度不变。点击进入设置',
+      'chip.titleOff': 'Fast 模式：已关闭 · 点击开启',
       'chip.titleLoading': 'Fast 模式：正在读取配置，点击重试',
       'chip.readonly': 'Fast 模式配置为只读，无法从这里切换',
       'chip.error': 'Fast 模式配置读取失败：{error}',
@@ -136,25 +98,19 @@ window.__ModuleLoader__.load({
       'menu.switchOn': '已开启，点击关闭',
       'menu.switchOff': '已关闭，点击开启',
       'menu.busy': '写入中…',
-      'menu.note': '倍率预估 · 单次调用 ≤ {minutes} 分',
-      'menu.noteOff': '倍率预估 · 单次调用不限时',
       'menu.scope': '仅本会话生效',
-      'menu.warn': '* 关闭思考，质量可能下降',
-      'menu.colName': '档位',
-      'menu.colSpeed': '速度',
-      'menu.colTokens': 'token',
-      'gears.safe': 'Eco',
-      'gears.fast': 'Cruise',
-      'gears.turbo': 'Sport',
-      'gears.max': 'Track',
-      'gears.ludicrous': 'Redline',
+      'menu.auto': '自动调度 · 并行 2–8 · 单次调用 ≤ {minutes} 分',
+      'menu.autoOff': '已关闭 · 完全回到原生行为',
+      'menu.autoOpen': '自动调度 · 并行 2–8 · 单次调用不限时',
+      'menu.effort': '思考强度保持你选的档，不因开启而降低。',
+      'menu.mechanism': '更快来自：更宽的工具并行、更少过程文字、自动打断卡住的调用。',
     }
 
     const en = {
       'chip.on': 'Fast mode is on',
       'chip.off': 'Fast mode is off',
-      'chip.titleOn': 'Fast mode: on · {gear} (speed ~{speed} · token ~{tokens}). Click for settings',
-      'chip.titleOff': 'Fast mode: off · {gear} (speed ~{speed} · token ~{tokens}). Click for settings',
+      'chip.titleOn': 'Fast mode: on · automatic scheduling, thinking effort unchanged. Click for settings',
+      'chip.titleOff': 'Fast mode: off · click to turn on',
       'chip.titleLoading': 'Fast mode: reading configuration. Click to retry',
       'chip.readonly': 'Fast mode configuration is read-only',
       'chip.error': 'Fast mode configuration unavailable: {error}',
@@ -166,18 +122,12 @@ window.__ModuleLoader__.load({
       'menu.switchOn': 'On, click to turn off',
       'menu.switchOff': 'Off, click to turn on',
       'menu.busy': 'Writing…',
-      'menu.note': 'Estimated ratios · one call ≤ {minutes} min',
-      'menu.noteOff': 'Estimated ratios · calls unbounded',
       'menu.scope': 'This conversation only',
-      'menu.colName': 'Gear',
-      'menu.colSpeed': 'speed',
-      'menu.colTokens': 'token',
-      'menu.warn': '* reasoning off, quality drops',
-      'gears.safe': 'Eco',
-      'gears.fast': 'Cruise',
-      'gears.turbo': 'Sport',
-      'gears.max': 'Track',
-      'gears.ludicrous': 'Redline',
+      'menu.auto': 'Automatic · parallel 2–8 · one call ≤ {minutes} min',
+      'menu.autoOff': 'Off · the harness behaves exactly as shipped',
+      'menu.autoOpen': 'Automatic · parallel 2–8 · calls unbounded',
+      'menu.effort': 'Thinking effort stays exactly what you chose.',
+      'menu.mechanism': 'Faster because: wider tool batching, less narration, bounded calls.',
     }
 
     const CSS = [
@@ -220,26 +170,13 @@ window.__ModuleLoader__.load({
       '.fm-menu__sep{height:1px;margin:0 6px 5px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
       '.fm-menu__scope{padding:0 6px 4px;font-size:10px;line-height:1.5;',
       'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      // One grid shared by the header and every row: that is what makes the
-      // numbers line up under their labels, at any locale.
-      '.fm-menu__cols,.fm-menu__item{display:grid;align-items:center;column-gap:6px;',
-      'grid-template-columns:minmax(0,1fr) 38px 40px 8px}',
-      '.fm-menu__cols{padding:2px 6px 3px;font-size:10px;line-height:1.3;letter-spacing:.02em;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
-      '.fm-menu__col{text-align:right;white-space:nowrap}',
-      '.fm-menu__col[data-left="true"]{text-align:left}',
-      '.fm-menu__item{width:100%;box-sizing:border-box;padding:5px 6px;margin:0;border:0;border-radius:7px;',
-      'background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left}',
-      '.fm-menu__item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
-      '.fm-menu__item[data-current="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(77,107,254,.1))}',
-      '.fm-menu__item[data-off="true"]{opacity:.5}',
-      '.fm-menu__name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.fm-menu__num{font-size:11px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;',
-      'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
-      '.fm-menu__num[data-dim="true"]{color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
-      '.fm-menu__tick{width:6px;height:6px;border-radius:50%;',
+      // The scheduler line: what the mode is currently allowed to do. One row,
+      // no columns, because there is nothing left to choose between.
+      '.fm-menu__live{display:flex;align-items:center;gap:6px;padding:3px 6px 4px;font-size:11px;',
+      'line-height:1.45;color:var(--dsw-alias-label-secondary,#5c5c5c)}',
+      '.fm-menu__dot{flex:none;width:6px;height:6px;border-radius:50%;',
       'background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
-      '.fm-menu__tick[data-empty="true"]{background:transparent}',
+      '.fm-menu__dot[data-on="false"]{background:var(--dsw-alias-label-tertiary,#8b8b8b)}',
       // The fine print wraps; the old one was `white-space:nowrap` and got cut.
       '.fm-menu__foot{margin-top:5px;padding:5px 6px 1px;border-top:1px solid ',
       'var(--dsw-alias-border-subtle,rgba(0,0,0,.07));font-size:10px;line-height:1.5;',
@@ -297,6 +234,10 @@ window.__ModuleLoader__.load({
        * a read-modify-write of the whole column in one patch.
        */
       sessions: {},
+      /** The ceiling the panel quotes, in whole minutes, read off the host. */
+      stallMinutes: '2',
+      /** The same ceiling in milliseconds; `0` means the guard is disabled. */
+      stallBudget: 120_000,
     }
 
     /** @type {Set<() => void>} */
@@ -491,23 +432,6 @@ window.__ModuleLoader__.load({
       })
     }
 
-    /** @param {number} value */
-    const formatX = value => `${(Math.round(value * 10) / 10).toFixed(1)}×`
-
-    /** @param {string} id */
-    function gearEntry(id) {
-      return GEAR_MENU.find(entry => entry.id === id)
-    }
-
-    /**
-     * The gear the menu paints as current. Falls back to `fast` (the schema
-     * default) when the read did not carry the field, so the menu is never
-     * blank: an unreadable field is not a reason to show nothing.
-     */
-    function currentGear() {
-      return gearEntry(store.gear) ?? gearEntry('fast') ?? GEAR_MENU[0]
-    }
-
     /**
      * Whether a namespace view is this plugin's, judged by the *declared schema*
      * rather than the current value.
@@ -597,6 +521,14 @@ window.__ModuleLoader__.load({
           store.revision = typeof view.revision === 'number' ? view.revision : undefined
           store.writable = !(result && result.writable === false)
           store.gear = seenGear
+          // The panel quotes the ceiling the host actually enforces: an explicit
+          // `toolTimeoutMs` wins, otherwise the `auto` budget. A disabled guard
+          // is not a number, and the panel says so instead of inventing one.
+          const budget = value.stallGuard === false
+            ? 0
+            : (Number(value.toolTimeoutMs) > 0 ? Number(value.toolTimeoutMs) : 120_000)
+          store.stallBudget = budget
+          store.stallMinutes = `${Math.round((budget / 60_000) * 10) / 10}`
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -724,32 +656,6 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Pick a gear. Selecting one while Fast mode is off turns it on as well:
-     * the user's intent in this menu is "go faster", and a gear silently stored
-     * behind a disabled mode would be indistinguishable from a broken click.
-     *
-     * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
-     * @param {string} id
-     */
-    async function chooseGear(remote, id) {
-      if (store.busy) return
-      if (store.phase !== 'ready') await refresh(remote)
-      if (store.phase !== 'ready') {
-        emit()
-        return
-      }
-      if (!store.writable) {
-        emit()
-        return
-      }
-      /** @type {{gear: string, enabled?: boolean}} */
-      const patch = { gear: id }
-      if (!store.enabled) patch.enabled = true
-      const accepted = await write(remote, patch)
-      if (accepted) closeMenu()
-    }
-
-    /**
      * Flip fast mode. Called from the switch inside the panel, so the panel is
      * already open — a refusal just leaves the reason on the status line there
      * instead of closing the surface the user is looking at.
@@ -763,10 +669,10 @@ window.__ModuleLoader__.load({
         if (store.phase !== 'ready') return
       }
       if (!store.writable) return
-      // The gear rides along so the shared column (which seeds a brand-new
-      // conversation) matches what this one just got, instead of pairing a new
-      // switch state with a stale gear.
-      await write(remote, { enabled: !store.enabled, gear: store.gear })
+      // The scheduler rides along so the shared column (which seeds a brand-new
+      // conversation) matches what this one just got. `auto` is a constant, not
+      // a choice: it is the only value the panel can produce.
+      await write(remote, { enabled: !store.enabled, gear: 'auto' })
     }
 
     /* -------------------------------------------------------------- component */
@@ -788,14 +694,14 @@ window.__ModuleLoader__.load({
     /**
      * The panel the bolt opens.
      *
-     * One switch, one gear list, one line of fine print — the earlier version
-     * repeated `速度` / `token` on every row and overflowed its own box. The
-     * numbers are absolute estimates, so the footer only has to explain the pair
-     * once, and the menu stays narrow enough to sit above the composer.
+     * One switch, one scheduler line, two lines of fine print. There is no gear
+     * list because there is no gear to pick: the mode runs at the user's chosen
+     * thinking effort and the scheduler adapts the width per step. Re-introducing
+     * a ladder here would be re-introducing the thing that was removed.
      *
      * @param {{t: (key: string, params?: object) => string, remote: any}} props
      */
-    function GearMenu(props) {
+    function FastPanel(props) {
       const { t, remote } = props
       const anchor = store.menu
       const style = anchor !== undefined && anchor !== 'dock'
@@ -803,9 +709,11 @@ window.__ModuleLoader__.load({
         : undefined
       const status = statusLine(t)
       const on = store.phase === 'ready' && store.enabled
-      // The footer explains the selected gear's budget: it is a policy the user
-      // should be able to read off the panel, not a hidden constant.
-      const selected = GEAR_MENU.find(entry => entry.id === store.gear) ?? GEAR_MENU[0]
+      // The ceiling is a policy the user should be able to read off the panel,
+      // not a hidden constant. It is the `auto` budget (`AUTO_LIMITS` /
+      // `STALL_BUDGET`); a per-request override is a composition knob the client
+      // cannot see, so it is not painted here.
+      const minutes = store.stallMinutes
 
       const children = [
         react.createElement(
@@ -829,59 +737,22 @@ window.__ModuleLoader__.load({
           ),
         ),
         react.createElement('div', { className: 'fm-menu__sep' }),
-        // The switch is per conversation, and nothing else in the panel says so:
-        // a user who flips it in one tab has no way to know another tab keeps its
-        // own stance. One short line, above the gears it governs.
         react.createElement('div', { className: 'fm-menu__scope' }, t('menu.scope')),
-        // The header the old panel was missing: two numbers per row need two
-        // names, or `1.6× · 1.5×` reads as one opaque pair.
         react.createElement(
           'div',
-          { className: 'fm-menu__cols', 'aria-hidden': 'true' },
-          react.createElement('span', { className: 'fm-menu__col', 'data-left': 'true' }, t('menu.colName')),
-          react.createElement('span', { className: 'fm-menu__col' }, t('menu.colSpeed')),
-          react.createElement('span', { className: 'fm-menu__col' }, t('menu.colTokens')),
-          react.createElement('span', { className: 'fm-menu__col' }),
+          { className: 'fm-menu__live' },
+          react.createElement('span', { className: 'fm-menu__dot', 'data-on': on ? 'true' : 'false' }),
+          react.createElement('span', null, on
+            ? (minutes === '0' ? t('menu.autoOpen') : t('menu.auto', { minutes }))
+            : t('menu.autoOff')),
         ),
       ]
 
-      for (const entry of GEAR_MENU) {
-        const name = t(`gears.${entry.id}`)
-        const speed = formatX(entry.speed)
-        const tokens = formatX(entry.tokens)
-        const label = `${name} ${t('menu.colSpeed')} ${speed} ${t('menu.colTokens')} ${tokens}`
-        children.push(react.createElement(
-          'button',
-          {
-            key: entry.id,
-            type: 'button',
-            className: 'fm-menu__item',
-            'data-current': store.gear === entry.id ? 'true' : 'false',
-            'data-off': on ? 'false' : 'true',
-            title: entry.risky === true ? `${label} ${t('menu.warn')}` : label,
-            'aria-label': entry.risky === true ? `${label} ${t('menu.warn')}` : label,
-            onClick: () => { void chooseGear(remote, entry.id) },
-          },
-          react.createElement(
-            'span',
-            { className: 'fm-menu__name' },
-            entry.risky === true ? `${name}*` : name,
-          ),
-          react.createElement('span', { className: 'fm-menu__num' }, speed),
-          react.createElement('span', { className: 'fm-menu__num', 'data-dim': 'true' }, tokens),
-          react.createElement('span', { className: 'fm-menu__tick', 'data-empty': store.gear === entry.id ? 'false' : 'true' }),
-        ))
-      }
-
-      // Two short lines instead of one long one: the old note concatenated the
-      // estimate sentence and the warning, and neither fitted 196 px.
       children.push(react.createElement(
         'div',
         { className: 'fm-menu__foot' },
-        react.createElement('p', null, selected.stall > 0
-          ? t('menu.note', { minutes: formatMinutes(selected.stall) })
-          : t('menu.noteOff')),
-        GEAR_MENU.some(entry => entry.risky === true) ? react.createElement('p', null, t('menu.warn')) : null,
+        react.createElement('p', null, t('menu.effort')),
+        react.createElement('p', null, t('menu.mechanism')),
       ))
       if (status !== '') children.push(react.createElement('div', { className: 'fm-menu__status' }, status))
 
@@ -928,16 +799,11 @@ window.__ModuleLoader__.load({
       }, [chat])
 
       const on = store.phase === 'ready' && store.enabled
-      const gear = currentGear()
       const status = statusLine(t)
       const open = store.menu !== undefined
       const title = status !== ''
         ? status
-        : t(on ? 'chip.titleOn' : 'chip.titleOff', {
-          gear: t(`gears.${gear.id}`),
-          speed: formatX(gear.speed).slice(0, -1),
-          tokens: formatX(gear.tokens).slice(0, -1),
-        })
+        : t(on ? 'chip.titleOn' : 'chip.titleOff')
 
       return react.createElement(
         'span',
@@ -973,7 +839,7 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
-        store.menu === undefined ? null : react.createElement(GearMenu, { t, remote }),
+        store.menu === undefined ? null : react.createElement(FastPanel, { t, remote }),
       )
     }
 
@@ -1065,7 +931,6 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.inject = inject
-    exports.GEAR_MENU = GEAR_MENU
     // The two format helpers are exported for `test/state.test.js`, which feeds
     // the same fixtures to this copy and to `src/state.js`: the host decides what a
     // request runs at from the column this half writes, so a drift between the two

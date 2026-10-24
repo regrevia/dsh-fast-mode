@@ -19,7 +19,6 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 
-import { GEARS } from '../src/effort.js'
 
 const SOURCE = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
@@ -188,7 +187,7 @@ function switchOf(menu) {
 }
 
 /** The gear rows of a rendered panel, in menu order. */
-function gearRows(menu) {
+function unusedGearRows(menu) {
   return menu.children
     .filter(element => element.props && element.props.className === 'fm-menu__item')
     .map(element => element.props)
@@ -213,11 +212,13 @@ test('the bundle declares the loader contract and the services it needs', () => 
   assert.equal(typeof module.apply, 'function')
 })
 
-test('the offered gears are exactly the gears the host half implements', async () => {
-  const { module } = await mount(fakeRemote())
-  const offered = [...module.GEAR_MENU].map(entry => entry.id)
-  const implemented = Object.keys(GEARS)
-  assert.deepEqual(offered, implemented, 'a client-only gear id would be refused by the schema union')
+test('the panel offers nothing to pick: fast mode has one behaviour, not a ladder', async () => {
+  const { module, render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
+  assert.equal(module.GEAR_MENU, undefined, 'there is no client-side gear table to drift from the host')
+  const menu = openPanel(render)
+  const pickers = menu.children.filter(el => el.props && /fm-menu__(item|cols)/.test(String(el.props.className)))
+  assert.deepEqual(pickers, [], 'no rows and no header: a picker would offer choices that no longer exist')
+  assert.equal(menu.children[0].props.className, 'fm-menu__head', 'the switch is the first thing in the panel')
 })
 
 test('it registers one chip on the composer slot beside the model selector, never on the selector itself', async () => {
@@ -253,16 +254,13 @@ test('every dictionary key is flat, because the locale lookup indexes it flat', 
       assert.match(key, /^[a-z]+(\.[a-zA-Z]+)+$/, `${locale}: "${key}" must be a dotted flat key`)
     }
   }
-  assert.match(dict.zh['menu.note'], /预估/, 'the multipliers are labelled as estimates, not measurements')
-  assert.match(dict.zh['menu.note'], /\{minutes\}/, 'and the line also carries the measured stall ceiling')
-  assert.match(dict.en['menu.note'], /Estimated/i)
-  assert.match(dict.zh['menu.noteOff'], /不限时/, 'the control gear has no ceiling, and says so')
-  assert.equal(dict.zh['gears.safe'], 'Eco', 'the gears carry their own names')
-  assert.equal(dict.zh['gears.fast'], 'Cruise')
-  assert.equal(dict.zh['gears.turbo'], 'Sport')
-  assert.equal(dict.zh['gears.max'], 'Track')
-  assert.equal(dict.zh['gears.ludicrous'], 'Redline')
-  assert.match(dict.zh['menu.warn'], /质量/, 'the past-2x gear says what it costs')
+  assert.match(dict.zh['menu.auto'], /\{minutes\}/, 'the scheduler line carries the enforced ceiling')
+  assert.match(dict.zh['menu.auto'], /并行/, 'and the width policy it is allowed to use')
+  assert.match(dict.zh['menu.effort'], /思考强度/, 'the panel states the contract: effort is untouched')
+  assert.match(dict.zh['menu.mechanism'], /并行/, 'and names what actually makes it faster')
+  assert.match(dict.en['menu.effort'], /effort/i, 'English says the same thing')
+  assert.equal(/×|倍率/.test(`${JSON.stringify(dict.zh)}${JSON.stringify(dict.en)}`), false,
+    'no multiplier claim survives anywhere in the panel copy')
 })
 
 test('the outer control is one icon: no caret, no dropdown affordance', async () => {
@@ -287,7 +285,7 @@ test('the chip answers the wire envelope: a payload-only describe still resolves
   const { render } = await mount(remote)
   const tree = render()
   assert.equal(boltOf(tree).props['data-on'], 'false')
-  assert.match(boltOf(tree).props.title, /turbo/, 'the gear was read through the bare payload')
+  assert.equal(boltOf(tree).props.title, 'chip.titleOff', 'the tooltip no longer quotes a gear')
 })
 
 test('clicking the bolt opens the panel and writes nothing by itself', async () => {
@@ -354,83 +352,50 @@ test('a refused write reverts the chip and explains itself in the tooltip and th
   assert.match(lastLine(menu), /revision conflict/, 'the panel states the reason')
 })
 
-test('every gear row states its speed and token estimate, and the panel stays narrow', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'fast' })
-  const { render } = await mount(remote)
-
-  const menu = openPanel(render)
-  const rows = gearRows(menu)
-  assert.equal(rows.length, 5, 'four tiers plus the past-2x gear')
-
-  assert.match(rows[0]['aria-label'], /menu\.colSpeed 1\.0× menu\.colTokens 1\.0×/)
-  assert.match(rows[2]['aria-label'], /1\.6× menu\.colTokens 1\.5×/)
-  assert.match(rows[3]['aria-label'], /2\.2× menu\.colTokens 1\.9×/, 'max is the last legal cut on a route without `off`')
-  assert.match(rows[4]['aria-label'], /3\.4× menu\.colTokens 1\.3×/, 'the opt-in gear is where 3x lives')
-  assert.match(rows[4]['aria-label'], /质量|quality|warn/, 'the risky gear carries its warning')
-  const riskyName = menu.children
-    .filter(element => element.props && element.props.className === 'fm-menu__item')[4]
-    .children[0].children.join('')
-  assert.equal(riskyName, 'gears.ludicrous*', 'and an asterisk next to its name')
-
-  assert.equal(rows[1]['data-current'], 'true', 'the current gear is marked')
-  assert.equal(rows[0]['data-current'], 'false')
-  assert.match(lastLine(menu), /^menu\.note \{[^}]*"minutes":"5"\} menu\.warn$/,
-    'fine print: one estimate line (carrying Cruise\'s 5 min ceiling), one warning line, never one per row')
-
-  // The earlier panel repeated `速度`/`token` on every row and overflowed its
-  // own 274px box. The rewritten one is a fixed narrow popover.
-  assert.match(menu.props.className, /^fm-menu( |$)/)
-})
-
-test('the panel labels both number columns, so `1.6x 1.5x` is not an opaque pair', async () => {
-  const { render } = await mount(fakeRemote({ enabled: true, gear: 'turbo' }))
+test('the panel is one switch, one scheduler line, and two lines of fine print', async () => {
+  const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto', toolTimeoutMs: 120_000 }))
   const menu = openPanel(render)
 
-  const cols = menu.children.find(element => element.props && element.props.className === 'fm-menu__cols')
-  assert.ok(cols !== undefined, 'the panel has a header row above the gears')
-  assert.deepEqual(cols.children.map(textOf), ['menu.colName', 'menu.colSpeed', 'menu.colTokens', ''],
-    'name, speed, token — in that order, with a slot for the tick')
-  assert.equal(cols.props['aria-hidden'], 'true', 'the header labels the columns, the rows carry the values')
+  assert.equal(menu.children[0].props.className, 'fm-menu__head', 'the switch comes first')
+  assert.equal(switchOf(menu).props['aria-checked'], true)
+  assert.equal(menu.children[1].props.className, 'fm-menu__sep')
 
-  // The header and every row share one grid template: that is what puts each
-  // number under its label instead of letting it drift with the gear name.
-  const probe = fakeRemote()
-  const { module: probeModule, styles } = loadClient(probe)
-  probeModule.apply(fakeContext(probe))
-  assert.match(styles[0].textContent,
-    /\.fm-menu__cols,\.fm-menu__item\{display:grid;align-items:center;column-gap:6px;grid-template-columns:minmax\(0,1fr\) 38px 40px 8px\}/,
-    'one grid, declared once, used by the header and the rows')
+  const live = menu.children.find(el => el.props && el.props.className === 'fm-menu__live')
+  assert.ok(live !== undefined, 'a live line says what the scheduler may do')
+  assert.equal(live.children[0].props.className, 'fm-menu__dot')
+  assert.equal(live.children[0].props['data-on'], 'true')
+  assert.equal(textOf(live.children[1]), 'menu.auto {"minutes":"2"}', 'two minutes, read off the host budget')
+
+  const foot = menu.children.find(el => el.props && el.props.className === 'fm-menu__foot')
+  assert.deepEqual(foot.children.map(textOf), ['menu.effort', 'menu.mechanism'],
+    'exactly two lines: the contract and the mechanism')
+
+  assert.equal(/×/.test(JSON.stringify(menu)), false, 'nothing in the panel advertises a speed multiplier')
 })
 
-test('the footer quotes the host-side stall table, gear by gear', async () => {
-  const { STALL_BUDGET } = await import('../src/stallguard.js')
-
-  assert.deepEqual(Object.keys(STALL_BUDGET).sort(), Object.keys(GEARS).sort(),
-    'every gear has a ceiling, and the panel has no gear the host cannot budget')
-
-  for (const [gear, budget] of Object.entries(STALL_BUDGET)) {
-    const { render } = await mount(fakeRemote({ enabled: true, gear }))
-    const lines = openPanel(render).children.at(-1).children.filter(Boolean).map(textOf)
-
-    if (budget === 0) {
-      assert.equal(lines[0], 'menu.noteOff', `${gear}: no watch, so the footer says "unbounded"`)
-      continue
-    }
-    const minutes = `${Math.round((budget / 60_000) * 10) / 10}`
-    assert.equal(lines[0], `menu.note {"minutes":"${minutes}"}`, `${gear}: the footer repeats the host table`)
+test('the live line follows the host ceiling instead of a hard-coded number', async () => {
+  const live = async (config) => {
+    const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto', ...config }))
+    return textOf(openPanel(render).children.find(el => el.props && el.props.className === 'fm-menu__live').children[1])
   }
+  assert.equal(await live({ toolTimeoutMs: 90_000 }), 'menu.auto {"minutes":"1.5"}',
+    'a 90 s budget reads as 1.5 min, not rounded up to 2')
+  assert.equal(await live({ stallGuard: false }), 'menu.autoOpen', 'with the guard off there is no ceiling to quote')
+
+  const { render } = await mount(fakeRemote({ enabled: false, gear: 'auto' }))
+  const offLine = openPanel(render).children.find(el => el.props && el.props.className === 'fm-menu__live')
+  assert.equal(textOf(offLine.children[1]), 'menu.autoOff', 'off says the harness is untouched')
+  assert.equal(offLine.children[0].props['data-on'], 'false', 'and the dot is grey, not blue')
 })
 
 test('the fine print wraps inside the 196 px popover instead of running off the edge', async () => {
-  const { render } = await mount(fakeRemote({ enabled: true, gear: 'max' }))
+  const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
   const menu = openPanel(render)
 
   const foot = menu.children.find(element => element.props && element.props.className === 'fm-menu__foot')
-  assert.ok(foot !== undefined, 'the estimate note and the warning live in one footer')
+  assert.ok(foot !== undefined, 'the two notes live in one footer')
   const lines = foot.children.filter(Boolean).map(textOf)
   assert.equal(lines.length, 2, 'two short lines, so neither has to be clipped')
-  assert.match(lines[0], /^menu\.note \{[^}]*"minutes":"2"\}/, 'Track states its own 2 min ceiling')
-  assert.equal(lines[1], 'menu.warn')
 
   const probe = fakeRemote()
   const { module: probeModule, styles } = loadClient(probe)
@@ -442,34 +407,16 @@ test('the fine print wraps inside the 196 px popover instead of running off the 
   assert.equal(rule[1].includes('nowrap'), false, 'the footer may wrap; the old note was clipped by nowrap')
 })
 
-test('picking a gear in the panel writes it, and turns Fast mode on if it was off', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'fast' })
+test('the switch is the only control, and it writes the scheduler with it', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
   const { render } = await mount(remote)
-
-  gearRows(openPanel(render))[2].onClick() // turbo
+  switchOf(openPanel(render)).props.onClick()
   await sleep(20)
 
-  assert.equal(remote.calls.length, 1, 'choosing a gear is one write')
-  assert.equal(remote.calls[0].patch.gear, 'turbo')
-  assert.equal(remote.calls[0].patch.enabled, true, 'a gear behind a disabled mode would look broken')
+  assert.equal(remote.calls.length, 1, 'one control, one write')
+  assert.equal(remote.calls[0].patch.enabled, true)
+  assert.equal(remote.calls[0].patch.gear, 'auto', 'a stale gear never rides along with the switch')
   assert.equal(remote.calls[0].revision, 3)
-
-  const after = render()
-  assert.equal(boltOf(after).props['data-on'], 'true')
-  assert.equal(renderMenu(after), undefined, 'a successful pick closes the panel')
-  assert.match(boltOf(after).props.title, /turbo/, 'the chip now reports the new gear')
-})
-
-test('picking a gear while Fast mode is already on leaves the toggle alone', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'safe' })
-  const { render } = await mount(remote)
-
-  gearRows(openPanel(render))[4].onClick() // ludicrous
-  await sleep(20)
-
-  assert.equal(remote.calls.length, 1)
-  assert.equal(remote.calls[0].patch.gear, 'ludicrous')
-  assert.equal('enabled' in remote.calls[0].patch, false, 'no redundant toggle field')
 })
 
 test('a read-only layer refuses to write and says so instead of going dead', async () => {
@@ -567,7 +514,7 @@ test('styles are injected once per page, not once per apply', () => {
   module.apply(fakeContext(remote))
   assert.equal(styles.length, 1, 'one <style> tag')
   assert.match(styles[0].textContent, /\.fm-chip__button/, 'the chip CSS travels with the bundle')
-  assert.match(styles[0].textContent, /\.fm-menu__item/, 'the menu CSS travels with the bundle')
+  assert.match(styles[0].textContent, /\.fm-menu__live/, 'the live line CSS travels with the bundle')
   assert.match(styles[0].textContent, /\.fm-menu__switch/, 'so does the switch inside the panel')
   assert.equal(styles[0].textContent.includes('.fm-chip__caret'), false, 'the caret is gone for good')
   assert.equal(styles[0].dataset.pluginCss, 'dsh-fast-mode/chip.css')
@@ -590,11 +537,11 @@ test('a switch click records the choice for its own conversation, next to the sh
   assert.equal(remote.calls.length, 1, 'one patch carries both tiers')
   const patch = remote.calls[0].patch
   assert.equal(patch.enabled, true, 'the shared field doubles as the last choice')
-  assert.equal(patch.gear, 'turbo', 'and keeps the gear it was painted with')
+  assert.equal(patch.gear, 'auto', 'and normalises the retired gear to the scheduler')
   const column = columnOf(remote.calls[0])
   assert.deepEqual(Object.keys(column), ['session-alpha'], 'only the clicked conversation gets an entry')
   assert.equal(column['session-alpha'].enabled, true)
-  assert.equal(column['session-alpha'].gear, 'turbo')
+  assert.equal(column['session-alpha'].gear, 'auto')
 })
 
 test('a conversation with its own entry keeps it when the shared switch moves', async () => {
@@ -628,7 +575,7 @@ test('a conversation with no entry inherits the most recent choice', async () =>
   const fresh = await mount(remote, 'session-brand-new')
   const tree = fresh.render()
   assert.equal(boltOf(tree).props['data-on'], 'true', 'a new session starts where the user left off')
-  assert.match(boltOf(tree).props.title, /gears\.max/, 'and with the last gear, not the schema default')
+  assert.equal(boltOf(tree).props.title, 'chip.titleOn', 'the tooltip never quotes a gear any more')
 
   const scoped = await mount(remote, 'session-alpha')
   assert.equal(boltOf(scoped.render()).props['data-on'], 'false', 'an entry still outranks the shared default')
@@ -643,13 +590,13 @@ test('an entry that pins only the gear still inherits the shared switch', async 
   const { render } = await mount(remote, 'session-alpha')
   const tree = render()
   assert.equal(boltOf(tree).props['data-on'], 'true')
-  assert.match(boltOf(tree).props.title, /gears\.turbo/)
+  assert.equal(boltOf(tree).props.title, 'chip.titleOn')
 
   switchOf(openPanel(render)).props.onClick()
   await sleep(20)
   const column = columnOf(remote.calls[0])
   assert.equal(column['session-alpha'].enabled, false, 'the switch is now pinned for this conversation')
-  assert.equal(column['session-alpha'].gear, 'turbo', 'without losing the gear it had pinned')
+  assert.equal(column['session-alpha'].gear, 'auto', 'the panel only ever writes the scheduler')
 })
 
 test('the conversation id is honoured whether it arrives injected or as a standard prop', async () => {

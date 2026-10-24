@@ -1,79 +1,68 @@
 /**
- * dsh-fast-mode: the harness's own fast mode.
+ * dsh-fast-mode 1.0.0: the harness's own fast mode.
  *
- * Two hooks, one judgement:
+ * The single rule that defines this release: **the plugin never changes thinking
+ * effort, the model, or the request body.** `agent/request` awaits the next
+ * handler and returns the resolved request untouched. Whatever effort the user
+ * picked — a per-conversation UI choice or the profile's `agent-default-model`
+ * pin — is what every call runs at, on every request, across restarts. There is
+ * no policy here that could drift it, because the mechanism was deleted rather
+ * than gated.
  *
- * - `tools/pre-execute` / `tools/post-execute` observe every tool call: its
- *   name, its arguments, whether it failed, how big the result was, how long it
- *   took. Both are pure observers here — they always forward the decision they
- *   were given, so this plugin can never change what a tool returns.
- * - `agent/request` decides the effort for the next model call from those
- *   observations plus the step number.
+ * What the plugin does instead, on the three places a turn actually loses time:
  *
- * The observation store lives in memory, keyed by agent, reset per turn. Nothing
- * is written to the session, so the policy adds no context and no tokens to the
- * conversation — it only decides how much the model deliberates.
+ * 1. **Fan-out.** A prompt section tells the model it may issue several
+ *    independent tool calls in one message. The scheduler (`gear: auto`) sets the
+ *    width per step, 2–8, from how the last few steps went: widen after a couple
+ *    of clean steps in the same turn, narrow on errors or stalls.
+ * 2. **Output discipline.** The same section asks for less process narration.
+ *    It never asks for a shorter answer: the deliverable is exempt by
+ *    construction.
+ * 3. **Bounded calls and loop breaking.** Shell-class tool calls get a
+ *    cancellable ceiling (`auto`: 120 s, self-tuning to 300 s from the recent
+ *    p90; `safe`: none). A call that hits it is cancelled and the model is told
+ *    to change approach. Six no-progress steps warn, twelve stop, and after
+ *    thirty steps in one turn the scheduler stops widening.
  *
  * ## Switching it on
  *
- * `enabled` defaults to **false**. Fast mode trades deliberation for latency, so
- * it stays out of the way until asked. Turn it on from the lightning chip beside
- * the model selector, or from a composition patch — both write the same
- * `enabled` field, because the chip is this package's client half (`dsh.client`
- * in package.json) reading and writing through the `settings` service.
+ * `enabled` defaults to **false**. Turn it on from the lightning chip beside the
+ * model selector, or from a composition patch — both write the same `enabled`
+ * field, because the chip is this package's client half (`dsh.client` in
+ * package.json) reading and writing through the `settings` service. The switch
+ * is per conversation; the panel has one switch and no gear picker, because
+ * `auto` is the only behaviour left to choose.
  *
- * The gear is chosen **only** from the chip's caret menu. There is deliberately
- * no speed form on a settings page: this harness renders no form from a plugin's
- * schema (`autoGenerate` is host bookkeeping, no shipped client reads it), and a
- * second, half-working entry point is worse than none. Settings stays for the
- * composition-level knobs (`enabled`, `parallel`, `debug`).
- *
- * When it is off, nothing about a request changes: the policy returns the effort
- * the harness chose, and the guidance section renders to the empty string, which
- * the prompt assembler drops. What stays registered is the measurement tap and
- * the pass-through hooks — that is deliberate. A comparison between on and off
- * needs the off sessions measured by the same code, and a switch that can only
- * be flipped by restarting the app is a switch nobody flips mid-task. A `debug`
- * file, if configured, still gets one line per load — that is the trace an
- * operator reads when the chip cannot switch anything on.
+ * When it is off, nothing about a turn changes: the guidance section renders to
+ * the empty string (the prompt assembler drops it), the stall guard is not
+ * installed, and the measurement tap keeps recording so on/off comparisons are
+ * measured by the same code.
  *
  * ## Provider independence
  *
- * The plugin never assumes a vocabulary. Before it can lower an effort it asks
- * the harness which levels the current route actually declares
- * (`llm.resolveModelInfo(provider, model)` → `reasoning.efforts`), then notches
- * across *those* levels only. That matters because the harness validates an
- * effort against the route before provider I/O, so a guessed id would fail the
- * whole model call rather than being ignored.
- *
- * Concretely: the shipped official DeepSeek adapter advertises
- * `off/low/high/max` (read out of `@deepseek-ai/dsh-llm-deepseek`, not guessed
- * from the API docs), so the notch on that route is `high`→`low`, and `off` —
- * the one level that disables thinking entirely — stays below the default
- * floor. A self-hosted gateway declaring `off/minimal/low/medium/high` keeps
- * every level distinct, so `high`→`medium` is the notch there. A route that
- * declares no levels, or a route that cannot be interrogated, is left
- * completely alone.
+ * The plugin adds no provider-specific field and asks the route for no
+ * vocabulary. Because the request is returned unchanged, an official DeepSeek
+ * route, a self-hosted gateway and a LAN deployment behave identically here:
+ * whatever the harness resolved is what goes out. The `effort` column in the
+ * metrics journal is therefore evidence — it records the effort the request
+ * carried, not one this plugin chose.
  */
 import { appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { CONTROL, createAssignment } from './src/benchmark.js'
-import {
-  contentChars,
-  createState,
-  decideEffort,
-  GEARS,
-  readSignals,
-  recordObservation,
-  resetTurn,
-  resolveConfig,
-  resolvePlan,
-  stableKey,
-} from './src/effort.js'
+import { contentChars, GEARS, resolveConfig, stableKey } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
-import { buildConflictMessage, buildReassertMessage } from './src/notices.js'
+import {
+  AUTO,
+  autoSchedule,
+  createAutoState,
+  noteStep,
+  noteTool,
+  noteTurn,
+} from './src/auto.js'
+import { buildConflictMessage, buildReassertMessage, createNoticeMessage } from './src/notices.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
 import { createRecorder } from './src/metrics.js'
@@ -91,9 +80,8 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '0.9.1'
+export const VERSION = '1.0.0'
 const GLOBAL_AGENT = '__global__'
-const TIMED_OUT = Symbol('discovery-timeout')
 
 /**
  * Insert notices after the last message the step claims to be answering.
@@ -206,51 +194,6 @@ function agentKey(agent) {
 }
 
 /**
- * Read the effort ids a route declares, tolerating every shape a provider may
- * use. The harness normalises these, but a plugin should not throw on an
- * adapter that reports entries as bare strings.
- *
- * @param {unknown} info
- * @returns {{declared: string[], defaultEffort: string|undefined}|undefined}
- */
-function readModelInfo(info) {
-  if (!info || typeof info !== 'object') return undefined
-  const reasoning = info.reasoning
-  const raw = reasoning && typeof reasoning === 'object' ? reasoning.efforts : undefined
-  const declared = Array.isArray(raw)
-    ? raw
-      .map(entry => (typeof entry === 'string' ? entry : entry && typeof entry === 'object' ? entry.id : undefined))
-      .filter(id => typeof id === 'string' && id.length > 0)
-    : []
-  const fallback = reasoning && typeof reasoning === 'object' ? reasoning.defaultEffort : undefined
-  return {
-    declared,
-    defaultEffort: typeof fallback === 'string' && fallback.length > 0 ? fallback : undefined,
-  }
-}
-
-/** @param {unknown} value @param {number} ms */
-function raceTimeout(value, ms) {
-  return new Promise(resolve => {
-    const timer = setTimeout(() => resolve(TIMED_OUT), ms)
-    Promise.resolve(value).then(
-      result => {
-        clearTimeout(timer)
-        resolve(result)
-      },
-      () => {
-        clearTimeout(timer)
-        resolve(undefined)
-      },
-    )
-  })
-}
-
-/**
- * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {object} [rawConfig]
- */
-/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} [rawConfig]
  */
@@ -354,15 +297,14 @@ export function apply(ctx, rawConfig) {
     return resolveConfig(rawConfig, { gear: assigned, enabled: true })
   }
 
-  const state = createState()
+  // The scheduler's memory, one entry per conversation: what has been tried, how
+  // long calls have been taking, and how many steps went by without a new result.
+  const auto = createAutoState()
+  /** Live stall ceilings per conversation, as computed by the scheduler. */
+  const autoBudgets = new Map()
   /** @type {Map<string, number>} */
   const startedAt = new Map()
-  /** @type {Map<string, {plan: any|undefined, defaultEffort: string|undefined, source: string}>} */
-  const planCache = new Map()
-  /** @type {Map<string, Promise<any>>} */
-  const inFlight = new Map()
-  /** Route sources already announced, and parallel caps already warned about. */
-  const announced = new Set()
+  /** Parallel caps already warned about. */
   const warnedCaps = new Set()
 
   /**
@@ -394,7 +336,15 @@ export function apply(ctx, rawConfig) {
   const stallGuard = createStallGuard({
     budgetFor: (exec) => {
       const agent = agentKey(exec?.agent)
-      return stallBudgetFor(configFor(agent === GLOBAL_AGENT ? undefined : agent))
+      const sid = agent === GLOBAL_AGENT ? undefined : agent
+      const cfg = configFor(sid)
+      const base = stallBudgetFor(cfg)
+      // The adaptive ceiling only replaces the gear table: an explicit
+      // `toolTimeoutMs`, a disabled guard, and every fixed gear keep their own
+      // value untouched.
+      if (cfg.gear !== AUTO || base === 0 || cfg.toolTimeoutMs > 0) return base
+      const live = autoBudgets.get(agent)
+      return Number.isFinite(live) ? live : base
     },
     onStall: (info) => {
       stalls += 1
@@ -430,6 +380,27 @@ export function apply(ctx, rawConfig) {
       if (compacted.delete(sid) && cfg.reassertAfterCompaction !== false) {
         notices.push(buildReassertMessage(cfg))
       }
+      if (cfg.gear === AUTO) {
+        // The step boundary is also the scheduling boundary: it is where the
+        // turn's step count grows, and where the long-tail breaker gets to speak.
+        // The message is built inside this try/catch, so a scheduler bug drops
+        // the reminder instead of failing the step it was meant to protect.
+        noteStep(auto, sid)
+        const schedule = autoSchedule(auto, sid)
+        autoBudgets.set(sid, schedule.stallBudgetMs)
+        if (schedule.directive) {
+          notices.push(createNoticeMessage(schedule.directive.text, schedule.directive.summary))
+          if (initial.debug) {
+            appendDebug(
+              initial.debugFile,
+              `auto v${VERSION}: step=${schedule.stats.steps} turnSteps=${schedule.stats.turnSteps}`
+                + ` noProgress=${schedule.stats.noProgress} errors=${schedule.stats.errors}`
+                + ` parallel=${schedule.parallel} budget=${schedule.stallBudgetMs}ms`
+                + ` directive=${schedule.directive.kind}`,
+            )
+          }
+        }
+      }
       if (notices.length === 0) return decision
       return { ...decision, messages: insertAfterClaimed(decision.messages, payload?.messages, notices) }
     } catch {
@@ -454,7 +425,13 @@ export function apply(ctx, rawConfig) {
             const sid = scope && typeof scope === 'object' ? scope.id : undefined
             const live = configFor(typeof sid === 'string' ? sid : undefined)
             if (!live.enabled) return ''
-            return buildGuidance(live) ?? ''
+            // `auto` quotes the width it actually computed for this session, so
+            // the sentence the model reads and the number the scheduler enforces
+            // are the same number.
+            const effective = live.gear === AUTO
+              ? { ...live, parallel: autoSchedule(auto, typeof sid === 'string' ? sid : GLOBAL_AGENT).parallel }
+              : live
+            return buildGuidance(effective) ?? ''
           } catch {
             // A section that cannot resolve must cost nothing and stay silent.
             return ''
@@ -472,119 +449,28 @@ export function apply(ctx, rawConfig) {
   }
 
   /**
-   * Warn once per gear when the harness cap makes the fan-out target a wish.
+   * Warn once when the harness cap makes the fan-out target a wish.
    *
    * @param {ReturnType<typeof resolveConfig>} cfg
+   * @param {number} [width] - the scheduler's target for this session
    */
-  const checkParallelCap = (cfg) => {
-    if (cfg.parallel <= 1 || warnedCaps.has(cfg.parallel)) return
-    warnedCaps.add(cfg.parallel)
+  const checkParallelCap = (cfg, width) => {
+    const parallel = Number.isFinite(width) ? Math.floor(width) : cfg.parallel
+    if (!(parallel > 1) || warnedCaps.has(parallel)) return
+    warnedCaps.add(parallel)
     try {
       const holder = ctx.get('agentLoop')?.config?.maxParallelToolCalls
       const cap = typeof holder?.get === 'function' ? holder.get() : holder
-      if (typeof cap === 'number' && cap < cfg.parallel) {
+      if (typeof cap === 'number' && cap < parallel) {
         ctx.logger?.warn?.(
           '%s gear=%s asks for up to %d calls per step but agentLoop.maxParallelToolCalls=%d caps it; '
             + 'raise it in cordis.patch.yml (- id: agent-loop, config: { maxParallelToolCalls: %d })',
-          TAG, cfg.gear, cfg.parallel, cap, cfg.parallel,
+          TAG, cfg.gear, parallel, cap, parallel,
         )
       }
     } catch {
       // A diagnostic must never break a request.
     }
-  }
-
-  /**
-   * Ask the harness for the current route's declared levels. Any failure is a
-   * "we do not know", never an exception.
-   *
-   * @returns {Promise<{declared: string[], defaultEffort: string|undefined}|undefined>}
-   */
-  const lookup = (provider, model, signal) => {
-    let llm
-    try {
-      llm = typeof ctx.get === 'function' ? ctx.get('llm') : ctx.llm
-    } catch {
-      llm = undefined
-    }
-    if (!llm || typeof llm.resolveModelInfo !== 'function') return Promise.resolve(undefined)
-    try {
-      return Promise.resolve(llm.resolveModelInfo(provider, model, signal))
-        .then(readModelInfo)
-        .catch(() => undefined)
-    } catch {
-      return Promise.resolve(undefined)
-    }
-  }
-
-  /**
-   * The decision plan for a route at one gear, cached per provider, model and
-   * gear. The gear is part of the key because it changes the floor and the
-   * ladder: one cached plan under a different gear would decide a notch it was
-   * not built for.
-   *
-   * @param {string} provider
-   * @param {string} model
-   * @param {AbortSignal|undefined} signal
-   * @param {ReturnType<typeof resolveConfig>} cfg
-   * @returns {Promise<{plan: any|undefined, defaultEffort: string|undefined, source: string}>}
-   */
-  const planFor = async (provider, model, signal, cfg) => {
-    const key = `${provider}\u0000${model}\u0000${cfg.gear}\u0000${cfg.floor}`
-    const cached = planCache.get(key)
-    if (cached) return cached
-
-    const pending = inFlight.get(key) ?? lookup(provider, model, signal)
-    inFlight.set(key, pending)
-
-    let found
-    try {
-      found = await raceTimeout(pending, cfg.discoverTimeoutMs)
-    } catch {
-      found = undefined
-    }
-
-    const settle = (info) => {
-      if (info) {
-        const plan = resolvePlan(info.declared, cfg)
-        const source = plan.source
-        const announce = `${provider}\u0000${model}\u0000${cfg.gear}`
-        if (!announced.has(announce)) {
-          announced.add(announce)
-          ctx.logger?.info?.(
-            '%s gear=%s %s/%s ladder=%s floor=%s (%s)',
-            TAG,
-            cfg.gear,
-            provider,
-            model,
-            plan.levels.map(level => level.id).join('>') || '-',
-            plan.floorId ?? '-',
-            source,
-          )
-        }
-        return { plan, defaultEffort: info.defaultEffort, source }
-      }
-      // Nothing known: only an explicitly pinned ladder may be trusted, because
-      // an id the route does not declare would fail the call before I/O.
-      const plan = cfg.ladderExplicit ? resolvePlan(undefined, cfg) : undefined
-      return { plan, defaultEffort: undefined, source: plan?.source ?? 'unknown' }
-    }
-
-    const entry = settle(found === TIMED_OUT ? undefined : found)
-    planCache.set(key, entry)
-
-    // Metadata that arrives after we stopped waiting still upgrades the cache,
-    // so only the very first request of a slow route runs without it.
-    if (found === TIMED_OUT) {
-      pending.then((info) => {
-        if (info) planCache.set(key, settle(info))
-      }).catch(() => {})
-    }
-    pending.finally(() => {
-      if (inFlight.get(key) === pending) inFlight.delete(key)
-    }).catch(() => {})
-
-    return entry
   }
 
   ctx.on('tools/pre-execute', async (exec, next) => {
@@ -600,19 +486,16 @@ export function apply(ctx, rawConfig) {
 
       if (exec) {
         const agent = agentKey(exec.agent)
-        const cfg = configFor(agent === GLOBAL_AGENT ? undefined : agent)
-        recordObservation(
-          state,
-          agent,
-          {
-            name: typeof exec.name === 'string' ? exec.name : 'unknown',
-            argsKey: stableKey(exec.arguments),
-            isError: result?.isError === true,
-            chars: contentChars(result?.content),
-            durationMs: began === undefined ? 0 : Math.max(0, Date.now() - began),
-          },
-          cfg.window,
-        )
+        const observation = {
+          name: typeof exec.name === 'string' ? exec.name : 'unknown',
+          argsKey: stableKey(exec.arguments),
+          isError: result?.isError === true,
+          chars: contentChars(result?.content),
+          durationMs: began === undefined ? 0 : Math.max(0, Date.now() - began),
+        }
+        // The scheduler reads the same observation: a call that returns the same
+        // bytes for the same arguments is the raw material of the long tail.
+        noteTool(auto, agent, observation)
       }
     } catch {
       // Observation is best-effort. A failure here must not affect the tool
@@ -626,92 +509,64 @@ export function apply(ctx, rawConfig) {
     const resolved = await next()
 
     const sid = agentKey(payload?.agent)
-    const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
-    const original = resolved?.reasoningEffort
+    const agent = sid === GLOBAL_AGENT ? undefined : sid
+    const cfg = configFor(agent)
+    const effort = resolved?.reasoningEffort
     const route = routeOf(resolved)
+    const label = effort === undefined ? undefined : String(effort)
 
-    // Switched off: hand the request back untouched, but still label the step so
-    // the measurement file can compare this session with an accelerated one.
+    // Fast mode does not touch the thinking budget, on purpose. The route and the
+    // effort are the user's contract with the model: a mode that quietly thinks
+    // less produces a different answer, not a faster one, and the measured public
+    // benchmarks showed the effort ladder bought no wall-clock on this route
+    // anyway (0 reasoning tokens in every arm). What is left is the part that
+    // makes the same thinking finish sooner — wider steps, bounded calls, and a
+    // breaker for the sessions that only look busy.
     if (!cfg.enabled) {
-      metrics.label(sid, {
-        mode: 'off',
-        gear: 'off',
-        effort: original === undefined ? undefined : String(original),
-        route,
-      })
+      metrics.label(sid, { mode: 'off', gear: 'off', effort: label, route })
       return resolved
     }
 
-    checkParallelCap(cfg)
-
-    let effort = original
-    let signals
-    let source = route
-    try {
-      const provider = resolved?.provider
-      const model = resolved?.model
-      const found = typeof provider === 'string' && typeof model === 'string'
-        ? await planFor(provider, model, payload?.signal, cfg)
-        : { plan: undefined, defaultEffort: undefined, source: 'unknown' }
-      source = found.source
-
-      resetTurn(state, sid, payload?.turn)
-      signals = readSignals(state, sid, {
-        window: cfg.window,
-        slowMs: cfg.slowMs,
-        bigChars: cfg.bigChars,
-        holdTools: cfg.holdTools,
-      })
-
-      effort = decideEffort({
-        step: payload?.step,
-        current: original,
-        baseline: cfg.baselineFromDefault ? found.defaultEffort : undefined,
-        plan: found.plan,
-        config: cfg,
-        signals,
-      })
-    } catch {
-      // Never let a policy failure change the request: keep what the harness chose.
-      effort = original
-    }
-
-    metrics.label(sid, {
-      mode: 'on',
-      gear: cfg.gear,
-      effort: effort === undefined ? undefined : String(effort),
-      route,
-    })
+    const schedule = cfg.gear === AUTO ? autoSchedule(auto, sid) : undefined
+    checkParallelCap(cfg, schedule?.parallel)
+    metrics.label(sid, { mode: 'on', gear: cfg.gear, effort: label, route })
 
     if (cfg.debug) {
       appendDebug(
         cfg.debugFile,
-        `turn=${payload?.turn} step=${payload?.step} gear=${cfg.gear} ${String(original)}=>${String(effort)}`
-          + ` route=${source}`
-          + ` obs=${signals?.observations ?? 0} clean=${signals?.cleanStreak ?? 0}`
-          + ` err=${signals?.errors ?? 0} slow=${signals?.slowestMs ?? 0}ms`
-          + ` big=${signals?.biggestChars ?? 0}c rep=${signals?.mostRepeated ?? 0}`
-          + ` hold=${signals?.held ?? 0}`
-          + `${signals?.struggling ? ' STRUGGLING' : ''}`,
+        `turn=${payload?.turn} step=${payload?.step} gear=${cfg.gear} effort=${String(label)} (unchanged)`
+          + ` route=${route}`
+          + (schedule
+            ? ` parallel=${schedule.parallel} budget=${schedule.stallBudgetMs}ms`
+              + ` steps=${schedule.stats.steps} noProgress=${schedule.stats.noProgress}`
+              + ` p90=${schedule.stats.p90WaitMs}ms errors=${schedule.stats.errors}`
+            : ''),
       )
     }
 
-    if (effort === undefined || effort === original) return resolved
-    return { ...resolved, reasoningEffort: effort }
+    return resolved
   })
 
   ctx.logger?.info?.(
-    '%s v%s loaded: enabled=%s gear=%s floor=%s deepAfter=%d slowMs=%d bigChars=%d aliases=%s holdTools=%d metrics=%s',
+    '%s v%s loaded: enabled=%s gear=%s parallel=%d adaptive=%s reasoningEffort=untouched metrics=%s',
     TAG,
     VERSION,
     initial.enabled,
     initial.gear,
-    initial.floor,
-    initial.deepAfter,
-    initial.slowMs,
-    initial.bigChars,
-    initial.aliases === false ? 'off' : 'auto',
-    initial.holdTools.length,
+    initial.parallel,
+    initial.adaptive === true,
     metrics.enabled ? metrics.file : 'off',
   )
+  if (initial.legacyGear) {
+    ctx.logger?.warn?.(
+      '%s the patch names the retired gear "%s", which used to lower thinking effort; '
+        + 'it now runs the auto scheduler, and the effort stays whatever the user chose. '
+        + 'Set gear: auto (or delete the override) to make the patch say what it does.',
+      TAG,
+      initial.legacyGear,
+    )
+    if (initial.debug) {
+      appendDebug(initial.debugFile, `legacyGear=${initial.legacyGear} resolved=auto`)
+    }
+  }
 }

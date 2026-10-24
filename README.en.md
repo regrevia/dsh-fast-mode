@@ -8,8 +8,9 @@
 <h1 align="center">dsh-fast-mode</h1>
 
 <p align="center">
-  <b>Same task, 40% faster.</b><br>
-  Not by making the model dumber — by cutting its round trips and its narration. No model change, no provider change, not one line of the request protocol.
+  <b>Same thinking effort, fewer round trips.</b><br>
+  Fast mode never touches the model, the thinking effort, or the request protocol —
+  it just makes each step take fewer trips, say less, and get stuck less.
 </p>
 
 <p align="center">
@@ -22,85 +23,53 @@
 
 ---
 
-## The principle: latency is a ledger
+## The principle
 
-A step's cost splits into exactly two terms: **≈ 720 ms of fixed round-trip overhead** plus **≈ 6.6 ms per output token** (`ms = 720 + 6.63 × outputTokens`, fitted over 689 steps, R² = 0.93). Which is why "save thinking" saves no time on this route — reasoning tokens are 0 to begin with, and lowering effort shaves nothing off the bill.
+A step costs two things: **about 720 ms of fixed round trip**, plus **about 6.6 ms per output token** (`ms = 720 + 6.63 × outputTokens`, 689 steps, R² = 0.93), plus tool wait. Thinking effort is not a variable in that ledger — reasoning tokens measured 0, so lowering effort buys no time and only makes the answer shallower. That is why the `agent/request` hook in 1.0.0 is a pass-through: **whatever thinking depth you chose is what every request gets.**
 
-This plugin touches only two things: **pack independent tool calls into the same step** (fewer trips) and **cut the excess prose and thinking** (less carried per trip). One step doing the work of three means the fixed overhead gets paid two times less. One term is not in that formula: **tool wait** — a single unbounded foreground command (a server, a `tail`, a heredoc that dies as a malformed response) can eat minutes, and the model usually re-issues it unchanged. Shell-style calls now carry a per-gear ceiling: on expiry the call is cancelled and the model gets told how to retry differently.
+Three things do move the number: **packing independent tool calls into one step** (pay the fixed cost fewer times), **trimming narration without touching the answer**, and **putting a cancellable ceiling on foreground commands** (an unbounded `tail` or server start can eat minutes). Parallel width 2–8 is chosen by a scheduler from how the last few steps actually went: 4 by default, widening when steps go well, narrowing on errors or stalls.
 
-## The numbers
+## The conclusion
 
-Same task, same model, same route, 16 sessions, 83 steps, `safe` against `turbo`:
+- Single-file, few-step tasks (HumanEval, AIME and friends) have nothing to parallelize, so fast mode **shows no measurable difference**: in the 0.8-era runs every gear landed within 0.95×–1.09× of the control, i.e. noise.
+- The −40 % step-time result from 0.8 does **not** transfer to 1.0: those gears also lowered thinking effort, and that lever has been deleted. 1.0 keeps only fan-out, output discipline and stall protection, and **has not yet been A/B measured at scale** — so we do not claim "40 % faster".
+- What we can honestly promise is the mechanism: same thinking effort, same answer quality, possibly more tokens (reading several places at once), and fewer steps — when the task really has independent queries to fan out.
 
-| Metric | safe | turbo | Change |
-|---|---|---|---|
-| Σ step time (median) | 25.9 s | 15.6 s | **−40 %** |
-| Steps (median) | 7.5 | 4.5 | −40 % |
-| Output tokens per session (median) | 3 798 | 2 180 | −43 % |
-| Tool calls per step | 1.41 | 1.37 | flat |
-| Parallel calls allowed per step | 2 | 6 | 3× |
-| Process memory (200 sessions of state) | — | — | **+192 KB RSS / +38 KB heap** |
-| Total tokens (new + cache reads) | 3 798 + 83 k | 2 180 + 84 k | cache reads flat, 91–92 % of the sum |
-| Mann–Whitney U | — | — | **p = 0.008** |
+The full derivation, every control and the half that did not reproduce are in [BENCHMARK.md](BENCHMARK.md), including the ledger for why lowering effort cannot help.
 
-10/10 factual answers identical. Note the honest part: per step, turbo is actually **slower and fatter** (+537 ms, +5 % tokens); it wins by doing 7.5 steps of work in 4.5 — what it saves is round trips, not per-step intelligence.
+## Using it
 
-The gain is **not universal**. The same comparison on HumanEval (100 sessions) and AIME 2025 (39 sessions) puts `off` and every gear inside the noise (0.95×–1.09×), because a single-file problem is 4–5 steps with nothing to parallelise. Both public-suite results, and the full argument for why they cannot show the effect, are in [BENCHMARK.md](BENCHMARK.md#experiment-f-the-same-comparison-on-public-benchmarks-humaneval-100-sessions-aime-2025-39-sessions) — the half that did not reproduce included.
-
-## Thirty seconds
-
-1. **Install**: DSH desktop → plugin manager → install bundle, target `github:regrevia/dsh-fast-mode`. Terminal equivalent: `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop` (then add the block below to `cordis.patch.yml`; the plugin manager writes it for you).
-2. **Turn it on**: reload the page, click the little bolt next to the composer → flip the switch → pick a gear.
-3. **Takes effect**: the next request runs on the new gear — no restart, no new conversation. The switch follows the conversation: one tab, one choice.
+1. **Install**: DSH desktop → plugin manager → install bundle, target `github:regrevia/dsh-fast-mode`. Terminal equivalent: `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`.
+2. **Turn on**: reload the page, click the small bolt next to the composer, flip the switch. There is no gear to pick — the scheduler decides the width per step.
+3. **It applies**: the next request, no restart and no new conversation. The switch is per conversation.
 
 ```yaml
 - insert:
     - id: fast-mode
       name: dsh-fast-mode
       config:
-        enabled: true      # off by default after install; this line is the real switch
-        gear: turbo        # safe / fast / turbo / max / ludicrous (default fast)
+        enabled: true   # off by default; this line is the real switch
+        gear: auto      # the only meaningful gear: the scheduler
 ```
 
-This plugin cannot be enabled together with `dsh-batch-tool-calls` / `dsh-ops` (overlapping features; see the conflict subsection in [docs/REFERENCE.en.md](docs/REFERENCE.en.md#coexistence-and-conflicts)).
+Legacy `fast` / `turbo` / `max` / `ludicrous` values resolve to `auto` and log a deprecation warning; they will **not** touch your thinking effort. `safe` remains for experiment scripts as a control arm (fixed width 2, no call ceiling, no prompt section).
 
-## The five gears
+## The panel
 
-A gear is not "how hard to crank it down" but one posture: how early downgrading is allowed, how many calls the model issues per step, and whether output gets cut.
+The bolt opens a 196 px popover: a switch on top, one live line saying what the scheduler is currently allowed to do (parallel 2–8 and the per-call ceiling, both read from config), and two lines of fine print — "thinking effort unchanged" and "where the speed comes from". No dropdown, no gears, no multiplier estimates: those choices no longer exist.
 
-| Gear | Parallel target | When to use |
-|---|---|---|
-| **Eco** `safe` | 2 per step | Critical changes, reading the logs first, a zero-prompt-change requirement; also the control arm of the experiment |
-| **Cruise** `fast` | 4 per step | The default; enough for daily work |
-| **Sport** `turbo` | 6 per step | **Pick this gear when you want faster**: heavy code reading, research, bulk triage |
-| **Track** `max` | 8 per step | Mechanical batch work; not recommended for critical changes unattended |
-| **Redline** `ludicrous` * | 8 per step | Batch work where you explicitly do not want quality: thinking off, fastest and riskiest |
-
-\* The only gear that actually emits `reasoningEffort: 'off'`. Explicit fields always beat the gear (`gear: turbo` + `deepAfter: 8` = Sport's parallelism with a conservative downgrade rhythm).
-
-## Playing well with other plugins
-
-It touches exactly five things: one section in the system prompt, `reasoningEffort` on `agent/request`, one read of `maxParallelToolCalls`, a cancellable ceiling on shell-style calls inside `tools/execute`, and one reminder appended after a compaction from `agent/pre-step` (`source.kind = 'plugin'`, never posing as a user message). It edits no history, does not intercept `fetch`, and makes no network requests.
-
-- ✅ **Compression plugins** (billion-context, built-in compaction, historical image compression, gateway adapters): one cuts input, the other cuts round trips — they multiply. Put the compression tools into `holdTools` and they leave each other alone.
-- ✅ **Pure UI / read-only observation**: zero overlap.
-- ❌ **Another plugin that writes `reasoningEffort`**: a knob can have only one owner; pick one.
-- ❌ **Another plugin also named "fast mode"**: the settings namespace and the patch id collide.
-- ❌ **A "save tokens" plugin that clamps `maxParallelToolCalls` back to 1–2**: the parallel target becomes empty words, and all that is left is fake speed.
-- ❌ **`dsh-batch-tool-calls` / `dsh-ops`**: the former's batching rules are a static subset of this plugin's guidance and ignore the gear; the latter ships two shells, Windows-only binaries and its own timeout advice. Enabling either together means paying for the same guidance twice — pick one.
-
-The full list, the reasoning behind each verdict and the config snippets are in [docs/REFERENCE.en.md](docs/REFERENCE.en.md#coexistence-and-conflicts).
+Do not enable it together with `dsh-batch-tool-calls` or `dsh-ops` — their prompt guidance overlaps, so both would be paying twice for the same advice. Compression plugins (billion-context, image compression, gateway adapters) compose fine: one shrinks the input, the other shrinks the round trips. Details in [docs/REFERENCE.en.md](docs/REFERENCE.en.md).
 
 ## What's next
 
-- **An A/B on step-rich real tasks**: fan-out only pays where one step can ask several places at once, so the next step is scaling Experiment E to multi-repo, multi-file work instead of more single-file problems.
-- **Measuring the stall ceiling**: the 0.9.0 per-call budget (300/180/120/90 s) is a policy value today; nobody has measured how many minutes it actually saves.
-- **The official API and real TTFT**: what is measured today is request-level latency; it only becomes true TTFT once a streaming signal exists.
+- **A/B on multi-file tasks**: fan-out only pays when a step has several independent queries. The next comparison moves to multi-repository, multi-file work instead of more single-file problems.
+- **How much stall protection actually saves**: the ceiling is policy plus adaptation today; we have not measured the minutes it prevents.
+- **Real TTFT**: we measure request-level latency now; it only becomes true TTFT once streaming signals are wired in.
 
 ## More
 
-[Measurement and how to reproduce](BENCHMARK.md) · [Principles, configuration and limits (reference)](docs/REFERENCE.en.md) · [What changed](CHANGELOG.md) · [中文](README.md)
+[Measurements and reproduction](BENCHMARK.md) · [Principle, configuration, boundaries (reference)](docs/REFERENCE.en.md) · [What changed](CHANGELOG.md) · [中文](README.md)
 
 ## License
 
-MIT. The logo is a whale with a bolt — fast, but not allowed to lie to itself.
+MIT. The logo is a whale with a lightning bolt — fast, but not allowed to fool itself.
