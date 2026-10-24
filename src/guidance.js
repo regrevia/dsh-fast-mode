@@ -58,7 +58,7 @@ const STALL_RULES = `Bounded calls:
  * The fan-out sentence. Only the number changes with the schedule, so the target
  * the model is told and the target the scheduler computed can never drift apart.
  */
-const FANOUT = 'Aim for up to {n} independent calls per message: the target is chosen from how your recent steps went — it widens after clean multi-call steps and narrows after errors. Plan the whole read set of a step before issuing it, then act on every result before requesting more. The harness runs the independent calls of one message concurrently; treat that number as a target, not a quota.'
+const FANOUT = 'Aim for up to {n} independent calls per message: the target is chosen from how your recent steps went — it widens after clean multi-call steps and narrows after errors. Plan the whole read set of a step before issuing it, then act on every result before requesting more. Read/search calls in one message run concurrently; shell calls do not — `bash` runs one at a time, so a block of shell calls costs the sum of their runtimes. Use `shell_parallel` for independent slow shell jobs.'
 
 /**
  * The single largest remaining loss: a model that discovers targets one at a
@@ -66,7 +66,7 @@ const FANOUT = 'Aim for up to {n} independent calls per message: the target is c
  * target set, the gather belongs in one block; splitting a known read set is the
  * bug, not a safety measure.
  */
-const GATHER = `Gather in one block: before your first call, list every independent target this request already names. Put all of them in the first block — do not split a known read set across steps, and do not read one item only to decide what to read next unless the request is genuinely sequential. Extra input tokens per step are the intended trade; an extra round trip is the cost you are removing. Independent shell commands (one per directory, one per job) may share a block too: write them as separate calls, not as one long chain with \`&&\`.
+const GATHER = `Gather in one block: before your first call, list every independent target this request already names. Put all of them in the first block — do not split a known read set across steps, and do not read one item only to decide what to read next unless the request is genuinely sequential. Extra input tokens per step are the intended trade; an extra round trip is the cost you are removing. Independent shell jobs belong in ONE \`shell_parallel\` call, not several \`bash\` calls: shell calls run one after another, so their runtimes add up. A dependent chain stays in \`bash\`; no two jobs may write the same file.
 - When the target set is large (roughly more than ten items) or the answer is an aggregate (a count, a total, a set intersection), reach for one bounded command or search — \`rg -c\`, \`grep -r\`, \`wc -l\`, or a short script that only prints — instead of reading every file. A wide read set is itself a slow step, and the aggregate usually fits in one command.`;
 
 /** Prefetch only becomes true once a step is wide enough to hold the extra call. */

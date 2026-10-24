@@ -23,7 +23,8 @@
     "./benchmark": "./src/benchmark.js",
     "./state": "./src/state.js",
     "./stallguard": "./src/stallguard.js",
-    "./peers": "./src/peers.js"
+    "./peers": "./src/peers.js",
+    "./parallel": "./src/parallel.js"
   },
   "files": [
     "index.js",

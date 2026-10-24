@@ -88,7 +88,7 @@ test('the guidance stays small in absolute terms', () => {
   // request that already carries a system prompt and a transcript. Both blocks
   // are amortised over a step that costs tens of thousands of prompt tokens, so
   // they are noise next to the round trips and the cancelled calls they remove.
-  assert.ok(text.length < 3800, `guidance is ${text.length} chars`)
+  assert.ok(text.length < 4200, `guidance is ${text.length} chars`)
 })
 
 test('no prompt text ever asks the model to think less', () => {
