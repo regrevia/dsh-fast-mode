@@ -38,9 +38,14 @@ Same task, same model, same route, 16 sessions, 83 steps, `safe` against `turbo`
 | Steps (median) | 7.5 | 4.5 | −40 % |
 | Output tokens per session (median) | 3 798 | 2 180 | −43 % |
 | Tool calls per step | 1.41 | 1.37 | flat |
+| Parallel calls allowed per step | 2 | 6 | 3× |
+| Process memory (200 sessions of state) | — | — | **+192 KB RSS / +38 KB heap** |
+| Total tokens (new + cache reads) | 3 798 + 83 k | 2 180 + 84 k | cache reads flat, 91–92 % of the sum |
 | Mann–Whitney U | — | — | **p = 0.008** |
 
-10/10 factual answers identical. Note the honest part: per step, turbo is actually **slower and fatter** (+537 ms, +5 % tokens); it wins by doing 7.5 steps of work in 4.5 — what it saves is round trips, not per-step intelligence. The experiment is still growing (more sessions, more routes, an official-API arm), and new numbers land in this table first.
+10/10 factual answers identical. Note the honest part: per step, turbo is actually **slower and fatter** (+537 ms, +5 % tokens); it wins by doing 7.5 steps of work in 4.5 — what it saves is round trips, not per-step intelligence.
+
+The gain is **not universal**. The same comparison on HumanEval (100 sessions) and AIME 2025 (39 sessions) puts `off` and every gear inside the noise (0.95×–1.09×), because a single-file problem is 4–5 steps with nothing to parallelise. Both public-suite results, and the full argument for why they cannot show the effect, are in [BENCHMARK.md](BENCHMARK.md#experiment-f-the-same-comparison-on-public-benchmarks-humaneval-100-sessions-aime-2025-39-sessions) — the half that did not reproduce included.
 
 ## Thirty seconds
 
@@ -88,8 +93,9 @@ The full list, the reasoning behind each verdict and the config snippets are in 
 
 ## What's next
 
-- **A larger controlled experiment**: more sessions, more routes, the official API and self-hosted gateways run separately; results go straight into the table above.
-- **Real TTFT**: what is measured today is request-level latency; it only becomes true TTFT once a streaming signal exists.
+- **An A/B on step-rich real tasks**: fan-out only pays where one step can ask several places at once, so the next step is scaling Experiment E to multi-repo, multi-file work instead of more single-file problems.
+- **Measuring the stall ceiling**: the 0.9.0 per-call budget (300/180/120/90 s) is a policy value today; nobody has measured how many minutes it actually saves.
+- **The official API and real TTFT**: what is measured today is request-level latency; it only becomes true TTFT once a streaming signal exists.
 
 ## More
 

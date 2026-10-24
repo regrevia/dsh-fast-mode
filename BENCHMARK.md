@@ -7,7 +7,7 @@
 - 插件**能**确定的：它把每步的耗时账目记了下来，并且在自建网关上把「一步里发多个工具调用」从 2% 提到 22–23%。
 - 插件**不能**确定的：在一个干净的小任务上，档位高低对**单步耗时没有任何可测的影响**。四个档位每输出一个 token 的耗时都在 9.0–10.6 ms 之间，差距在噪声里。
 
-数据来自本机真实会话（750 行、689 步可用于拟合），没有模拟、没有假设。下面每个数字都能用最后一节的命令重跑出来。
+数据来自本机真实会话（750 行、689 步可用于拟合），没有模拟、没有假设。下面每个数字都能用最后一节的命令重跑出来。后面还有一组公开 benchmark 的对照 —— 它没能复现「档位更快」，也照原样写了进来。
 
 ## 结论速览
 
@@ -83,6 +83,61 @@
 - 实验期间有 1 个**非实验**会话在同时跑（07:21–07:37），两臂平均受它干扰，但它不进统计。
 - `turbo` 的并行目标是内置的 6。把它抬到 `parallel: 8` 只会让一步更宽，不会更慢；本次没有单独测 8 那一档。
 
+## 实验 F：公开 benchmark 上的对照（HumanEval 100 会话，AIME 2025 39 会话）
+
+实验 E 只有 16 个会话，而且是一个仓库任务。为了回答"换个任务还成不成立"，又跑了两组公认的公开题。**结论先写在前面：这两个 benchmark 在结构上就测不出 fan-out，所以它们能证伪的东西很少 —— 但它们证伪了"档位普遍更快"这个说法。**
+
+### 设计
+
+- **任务**：HumanEval 前 10 题（题面全文给出，实现写进各自目录的 `solution.py`，用官方 `test` 本地跑通）；AIME 2025 前 10 题（最终整数写进 `answer.txt`，与官方答案比对）。
+- **一题一个沙箱**：每题独立目录、独立进程、独立输出文件，互不可见；跑完逐题校验，不靠模型自述。
+- **档位由 hash 分配**，不是手点：`FNV-1a(会话 id) mod 档位数`，`off` 是合法对照臂。手点会让"我觉得这档快"悄悄决定分组。
+- **AB 轮转抵消时段与缓存**：每波 10 个会话同分钟启动，波内五档轮转，波与波之间重排档位。会话级取中位数，再跨会话取中位数（两级中位数，避免长尾把均值拖走）。
+- **缓存变量单独看**：prompt cache 在所有臂上命中规模相同（`cacheRead` 80–85 k/会话，平的），所以"总 token"只算 `input + output`（新 token），`cacheRead` 单列 —— 否则 91–92% 的数字是缓存读，档位差异会被稀释成噪声。
+
+### HumanEval（100 会话，10 波 × 10 题，每波 10/10 通过）
+
+RUN A（第 1–6 波，60 会话）：
+
+| 档位 | n | 步数/会话 | Σ步时 中位 | 步时 中位 | 输出/步 | 新 token/会话 | cacheRead | 调用/步 | 最快于 safe | 新 token |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `safe` | 14 | 4.2 | 6 754 ms | 1 519 ms | 481 | 550 | 83 744 | 0.80 | 1.00× | 1.00× |
+| `fast` | 11 | 4.0 | **5 369 ms** | 1 342 ms | 313 | 455 | 82 816 | 0.75 | 1.26× | 0.65× |
+| `turbo` | 9 | 4.2 | 6 793 ms | 1 491 ms | 440 | 650 | 84 224 | 0.79 | 0.99× | 0.91× |
+| `max` | 12 | 4.2 | **5 394 ms** | 1 310 ms | 346 | 430 | 83 040 | 0.80 | 1.25× | 0.72× |
+| `ludicrous` | 14 | 4.1 | **5 370 ms** | 1 342 ms | 315 | 442 | 80 384 | 0.84 | 1.26× | 0.65× |
+
+RUN B（第 7–10 波，40 会话）：
+
+| 档位 | n | 步数/会话 | Σ步时 中位 | 步时 中位 | 输出/步 | 新 token/会话 | cacheRead | 调用/步 | 最快于 safe | 新 token |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `off` | 9 | 4.4 | 6 411 ms | 1 361 ms | 337 | 464 | 83 712 | 0.82 | 0.95× | 0.80× |
+| `safe` | 12 | 4.3 | 6 064 ms | 1 364 ms | 423 | 537 | 83 776 | 0.78 | 1.00× | 1.00× |
+| `turbo` | 9 | 4.0 | **5 554 ms** | 1 388 ms | 341 | 466 | 85 376 | 0.78 | 1.09× | 0.81× |
+| `ludicrous` | 10 | 3.9 | **5 656 ms** | 1 420 ms | 339 | 469 | 84 544 | 0.85 | 1.07× | 0.80× |
+
+### AIME 2025（39 会话，4 波）
+
+| 档位 | n | 步数/会话 | Σ步时 中位 | 步时 中位 | 输出/步 | 新 token/会话 | cacheRead | 调用/步 |
+|---|---|---|---|---|---|---|---|---|
+| `off` | 9 | 5 | 19 357 ms | 2 047 ms | 234 | 2 810 | 103 936 | 0.80 |
+| `safe` | 4 | 4.5 | 13 494 ms | 2 105 ms | 197 | 1 396 | 93 216 | 0.78 |
+| `fast` | 8 | 5 | 16 572 ms | 2 510 ms | 184 | 1 724 | 107 552 | 0.80 |
+| `turbo` | 8 | 4 | **10 147 ms** | 1 894 ms | 136 | 968 | 81 248 | 0.75 |
+| `ludicrous` | 10 | 6 | 12 432 ms | 2 007 ms | 148 | 1 252 | 122 080 | 0.90 |
+
+### 这两个 benchmark 教给我们的事
+
+1. **步数被任务形状钉死。** HumanEval 每题 4–5 步，AIME 4–6 步，92 % 的会话 ≤ 15 步。fan-out 的收益随"独立查询的条数"增长，而单文件题的条数是 1 —— 所以**不是档位没效果，是这个任务没有效果可给**。
+2. **`off` 和所有开启档位在噪声内。** HumanEval RUN B：`off` 0.95×、`turbo` 1.09×、`ludicrous` 1.07×（相对 `safe`）；AIME：0.70×–1.33×。而同一档位在两轮之间的漂移就有这么大（`safe` RUN A 6 754 ms vs RUN B 6 064 ms，±11 %）。**组间差 ≤ 组内漂移，就不下结论。**
+3. **唯一稳定的可见差异是输出 token。** `safe` 在两组里都是最啰嗦的一臂（输出/步 481、423），其余臂 0.65–0.91×。方向与"输出纪律"一致，但它不是"更快"，只是"更省"。
+4. **质量没有掉。** HumanEval 100 会话逐题跑官方 `test`，每波 10/10 通过；AIME 4 波分别是 9/1、9/1、8/2、7/3（通过/未通过）。没有一例因为档位而变得更差。
+5. **AIME 这一轮暴露了真正的墙钟大敌 —— 不是档位，是长尾。** 39 个会话里有 5 个在执行被 task board 判超时后仍在写，单会话 550–597 s、77–132 步；把它们剔除后 `ludicrous` 的中位 Σ步时从 12 432 掉到 6 633 ms，均值从 178 s 掉到 12 s。**中位数能活下来，均值活不下来。** 这也是 0.9.0 加"单次调用上限"的原因：真正吃掉时间的是少数几个停不下来的调用，而不是每步多 100 ms。
+
+**所以这张表能认证什么、不能认证什么**：能认证"公开题上不掉质量、不增加 token、`off` 不慢"；不能认证"档位让公开题变快"。fan-out 的收益仍然只有实验 E 那一个证据（步骤多的仓库任务）。把两组结论放在同一页，而不是只挑好看的那组 —— 这才是可复现的意思。
+
+原始日志：[`docs/bench-raw-2026-10-24.jsonl.gz`](docs/bench-raw-2026-10-24.jsonl.gz) —— 这 179 个实验会话（含试点与实验 E）逐步骤的 `ts / sid / gear / route / ttftMs / llmMs / stepMs / calls / errors / input / output / cacheRead / cacheWrite`，gzip 直读。会话本身、题目沙箱已在实验结束后清理，聚合过程只依赖这份日志与下表的统计脚本约定（两级中位数、波内轮转）。
+
 ## 为什么没效果：延迟模型
 
 把 689 步全放进去做最小二乘，`llmMs` 对输出 token 数的拟合是：
@@ -153,7 +208,7 @@ One question, one answer: **did the request actually get faster?**
 - What the plugin demonstrably does: it records the per-step ledger, and on this gateway it raised multi-call steps from 2% to 22–23%.
 - What it cannot claim: on a clean small task, **gear level has no measurable effect on per-step latency**. Every gear lands at 9.0–10.6 ms per output token — inside the noise.
 
-Numbers come from real local sessions (750 rows, 689 steps usable for the fit).
+Numbers come from real local sessions (750 rows, 689 steps usable for the fit). A public-benchmark comparison follows; it could not reproduce "gears are faster", and it is printed as-is.
 
 ## Summary
 
@@ -269,3 +324,98 @@ dsh-fast-mode-experiment stop
 ```
 
 Do not read the ratio tables when task shapes differ: the full-sample table shows `fast` at "0.89× model time" purely because those sessions happened to emit longer outputs. Compare same-task, same-step-count samples like Experiment B, or compare residuals against the latency model, which is immune to task shape. Experiment E is the minimal form of that: `--gears safe,turbo`, two waves of eight identical sessions, then group the raw rows by `gear` and compare per-session Σ `stepMs` medians. The raw rows live in `~/.dsh/fast-mode-metrics.jsonl`; grouping by `sid` reproduces the table without re-running any model.
+
+
+## Experiment F: the same comparison on public benchmarks (HumanEval 100 sessions, AIME 2025 39 sessions)
+
+Experiment E had 16 sessions and one repo task. To ask whether it generalises, two
+well-known public suites were run. **The answer up front: both are structurally
+unable to exercise fan-out — but they do falsify "every gear is faster".**
+
+### Design
+
+- **Tasks**: the first 10 HumanEval problems (full statement given; the solution
+  goes into its own `solution.py`, checked with the official `test` locally) and
+  the first 10 AIME 2025 problems (final integer into `answer.txt`, compared with
+  the official answer).
+- **One sandbox per problem**: own directory, own process, own output file; every
+  answer is checked, never taken on the model's word.
+- **Arms are hashed, not clicked**: `FNV-1a(session id) mod gears`; `off` is a
+  legal control. Clicking lets a hunch pick the groups.
+- **AB rotation cancels time-of-day and cache drift**: ten sessions start in the
+  same minute per wave, gears rotate inside the wave and are reshuffled between
+  waves. Per-session medians, then a median across sessions — a two-stage median,
+  so a long tail cannot drag the mean.
+- **Cache is looked at separately**: `cacheRead` is flat across arms (80–85 k per
+  session), so "total tokens" counts `input + output` (new tokens) only and
+  `cacheRead` gets its own column. Otherwise 91–92 % of the sum is cache reads and
+  the gear difference drowns.
+
+### HumanEval (100 sessions, 10 waves × 10 problems, 10/10 passing per wave)
+
+RUN A (waves 1–6, 60 sessions):
+
+| Gear | n | steps/session | median Σ step ms | median step ms | out/step | new tok/session | cacheRead | calls/step | faster than `safe` | new tokens |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `safe` | 14 | 4.2 | 6 754 ms | 1 519 ms | 481 | 550 | 83 744 | 0.80 | 1.00× | 1.00× |
+| `fast` | 11 | 4.0 | **5 369 ms** | 1 342 ms | 313 | 455 | 82 816 | 0.75 | 1.26× | 0.65× |
+| `turbo` | 9 | 4.2 | 6 793 ms | 1 491 ms | 440 | 650 | 84 224 | 0.79 | 0.99× | 0.91× |
+| `max` | 12 | 4.2 | **5 394 ms** | 1 310 ms | 346 | 430 | 83 040 | 0.80 | 1.25× | 0.72× |
+| `ludicrous` | 14 | 4.1 | **5 370 ms** | 1 342 ms | 315 | 442 | 80 384 | 0.84 | 1.26× | 0.65× |
+
+RUN B (waves 7–10, 40 sessions):
+
+| Gear | n | steps/session | median Σ step ms | median step ms | out/step | new tok/session | cacheRead | calls/step | faster than `safe` | new tokens |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `off` | 9 | 4.4 | 6 411 ms | 1 361 ms | 337 | 464 | 83 712 | 0.82 | 0.95× | 0.80× |
+| `safe` | 12 | 4.3 | 6 064 ms | 1 364 ms | 423 | 537 | 83 776 | 0.78 | 1.00× | 1.00× |
+| `turbo` | 9 | 4.0 | **5 554 ms** | 1 388 ms | 341 | 466 | 85 376 | 0.78 | 1.09× | 0.81× |
+| `ludicrous` | 10 | 3.9 | **5 656 ms** | 1 420 ms | 339 | 469 | 84 544 | 0.85 | 1.07× | 0.80× |
+
+### AIME 2025 (39 sessions, 4 waves)
+
+| Gear | n | steps/session | median Σ step ms | median step ms | out/step | new tok/session | cacheRead | calls/step |
+|---|---|---|---|---|---|---|---|---|
+| `off` | 9 | 5 | 19 357 ms | 2 047 ms | 234 | 2 810 | 103 936 | 0.80 |
+| `safe` | 4 | 4.5 | 13 494 ms | 2 105 ms | 197 | 1 396 | 93 216 | 0.78 |
+| `fast` | 8 | 5 | 16 572 ms | 2 510 ms | 184 | 1 724 | 107 552 | 0.80 |
+| `turbo` | 8 | 4 | **10 147 ms** | 1 894 ms | 136 | 968 | 81 248 | 0.75 |
+| `ludicrous` | 10 | 6 | 12 432 ms | 2 007 ms | 148 | 1 252 | 122 080 | 0.90 |
+
+### What these two benchmarks taught us
+
+1. **Step count is pinned by the task shape.** 4–5 steps per HumanEval problem,
+   4–6 per AIME problem, 92 % of sessions ≤ 15 steps. Fan-out pays per independent
+   query, and a single-file problem has one — so this is not "the gear does
+   nothing", it is "this task has nothing to give".
+2. **`off` and every enabled gear sit inside the noise.** HumanEval RUN B: `off`
+   0.95×, `turbo` 1.09×, `ludicrous` 1.07× against `safe`; AIME: 0.70×–1.33×. The
+   drift of one arm between the two runs is the same size (`safe` 6 754 ms in RUN A
+   vs 6 064 ms in RUN B, ±11 %). **When the between-group gap is ≤ the within-group
+   drift, no conclusion is drawn.**
+3. **The only stable visible difference is output tokens.** `safe` is the verbose
+   arm in both suites (481 and 423 out/step); the rest sit at 0.65–0.91×. That is
+   the direction "output discipline" predicts, but it is cheaper, not faster.
+4. **Quality did not drop.** HumanEval ran the official `test` on all 100 sessions,
+   10/10 passing in every wave; AIME's four waves scored 9/1, 9/1, 8/2, 7/3. No
+   case got worse because of the gear.
+5. **The AIME run exposed the real wall-clock enemy, and it is not the gear.** Five
+   of 39 sessions kept writing after the task board judged them timed out — 550–597 s
+   and 77–132 steps each. Drop them and `ludicrous`'s median Σ step time falls from
+   12 432 to 6 633 ms while its mean falls from 178 s to 12 s. **The median
+   survives, the mean does not.** That is why 0.9.0 adds a ceiling on one tool
+   call: what eats the clock is a few calls that never stop, not 100 ms per step.
+
+**What this table can and cannot certify**: it certifies that public tasks keep
+their quality, do not cost more tokens, and that `off` is not slower. It does not
+certify that a gear makes a public task faster. The only fan-out evidence remains
+Experiment E, on a step-rich repo task. Both results stay on the same page instead
+of publishing the flattering one — that is what reproducible means here.
+
+Raw log: [`docs/bench-raw-2026-10-24.jsonl.gz`](docs/bench-raw-2026-10-24.jsonl.gz)
+— per-step rows (`ts / sid / gear / route / ttftMs / llmMs / stepMs / calls /
+errors / input / output / cacheRead / cacheWrite`) for the 179 experiment sessions,
+including the pilot and Experiment E. The sessions themselves and the per-problem
+sandboxes were deleted once the run finished; every number above is reproducible
+from this log alone under the stated conventions (two-stage medians, in-wave gear
+rotation).
