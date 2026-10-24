@@ -166,7 +166,8 @@ test('a notice is a frozen plugin message, not something the user said', () => {
 
   assert.equal(first.role, 'user')
   assert.deepEqual(first.source.kind, PLUGIN_SOURCE.kind)
-  assert.equal(first.source.plugin, 'fast-mode')
+  assert.equal(first.source.kind, 'plugin:fast-mode')
+  assert.equal(Object.hasOwn(first.source, 'plugin'), false, 'the retired v4 source field is gone')
   assert.equal(first.source.form, 'notice')
   assert.ok(typeof first.source.summary === 'string' && first.source.summary.length > 0)
   assert.notEqual(first.id, second.id, 'every notice is its own message')

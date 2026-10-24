@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.1
+
+**Upgrade if you installed 0.9.0.** Its post-compaction reminder could fail a
+whole turn. Nothing else changed.
+
+- **The fix.** The two notices were built with `source: { kind: 'plugin', plugin: 'fast-mode' }`,
+  the pre-v4 shape. DSH's v4 session encoder refuses that pair —
+  `SessionFormatError: format v4 message requires a producer-owned source kind`
+  (`@deepseek-ai/dsh-session-format-v3-to-v4`, `assertV4MessageSources`) — and it
+  refuses it while persisting the event, outside the `agent/pre-step` handler
+  that built the message, so the failure landed on the turn rather than on the
+  notice. A conversation that compacted and then resumed died at the first step
+  after the checkpoint. The source is now `{ kind: 'plugin:fast-mode' }`, which is
+  also the kind v3→v4 migration derives for rows written by older versions, so
+  old transcripts read back under one shape.
+- **Why it cannot come back quietly.** `createNoticeMessage` now validates its
+  source against the mirrored v4 rule before returning, and throws *there* — the
+  caller's `try/catch` then drops the notice and the step proceeds, which is the
+  failure mode this plugin is allowed to have. `isProducerOwnedSource` mirrors
+  the encoder's rule, and `test/notices.test.js` pins it: the retired
+  `{ kind: 'plugin', plugin }` shape must be refused, `plugin:fast-mode` accepted,
+  no leftover `plugin` field. Verified against the released codec extracted from
+  `app.asar`: both notices encode, both retired shapes throw the exact error above.
+- **Existing sessions are unaffected.** The bad row was only ever written by the
+  v4 encoder, which refused it, so nothing was persisted. v0-format sessions under
+  `--private-tmp--` that still carry `kind: "plugin"` rows go through the
+  documented v3→v4 migration, which rewrites them to `plugin:<name>`.
+
 ## 0.9.0
 
 Tool wait is the third lever, and the panel stops claiming measurements it never
@@ -35,10 +63,6 @@ made.
   tasks every enabled gear lands within noise of `safe` — so the multipliers are
   labelled as estimates while the stall ceiling is quoted straight from the
   host-side table for the selected gear.
-- **The five gears have names now: Eco / Cruise / Sport / Track / Redline.** The
-  ids are unchanged (`safe` / `fast` / `turbo` / `max` / `ludicrous`), so existing
-  patches, settings and experiment files keep working — only the labels moved.
-
 - **The five gears have names now: Eco / Cruise / Sport / Track / Redline.** The
   ids are unchanged (`safe` / `fast` / `turbo` / `max` / `ludicrous`), so existing
   patches, settings and experiment files keep working — only the labels moved.
