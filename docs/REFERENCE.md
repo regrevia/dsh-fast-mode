@@ -1,237 +1,188 @@
 # 参考手册：原理、配置与边界
 
-README 只留结论。这里放细节：每一步怎么判定、每个字段是什么、和谁共存、
-哪些数字还不能信。内容与插件版本同步维护。
+本手册描述 **dsh-fast-mode 1.0.0** 的实际行为，对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+
+**唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
+
+快的部分只来自三件事：更少的往返、更少的过程文字、更少的卡顿等待。下面逐条说明。
 
 ## 交互细节：闪电开关与会话归属
 
-> 面向使用者的简短说明见 [README](../README.md)。
-
-从 0.5.0 起这个插件是 **opt-in**：装好之后它什么都不做，直到你明确打开它。两个入口写的是同一份配置，但粒度不同：闪电写的是**当前这个会话**的开关（顺带把共享默认值更新成这次的选择），patch 写的是共享默认值。
-
-| 入口 | 操作 | 适合 |
-|---|---|---|
-| **对话框里的闪电**（新） | 模型选择器右边一枚闪电按钮：空心 = 关闭，实心黑色 = 开启；点它打开面板，开关在面板里 | 日常 |
-| **patch** | `cordis.patch.yml` 里写 `enabled: true` | 用配置管理 profile |
-
-两处都走 `settings/update`（`applies: live`），所以点完**下一次模型调用**就生效，不用重启。第一次装（或刚升级到带客户端半的版本）要重载一次页面 / 重启应用，让客户端 bundle 加载出来。
-
-**档位也在闪电上**（设置页里没有）：点闪电打开面板，面板里从上到下是开关、一行 `仅本会话生效`、五档档位和一行小字。开关和档位都作用于**打开面板的那个会话**；每档都标着它的倍率，选完立刻写入。**入口只有一个，而且一定是能用的那一个**：
-
-| 档位 | 名字 | 预估速度 | 预估 token | 并行目标 |
-|---|---|---|---|---|
-| 1 | Eco `safe` | ~1.0× | ~1.0× | 2 |
-| 2 | Cruise `fast`（默认） | ~1.3× | ~1.2× | 4 |
-| 3 | Sport `turbo` | ~1.6× | ~1.5× | 6 |
-| 4 | Track `max` | ~2.2× | ~1.9× | 8 |
-| 5 | Redline `ludicrous` * | ~3.4× | ~1.3× | 8 |
-
-第 5 档带星号：它是唯一允许把思考档压到 `off` 的档位，所以面板脚注只写这一句 —— `* 关闭思考，质量会下降`。
-
-两列倍数**不是实测值，是由延迟模型推出来的预测**：`墙钟 ≈ 720 ms × 步数 + 6.63 ms × 输出 token`（689 步的最小二乘，R² = 0.93），倍数是"这一步的独立查询有 n 条时，并行把它们并成一批"的推算；倍数只对"一步里有多个互不依赖的动作"的任务成立。真实测量在 [BENCHMARK.md](../BENCHMARK.md)：步骤被钉死的公开题上五档落在噪声里（0.95×–1.09×），而步骤多的仓库任务上 `turbo` 是 1.65× 墙钟、−40 % token（n=4 vs n=12，U 检验 p≈0.004）。同一份原始日志里 `calls/step` 的中位数在所有档位都是 1.00 —— 单文件题根本不给并行机会，这是"预测"和"实测"差在哪的确切位置。第 5 档 token 倍数反而低于第 3 档，就是因为它关掉思考、而第 3 档还留着 `low`。
-
-闪电的读法：
-
-- **空心灰** = 关闭（默认，插件完全不干预）；
-- **实心黑** = 开启，hover 提示里带当前档位；
-- **点一下打开面板，不直接切换**：开关在面板里，所以不会误触把一整轮变快；五档和那句小字也在同一个面板里，选了什么、代价是什么放在一处；
-- **点了一定有反应**：读不到配置（只读层 / 本 profile 没装这个条目 / 桥接还没连上）时按钮**不会灰掉**，而是打开面板把原因写在状态行里。0.5.1 那版把按钮设成 `disabled`，Chrome 对 disabled 按钮不显示 `title`，于是既不提示也点不动 —— 这个坑在 0.5.2 里用三条独立防线堵掉了（解包 `{ok, value}` 信封、每次远程调用带超时、永不 disabled）。
-
-这四个字段（`enabled` / `gear` / `parallel` / `sessions`）都声明了 `.volatile()`：`settings` 只会把 volatile 字段投影出来，也只允许改 volatile 字段（否则 `describe` 里整个条目直接消失、`update` 报 `is not volatile`）。代价是这些字段传到插件里是**引用**而不是值——Loader 靠原地替换引用来让改动落到正在运行的 fiber 上，插件侧在 `resolveConfig` 一处统一解引用。其中 `sessions` 由客户端半自动维护，不是给人调的旋钮（见[每个会话自己的开关](#每个会话自己的开关)）。
-
-它注册在 `conversation.input.activity`（模型选择器右侧、停止按钮左侧），**不占用** `conversation.input.model`，所以永远不会遮住宿主自己的模型选择器。面板里的每次写入都是乐观更新 + 回读校验：写失败会把图标退回原状，并在提示和面板状态行里给出错误原因。
-
-开启后的默认档位是 `fast`（档位 2），也就是上面三件事全开；想完全回到 v0.3.0 那种"不注入任何提示、只在干净连击后降档"的静默行为，用 `gear: safe`。
+- **一个图标，没有下拉。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点击打开面板。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
+- **面板只回答一个问题：这个会话开不开。** 宽 196 px，内容是一个标题、一个开关、一行作用域说明"仅本会话生效"、一行实时调度状态、两行小字（思考强度不变；更快来自什么）。
+- **实时行引用的是被执行的数字**，而不是产品形容词：
+  - 开启、看门狗有上限：`自动调度 · 并行 2–8 · 单次调用 ≤ 2 分`
+  - 开启、看门狗关闭（`stallGuard: false`，或 `toolTimeoutMs` 为负数）：`自动调度 · 并行 2–8 · 单次调用不限时`
+  - 关闭：`已关闭 · 完全回到原生行为`
+- **面板只能引用它读得到的配置。** 它从 `settings/describe` 读 `stallGuard` 与 `toolTimeoutMs`，有显式正数就引用它，否则用 `auto` 的起点 120 秒。它看不到实验分配带来的按会话 override（那发生在 host 的请求路径里），也看不到调度器为这个会话算出的当前宽度——宽度是 host 端按步变化的内部状态。所以实时行写的是 2–8 的区间，而不是"此刻 6 路"。
+- **写路径。** 点开关会用一次 `settings/update` 同时提交 `enabled`、`gear`、`sessions` 三个字段，并带上它读到的 `revision`；先乐观更新，再在短时间内轮询确认。被拒绝（revision 过期、profile 只读）就整体回滚并显示原因，按钮不会卡死；读取失败显示错误，点击可重试。写入的 `gear` 永远是常量 `auto`。
 
 ## 怎么做的
 
-### 一、判断这一步要不要深度思考
+### 一、不变的部分：模型、供应商、思考强度
 
-`tools/pre-execute` / `tools/post-execute` 是纯观察者（永远转发拿到的决策，不可能改工具结果）。插件据此判断"这一步顺不顺"：
+1.0.0 把整套"降档"机制**删掉了，而不是关掉了**：`floor`、`ladder`、`aliases`、`deepAfter`、按步降档的阶梯、`ludicrous → off` 的特殊行为，以及按错误/延迟自选 effort 的启发式，都随代码一起消失。在配置里继续写这些字段不会报错（schemastery 会原样保留未声明的键），但**没有任何效果**。
 
-| 信号 | 含义 |
-|---|---|
-| `isError` | 出错了 → 需要想 |
-| `slowMs`（默认 5000） | 卡在 I/O → 问题不在思考，保住思考没用但也不该更省 |
-| `bigChars`（默认 20000） | 结果很大 → 需要消化 |
-| 同参数重复调用 ≥ 2 次 | 在原地打转 |
-| 命中 `holdTools` | 压缩/接管类工具，它的下一步不能省 |
+请求钩子的完整逻辑是：
 
-规则很短：
+1. `const resolved = await next()`；
+2. 读 `resolved.reasoningEffort`、路由名，写进测量标签；
+3. `return resolved`。
 
-- 规划步（`step < 2`）不动；
-- 连续干净调用 ≥ `deepAfter` → 降一档；再连续干净 → 允许第二档；
-- 任何一个挣扎信号 → **立刻**回到解析后的原始档位（只降不上调，原档就是上限）；
-- 不知道当前路由有哪些档位 → 什么都不做。
+它不写 `reasoningEffort`，不写 thinking 预算，不换模型，也不添加任何 provider 专用字段。因此"更快"只剩下三个真实杠杆：并行扇出（减少往返）、输出纪律（减少过程文字）、卡顿看门狗（减少工具等待）。思考深度和解码速度不在其中——前者是用户的契约，后者任何提示词都做不到。
 
-### 二、只发这条路由真声明过的档位
+### 二、自适应调度器：`gear: auto`
 
-这是"完美支持官方 API"的关键，也是它和那些硬编码 `reasoning_effort: "low"` 的脚本的根本区别：DSH 在发请求**之前**会校验档位 id，猜一个不存在的 id 会让整次模型调用失败，而不是被忽略。所以插件先问，再动手。
+`auto` 是 1.0.0 唯一面向用户的档位。它按会话自己的历史，每步重新决定两件事：下一步允许并行几个工具调用，以及单次工具调用最多等多久。
 
-官方路由（`@deepseek-ai/dsh-llm-deepseek`，从代码里读出，不靠猜）：
+常量都在 `src/auto.js` 的 `AUTO_LIMITS` 里：
 
-| 项 | 值 |
-|---|---|
-| provider id | `deepseek-official`（由 `@deepseek-ai/dsh-llm-deepseek-api-key` 提供） |
-| base URL | `https://api.deepseek.com/anthropic`（Anthropic Messages 线上协议） |
-| 声明的档位 | `off` / `low` / `high` / `max`，默认 `high` |
-| 线上字段 | `thinking: { type: "disabled" \| "enabled" }` + `output_config.effort` |
-| 插件能做的降档 | `high → low`（16384 → 2048 thinking tokens）；`off` 在 floor 之下，不会被选中 |
-| 想让它彻底安静 | `floor: high`（插件变成纯观察者） |
+| 名字 | 值 | 含义 |
+|---|---|---|
+| `parallelMin` / `parallelBase` / `parallelMax` | 2 / 4 / 8 | 并行宽度下界、起点、上界 |
+| `widenAfterSteps` | 2 | 进入"按表现调宽度"的步数门槛 |
+| `stallFloorMs` / `stallCeilMs` | 120000 / 300000 | 看门狗预算的夹取区间（2–5 分钟） |
+| `stallMultiplier` | 3 | 用最近延迟的 p90 乘 3 作为预算 |
+| `noProgressWarn` / `noProgressStop` | 6 / 12 | 连续无进展的提醒线、停止线 |
+| `turnStepBudget` | 30 | 累计步数达到后要求停下来汇报 |
+| `waitWindow` | 32 | 参与 p90 的最近调用数 |
+| `directiveCooldown` | 3 | 两条调度指令之间的最小步距 |
 
-自建 / 网关路由同理，只是档位链不同（例如本机 `company` 网关声明 `off/minimal/low/medium/high` 且都真实生效，降一档是 `high → medium`）。插件不假设任何词汇：路由声明什么，它就在什么上面挪；声明为空（`route=provider-none`）或问不到（`route=unknown`）时它完全不动。
+宽度按下面的顺序算，命中即停：
 
-### 三、用 token 换时间：三个杠杆
+1. 连续无进展 ≥ 3 步，或者错误数 ≥ 3：**2**；
+2. 否则，步数 ≥ 2 且上一步发起了 ≥ 2 个调用：**8**；
+3. 否则，步数 ≥ 2：**6**；
+4. 否则（最初的一两步）：**4**。
 
-一句话：**这个插件不省 token，它花 token 买时间。** 花在三个地方，第三个是 0.8.0 新加的，也是实测收益最大的一个。
+"无进展"的判定是可见的，不是语义的：同一组（工具名, 参数）再次出现，返回字符数与上次相同，且上次没有报错，就算一次无进展；新签名、上次失败这次成功、返回大小变化，都算进展。这样同一命令的成功重跑不会被当成新信息。
 
-| 杠杆 | 怎么做 | 为什么快 | 谁在付钱 |
-|---|---|---|---|
-| **1. 步更宽** | 档位给出每步并行目标（4/6/8/8），提示模型把互不依赖的调用放进同一条 assistant message | 同一 message 里的调用被 harness **并发**调度（受 `agentLoop.maxParallelToolCalls` 限制，默认 10，且只并发声明为安全的调用），N 个读从 N 次往返压成 1 次 | 输入 token：一步带更多工具结果 |
-| **2. 投机预读** | 档位 ≥ `turbo` 时追加一句：证据已经暗示下一步要读哪个文件，就**在同一批里读掉** | 多读一个用不上的文件只要几百输入 token，多一次往返要一整个步（≈0.7 s 固定开销 + prefill） | 输入 token：偶尔白读 |
-| **3. 少写过程** | 提示模型别在工具调用前后叙述、别复述文件内容、别在步末写"已完成"的进度报告 | 这条路由上每步耗时 ≈ `720 ms + 6.6 ms × 输出 token`（R²=0.93），**可见文字就是最大单项成本** | 输出 token：答案只写结论 |
+看门狗预算：取最近 32 次工具调用时长的 p90，乘以 3，夹在 120–300 秒之间。还没有样本时 p90 为 0，夹取后就是起点 120 秒，随会话变慢而放宽、变快而收紧。
 
-三个杠杆都只动一个东西：**同一条路由的请求里多花些 token**。没有一项依赖"降低模型能力"，也没有一项靠调低 effort —— 在这条自建路由上 reasoning token 是 0，调低 effort 一分钱也省不下来（实测见 [BENCHMARK.md](../BENCHMARK.md)）。
+调度指令：连续无进展达到 6 步发一条"换个做法"；达到 12 步，或累计步数达到 30，发一条"停下来汇报"。两条指令之间至少隔 3 步。指令以 producer-owned notice 的形式插进消息列表（source 是 `plugin:fast-mode`），模型读得到，会话记录里也看得到。
 
-第三条默认开启，可以用 `outputDiscipline: false` 关掉（只保留并行与预读提示，不动文风）。`fast` 用轻量版（三条禁令），`turbo` 及以上用完整版（再加一条"这一步不需要文字就别写"）。`safe` 什么都不注入。
+计数口径：`turnSteps` 按轮计数。`index.js` 在 `session/event` 的 `turn/start` 上调用 `noteTurn` 清零每轮计数，会话级的"试过什么、卡了多久"记忆则保留——这正是卡住时循环要重读的东西。所以 30 步的停止线是**每轮** 30 步，不是整段会话的总预算。
 
-并行提示同时守住四条不许破的规则：只并行**互不依赖**的调用、读与写不放进同一批、批里失败就缩回小步、绝不为了省 token 把步重新切窄。并行目标只是目标：如果 profile 把调度上限压得比档位目标还低，插件会打一条 warn 告诉你在 `cordis.patch.yml` 里改哪一行。
+### 三、提示词引导：`fast-mode:execution-speed`
 
-### 四、开关状态跟着会话走
+提示段的名字与顺序是固定的：`fast-mode:execution-speed`，`order: 520`，紧挨着计划策略和其他跨领域执行引导。它按请求渲染，内容随会话的实时宽度变化：
 
-`settings` 服务只有一个作用域（整个 profile），表达不了"这个会话开没开"，所以会话条目放在插件自己的 `sessions` 字段里，host 每次请求按会话 id 解析一次（实验分配 > 会话条目 > 共享默认，见[每个会话自己的开关](#每个会话自己的开关)）。客户端半怎么知道自己在哪个会话：`conversation.input.activity` 是 session 作用域的 slot，slot kit 调 `inject` 时会把绑定键（会话 id）作为第一个参数传进来，客户端半拿它当 `chatId` prop；同时它也接受标准的 `sessionId` prop，两种拼写都认，否则某个版本停止注入其中之一就会退回全局行为。列格式的 host 版在 `src/state.js`，浏览器版在 `client.js` 里另存一份（bundle 不能 import host ESM），两边由同一组夹具钉住。
+- 关闭，或宽度 ≤ 1：整段不注册（渲染成空字符串被丢弃）；
+- 开启且宽度 > 1：依次是批量规则、扇出目标、可选的预取、有界的调用方式、输出纪律。
 
-### 五、卡顿看门狗：工具等待也有上限
+几个值得注意的细节：
 
-一步的墙钟不只有往返和可见输出，还有**工具等待**：一条没有上限的前台调用就能吃掉几分钟（起服务、`tail` 日志、等一个永远不会来的输入，或者一个 heredoc 死成畸形响应），而模型往往原样再发一遍 —— 这段时间落在 `720 ms + 6.6 ms × token` 这套模型看不见的残差里，是纯亏损。所以 0.8.1 加了一条不花 token 的杠杆：给单次工具调用设上限。
+- **扇出目标里的数字就是调度器算出的宽度。** `auto` 下提示段和看门狗共用同一个 `autoSchedule` 结果，所以模型读到的数字和被执行的数字不会漂移。
+- **预取只在宽度 ≥ 4 时出现。** 宽度不够时多取一个调用只会挤占别的工作。
+- **有界调用那一段只在 `stallGuard !== false` 时出现**，因为它描述的规则和看门狗是一套东西。
+- **输出纪律有两档**：`light` 给旧档位 `fast` 用，`full` 给 `auto`/`turbo`/`max`/`ludicrous` 用。两档只裁剪过程叙述——不预告调用、不复述结果、不写进度报告；最后一步的答案仍然要完整写出。`full` 只多一句"不需要文字时只发调用"。**它不会让答案变短，更不会让模型跳过检查。**
+- **`parallel: 1` 是"开着但不要求扇出"的正式写法**：开关仍然生效于看门狗，提示段整体消失。
 
-**机制**：本插件注册 harness 的 `tools/execute` 钩子，把每个受保护的调用和一个按档位的上限赛跑。到期就 abort 这次调用自己的 signal，等一小段宽限期让调用体收尾，再把调用方原来的 signal 还回去，最后返回一个 `ToolExecutionFailure`，其正文告诉模型**换个做法重试**（收窄命令、写进文件用 `script_path`、改成后台任务），而不是再发一遍同样的命令。
+成本是明码标价的：`auto` 下这一段约 2.7 千字符，每个请求都要付这部分输入 token。这是有意的交换——用输入 token 换更少的往返。
 
-**保护谁**：shell / 脚本 / 监控类工具（按名字匹配）。**不保护谁**：本来就该等的调用 —— `ask_user_question`、`wait_agent`、`job_output`、`task_board_run`、`workflow`、`subagent*`、`run_code` —— 以及本来就不会卡住的 `read` / `write` / `edit`。`safe` 档不设看门狗：它的承诺就是什么都不改。
+### 四、卡顿看门狗：单次调用的天花板
 
-| 档位 | 单次工具调用上限 |
-|---|---|
-| Eco `safe` | 关闭 |
-| Cruise `fast` | 300 s |
-| Sport `turbo` | 180 s |
-| Track `max` | 120 s |
-| Redline `ludicrous` | 90 s |
+它挂在 `tools/execute` 这个 waterfall 上，遵守文档允许的唯一改法：只替换 `exec.signal`，让调用体与一个计时器赛跑，超时就 abort 并把失败结果交还给模型；取消时留 250 ms 宽限，让工具自己收尾；无论结果如何，调用方原来的 signal 都会在 `finally` 里恢复。
 
-这些是**策略预算，不是测量结果**：档位越高，允许一次调用占用的时间越少。
+它只作用于 **shell / 脚本类**工具（名字匹配 `bash|shell|sh|zsh|exec|pwsh|powershell|cmd|script|monitor|terminal`）。问用户、等后台任务、等子代理这类"本来就要等"的工具被显式豁免：`ask_user_question`、`wait_agent`、`job_output`、`job_list`、`task_board_run`、`workflow`、`subagent`、`subagent_fork`、`run_code`。
 
-配置（composition 层，设置页里没有）：`stallGuard: false` 整个关掉；`toolTimeoutMs` 覆盖上表（正数 = 所有档位都用这个毫秒数，负数 = 关闭看门狗，`0` = 按档位）。
+预算优先级从高到低：
 
-提示词那一半也同步了：引导段现在会要求模型给 shell 调用设边界、把服务 / watcher 放后台、长命令或带引号的多行命令先写进文件再用 `script_path` 传，而不是塞 heredoc。
+1. `stallGuard: false` → 0（完全不看门狗）；
+2. `toolTimeoutMs < 0` → 0（同上，用数值表达）；
+3. `toolTimeoutMs > 0` → 这个固定值，所有档位一致；
+4. 否则按档位表取初始值：
+
+   | 档位 | 初始上限 |
+   |---|---|
+   | `safe` | 0（不看门狗） |
+   | `auto` | 120 秒，随后由调度器接管 |
+   | `turbo` | 180 秒 |
+   | `max` | 120 秒 |
+   | `ludicrous` | 90 秒 |
+   | `fast` | 300 秒 |
+   | 未知名 | 300 秒 |
+
+5. 在 `auto` 下，如果初始值非 0 且没有显式 `toolTimeoutMs`，就用调度器按最近 p90 算出的实时预算覆盖上表。
+
+被取消时返回的是正常的工具失败结果（`isError: true`），正文告诉模型"这次调用跑了 N 秒被取消了"，并给三条具体建议：把服务/监听放到后台、把长命令写进文件再执行、把全量扫描收窄成一次窄探测。最后一句明确：不要原样重发同一条命令，它还会被取消。
+
+### 五、开关状态跟着会话走
+
+状态分两层，都在配置的同一个 `sessions` 列里：
+
+- **共享字段 `enabled` / `gear`** 是默认值，也是最近一次选择。新会话没有自己的条目时沿用它。
+- **`sessions` 列**是每个会话自己的条目：`{"<sessionId>": {"enabled": true, "gear": "auto", "ts": 1730000000000}}`。读取时逐字段优先于共享字段；写入时两者在同一次 patch 里更新，所以不会出现"开关已经切了、档位还没跟上"的中间态。
+
+上限是 200 个会话，超出时淘汰 `ts` 最旧的条目——这是内存与配置文件体积的边界，不是权限模型。host 端的实现（`src/state.js`）和浏览器里的副本（`client.js`）是两份代码，测试用同一组 fixture 锁住它们的读写一致。
 
 ## 配置
 
+放在 profile 的 `cordis.patch.yml` 里：
+
 ```yaml
 - id: fast-mode
-  name: dsh-fast-mode
   config:
-    enabled: true              # 共享默认开关，默认 false；没有自己条目的会话沿用它
-    gear: fast                 # safe / fast / turbo / max / ludicrous（默认 fast）
-    parallel: 4                # 可选：覆盖档位给的并行目标（只影响提示词里的数字与告警）
-    outputDiscipline: true     # 少写过程、只写结论；false = 只保留并行/预读提示，不动文风
-    stallGuard: true           # 卡顿看门狗：给 shell 类工具按档位设单次上限；false = 关闭
-    toolTimeoutMs: 0           # 覆盖档位上限：正数 = 所有档位用这个毫秒数，负数 = 关闭，0 = 按档位
-    floor: low                 # 永不选比它更便宜的档位
-    deepAfter: 4               # 连续干净几次后允许第二档降幅（默认随档位）
-    slowMs: 5000               # 慢到这个程度即保住思考
-    bigChars: 20000            # 结果达到这个体积即保住思考
-    window: 6                  # 参考最近几次调用（默认随档位）
-    escalateAfterStep: 0       # 一轮超过 N 步后恢复完整思考；0 关闭
-    holdTools: [compress, "acp_*"]   # 这些工具之后的下一步保住完整思考
-    ladder: [off, low, high, max]    # 可选：写死档位链，跳过发现
-    aliases: auto              # auto | false | { "<声明 id>": "<生效 id>" }
-    discoverTimeoutMs: 250     # 等路由声明多久，等不到就不带它决策
-    baselineFromDefault: true  # 没解析出档位时，以路由默认档位为基准往下降
-    metrics: true              # 每步一行测量，默认开
-    metricsFile: ~/.dsh/fast-mode-metrics.jsonl
-    benchmarkFile: ~/.dsh/fast-mode-bench.json
-    reassertAfterCompaction: true   # 上下文被压缩后补一条极短提醒，重申两条调用规则
-    debug: false
-    debugFile: ""
+    enabled: true
+    gear: auto
+    # parallel: 4            # 可选：初始并行目标，auto 会随后续步骤调整
+    # outputDiscipline: true
+    # stallGuard: true
+    # toolTimeoutMs: 0
+    # reassertAfterCompaction: true
+    # metrics: true
 ```
 
-| 字段 | 默认 | 含义 |
+`enabled`、`gear`、`parallel`、`sessions` 四个字段是 `.volatile()`：它们会出现在 Web UI 的插件页表单里，并且修改能直接作用到运行中的 fiber。其余字段是组合级的排障开关，只在 patch 里生效，不占表单。
+
+| 字段 | 默认值 | 说明 |
 |---|---|---|
-| `enabled` | `false` | 共享默认开关，也是没有自己条目的会话沿用的值；闪电写的是当前会话的条目，同时把这个字段更新成上次的选择。只有 `true` 才会干预请求 |
-| `gear` | `fast` | 档位，只能是 `safe`/`fast`/`turbo`/`max`/`ludicrous`；写数字或写错都是加载时报错。没有自己条目的会话沿用它 |
-| `parallel` | 随档位（4/6/8） | 注入提示里的并行目标；`1` 等于不注入。设置页里**留空**就是跟随档位——所以它故意没有默认值，给了默认值档位就再也抬不动它了 |
-| `sessions` | `""` | 会话级覆盖，插件自动维护（**别手改**）：`{"<sessionId>":{"enabled":true,"gear":"turbo","ts":…}}`；超过 200 条按 `ts` 丢最旧的，被丢的会话回到共享默认。volatile；设置页里是一个文本框 |
-| `outputDiscipline` | `true` | 让模型少写过程（不叙述工具调用、不复述文件内容、不写进度报告），只写结论。这是"用 token 换时间"里最有效的杠杆：实测每步输出从 640 降到 190 token，墙钟约 −⅓。`false` 保留并行与预读提示，只关掉文风约束。**非 volatile**，改它要重新加载 |
-| `stallGuard` | `true` | 卡顿看门狗：给 shell / 脚本类工具加一个按档位收紧的单次上限，超时取消这次调用，并把"换个做法重试"写回给模型（见[卡顿看门狗](#五卡顿看门狗工具等待也有上限)）。`safe` 档不设上限。**非 volatile**，改它要重新加载 |
-| `toolTimeoutMs` | `0` | 覆盖上表的档位上限：正数 = 所有档位都用这个毫秒数，负数 = 关闭看门狗，`0` = 按档位。同样**非 volatile** |
-| `floor` | `low` | 永不选比它更便宜的档位；官方路由上 `floor: high` 等于完全不降档 |
-| `deepAfter` | 随档位（6/4/3/2/1） | 连续干净调用几次后允许第二档降幅 |
-| `slowMs` | `5000` | 达到该耗时即保住思考 |
-| `bigChars` | `20000` | 结果达到该体积即保住思考 |
-| `window` | 随档位（8/6/5/4/4） | 参考的最近调用条数 |
-| `escalateAfterStep` | `0` | 很长的轮次恢复完整思考；`0` 关闭 |
-| `holdTools` | `[]` | 工具名或前缀（`acp_*`）列表；命中即视为"不常规工作"，下一步保住档位 |
-| `ladder` | — | 显式固定档位链（≥2 个 id） |
-| `aliases` | `auto` | 把文档化的兼容别名折叠到生效档位；`false` 关闭，给 map 则覆盖 |
-| `discoverTimeoutMs` | `250` | 等路由声明多久，等不到就不带它决策 |
-| `baselineFromDefault` | `true` | 没有已解析档位时，把路由的 `defaultEffort` 当作基准往下降 |
-| `metrics` | `true` | 每个完成的步写一行 JSONL；`false` 完全不写文件 |
-| `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | 测量文件路径。**composition 旋钮**：不在设置页出现，改它要动 `cordis.patch.yml` |
-| `benchmarkFile` | `~/.dsh/fast-mode-bench.json` | 按会话分配档位的实验文件，同样只在加载/每秒重读时用 |
-| `reassertAfterCompaction` | `true` | 上下文被压缩后，在下一次请求里补一条极短的 notice（`notice` 形式、`source: plugin`，UI 会折叠它），重申批量调用与有界调用两条规则 —— 压缩会把系统提示里的这段挤掉，而挤掉之后模型最容易退回一次一个调用。`false` 只是不再补这条消息，提示段本身照常注入。**非 volatile**，改它要重新加载 |
-| `debug` / `debugFile` | 关 / `""` | 每个请求一行日志，带上决策依据 |
+| `enabled` | `false` | 总开关。关闭时完全回到原生行为：不注入提示段、不看门狗、不换档。默认关闭是为了让"关掉就是关掉"可验证。 |
+| `gear` | `'auto'` | 调度方式。`auto` 是唯一面向用户的档位；`safe` 保留给实验脚本；`fast`/`turbo`/`max`/`ludicrous` 是旧的固定宽度，写在配置里会被解析成 `auto` 并打一条弃用日志。 |
+| `parallel` | 由档位推导，`auto` 下为 4 | 并行上限的初始值，1–8。`auto` 只把它当起点；设为 1 表示不注入批量提示段。 |
+| `sessions` | `''` | 插件自动维护的会话级覆盖，见上一节。**不要手改。** |
+| `outputDiscipline` | `true` | 是否注入输出纪律。关掉后仍然注入并行与有界调用规则，只是不干预文风。 |
+| `stallGuard` | `true` | 是否给单次 shell/脚本类调用加上限。`auto` 下预算在 2–5 分钟之间自适应。 |
+| `toolTimeoutMs` | `0` | 单次调用上限，单位毫秒。`0` = 自适应（见 `stallGuard`），负数 = 关闭看门狗，正数 = 所有档位统一用这个值。 |
+| `reassertAfterCompaction` | `true` | 上下文被压缩后的下一次请求，补一条极短 notice，重申批量与有界调用两条规则。提示段本身不受影响。 |
+| `metrics` | `true` | 是否写计量文件。关闭则不落任何文件。 |
+| `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | 计量文件路径，每步一行 JSONL。 |
+| `benchmarkFile` | `~/.dsh/fast-mode-bench.json` | 实验分配文件路径。文件不存在或 `enabled` 不为真时不启用分配。 |
 
-### 日志里的 `route=`
+关于旧名字：schema 仍然接受 `fast`、`turbo`、`max`、`ludicrous`（否则旧 patch 会加载失败），但用户配置里出现它们时，`resolveConfig` 会改成 `auto` 并在加载日志里警告"这个名字以前会降低思考强度，现在跑自动调度，强度保持不变"。实验脚本的按会话 override 是例外，它保留原样（见"按会话分配档位"）。
 
-`route=` 说明档位链从哪来：`provider`（运行时发现的）、`provider+aliases`（发现的链，并按文档别名放宽过）、`provider-none`（该路由声明为空）、`configured`（由 `ladder` 写死）、`builtin`（内置默认链）、`unknown`（问不到路由）。启动时 logger 还会为每条路由打印一次解析出的档位链与档位设置。
-
-如果每行都是 `high=>high`，按这个顺序查：步号有没有到 2（规划步按设计豁免）；是不是 `route=provider-none` 或 `unknown`（没配 `reasoningEfforts` 的路由没有档位可降）；当前档位是否已经等于你设的 `floor`。
+关于 `safe`：它是实验对照组，不是给用户选的档位。它声明了 `directive: false`，因此 `resolveConfig` 把宽度压到 1、提示段整段消失、看门狗预算为 0——也就是"插件在场但不干预"。
 
 ## 与压缩类插件共存的细节
 
-档位管的是**输出/思考**预算，压缩类插件管的是**输入/历史**预算，两个杠杆正交，叠起来是相乘的效果：
-
-| 层 | 例子 | 削什么 | 作用点 |
-|---|---|---|---|
-| 输出 / 思考 | **本插件** | 每步思考 token 与墙钟 | `agent/request` → `reasoningEffort` |
-| 输入 / 历史 | billion-context（ACP 代理）、内置 compaction、历史图片搬运 | prompt token、上下文压力 | 消息列表或 provider `baseURL`，在请求离开前 |
+本插件管的是**执行**：一次请求里能并行几个调用、模型写多少过程文字、单次调用等多久。压缩类插件管的是**输入历史**：消息列表多大、多少旧图片被搬走。两者作用在不同层，字段不重叠，可以叠加。
 
 三条规则让它们真的能一起用：
 
-1. **档位是个字段，不是一句话。** 代理重新序列化请求体时会保留 `thinking` / `output_config`；本插件在序列化**之前**写好这个字段，代理看到的只是一个普通请求。
-2. **压缩步骤可以被按住。** 上下文管理类调用从外面看往往很"干净"（快、结果小、不报错），正好是干净连击规则想降档的时刻 —— 用 `holdTools` 点名这些工具，让它们之后的下一步保住完整思考。
-3. **一个旋钮只有一个主人。** 不要让两个组件同时钳制 `reasoningEffort` / `output_config.effort`：第二个钳子不知道第一个为什么抬高。
+1. **不抢同一个字段。** 本插件不碰 `reasoningEffort`、`thinking`、`output_config`，所以没有任何"两个组件同时钳制 effort"的问题。
+2. **压缩步骤不需要特殊照顾。** 1.0.0 没有"按住某一步"的概念；历史折叠发生在请求发出之前，本插件看到的只是一个普通请求。
+3. **摘要调用碰不到。** 压缩器自己的摘要请求往往跑在它自己的进程或 HTTP 层里，不经过 `agent/request`，本插件既不影响它，也不被它影响。
 
 ### billion-context
 
-**兼容且互补。** billion-context 以 DSH bundle（`bili-native`）安装，关掉宿主平面 `compaction-basic` 的 auto，并通过 patch HTTP 层拦截模型流量（`globalThis.fetch`），不走 `agent/request`，也不读写 `reasoningEffort`，所以它不可能悄悄推翻本插件的决定。
+**兼容且互补。** billion-context 以 DSH bundle（`bili-native`）安装，关掉宿主平面 `compaction-basic` 的 auto，并通过 patch HTTP 层拦截模型流量（`globalThis.fetch`），不走 `agent/request`，也不读写 `reasoningEffort`。它和本插件没有共享字段，不需要为对方改配置。
 
-两个都是**可选**的注意事项：
+唯一值得看一眼的是它自己的 `compress.outputSteering.effortRouting`：那个开关会在"机械延续"的轮次把 effort 往低压。它不再是本插件的竞争对手（本插件根本不碰 effort），但它会破坏"强度保持你选的那档"这个承诺。如果你在意这个承诺，把它关掉：
 
-1. `compress.outputSteering` 默认关闭；一旦开启，它内含的 `effortRouting` 会在"机械延续"的轮次把 effort 往最低压（Anthropic 上同时改 `output_config.effort` 和 `thinking.budget_tokens`）。那正是本插件拥有的旋钮，而且它看不到错误、慢调用与显式 hold。选一个主人：
-
-   ```yaml
-   - id: bili-native
-     config:
-       compress:
-         outputSteering:
-           enabled: true
-           effortRouting: false    # 让 fast-mode 独占 effort
-   ```
-
-2. 把它的工具加进 `holdTools`，让"折叠历史"这一步本身不会被降档：
-
-   ```yaml
-   - id: fast-mode
-     config:
-       gear: fast
-       holdTools: [compress, decompress, search_context, acp_status, acp_retrieve, "acp_delegate*"]
-   ```
+```yaml
+- id: bili-native
+  config:
+    compress:
+      outputSteering:
+        enabled: true
+        effortRouting: false    # 强度由用户选择，不由压缩器改写
+```
 
 另外两点是事实，不是建议：billion-context 自己的摘要调用跑在它的代理进程里，不经过 harness，本插件碰不到；它会关掉 `compaction-basic` 的自动压缩，所以**别再叠第二个压缩器**。
 
 ### 历史图片自动压缩 / 网关适配插件
 
-`image-guard`、`intellif-litellm-adapter` 这类插件修的是另一种失败：在请求发出前重写消息列表（搬走老图片、强制再压一轮、重试 `too_many_images` 的 400），以便穿过网关的图片数量 / 像素 / 上下文上限。它们和本插件不共享任何字段，不需要改配置；想让它们的重试步保住思考，也可以把相应的 offload / compaction 工具名放进 `holdTools`。
+`image-guard`、`intellif-litellm-adapter` 这类插件修的是另一种失败：在请求发出前重写消息列表（搬走老图片、强制再压一轮、重试 `too_many_images` 的 400），以便穿过网关的图片数量 / 像素 / 上下文上限。它们和本插件不共享任何字段，不需要改配置，也不需要把工具名交给本插件"保护"——1.0.0 没有这样的名单。
 
 同一 profile 里**只留一个图片削减者**（billion-context 也会在服务端折叠媒体），否则两次压缩互相踩。
 
@@ -239,151 +190,158 @@ README 只留结论。这里放细节：每一步怎么判定、每个字段是�
 
 这两个不是"配置一下就能共存"的邻居，是**功能重叠**：同时开会让同一件事被收费两次，有时还会互相打架。
 
-- **`dsh-batch-tool-calls`** 注册的是它自己的批量调用提示段。本插件注册的是它的超集：按档位的并行目标、按会话生效、压缩后补一条提醒，0.8.1 起还多了单次工具调用的按档上限。两个都开着，同一份提示要付两遍钱，而且两段文字可以给出不一致的并行目标。
+- **`dsh-batch-tool-calls`** 注册的是它自己的批量调用提示段。本插件注册的是它的超集：按会话生效的宽度、随表现变化的并行目标、输出纪律、有界调用规则、压缩后补一条提醒。两个都开着，同一份提示要付两遍钱，而且两段文字可以给出不一致的并行目标。
 - **`dsh-ops`** 用自己的工具替掉 shell 与文件工具（`ops_bash`、`ops_grep`、`ops_glob`、`ops_inspect_local_file`、`ops_replace` …），而且只带 Windows 二进制。本插件的引导段讲的是"用那个 shell 做事"——给调用设上限、把服务放后台、别用 heredoc；装了 `dsh-ops` 就等于有两个 shell、两套规则，要么重复要么冲突。
 
 本插件加载时会检测这两个（在 profile 的 `package.json` / `cordis.patch.yml` 里找包名，另外用一次实时的 `ops_bash` 工具探测），命中就在会话里**只说一次**冲突，不阻塞加载。修法只有一条：**删掉其中一个**。
 
 ## 官方 API 支持
 
-| 场景 | 是否支持 | 依据 |
-|---|---|---|
-| 官方 DeepSeek API（`deepseek-official`） | ✅ | 读官方 adapter 的声明（`off/low/high/max`，默认 `high`）；默认档位只在 `high → low` 之间挪，`ludicrous` 会用到 `off` |
-| 官方 API 前面挂代理 / 中转 | ✅ | 档位链来自 provider **连接配置**（`resolveModelInfo`），不取决于网络对端 |
-| 自建网关（如 `litellm` + Anthropic Messages） | ✅ | 声明几档就挪几档；`off/minimal/low/medium/high` 上降一档是 `high → medium` |
-| OpenAI 兼容 / 别的 provider | ✅ | 同上；路由声明 `reasoningEfforts` 即可，声明为空则插件完全不干预 |
-| 只有 `max` 一档、或没有档位的模型 | ✅（安静） | 只有一档时没有可降的空间；声明为空（`provider-none`）或问不到（`unknown`）时同样什么都不做 |
+**完全支持，而且不需要任何配置。** 官方 DeepSeek API（`deepseek-official`）、官方 API 前面挂的代理和中转、自建网关（如 `litellm` + Anthropic Messages）、OpenAI 兼容端点，行为完全一样，原因很简单：
 
-官方 API 上的**最细降档粒度**是 `high → low`（中间没有别的档），所以这里的承诺永远是"这个请求更便宜"，不是"这个请求很便宜"。想让官方路由彻底不受影响，设 `floor: high`。`ludicrous` 是唯一例外：它自己的 `floor` 就是 `off`，也是它带星号的原因。
+- 请求体原样进出。本插件不写 `reasoningEffort`、不写 `thinking`、不写 `output_config`，也不添加任何 provider 专用字段；
+- 不做"这条路由声明了哪些档位"的过滤和降档。没有 `floor`，没有档位阶梯，没有按步降档；
+- 路由名只被记进测量和调试日志，不参与任何决策。
+
+所以无论 provider 声明的是 `off/low/high/max`、还是 `minimal/low/medium/high`、还是只有一档、还是什么都没声明，本插件的行为都一样：它注入提示段、给 shell 调用设上限，然后把你选的 effort 原样发出去。
 
 ## 测量、实验与报告
 
-0.6.0 把测量做进插件，并给了一条不靠肉眼的对比路径。
+测量留在插件里，而且**关闭态也记录**——只记录开启态的话，就没有基线可对比。
 
 ### 每个完成的步写一行
 
-计量默认开启，且**和开关无关**：关闭状态的会话也会记录，否则没有对照组。每个完成的模型步往 `~/.dsh/fast-mode-metrics.jsonl` 追加一行 JSON；文件按需创建，写失败静默，绝不影响请求。
+计量文件是 JSONL，每个完成的模型步一行，懒创建、失败不影响请求（写不进去就静默放弃）。版本号是 `v: 1`，字段如下：
 
 | 字段 | 含义 |
 |---|---|
-| `v` / `ts` / `sid` / `turn` / `step` | 格式版本、时间、会话 id、轮号、步号 |
-| `mode` | `on` / `off` / `unknown`：这一轮开关的状态 |
-| `gear` / `effort` / `route` | 实际档位（关闭时是 `off`）、实际发出的档位 id、这条请求的路由 `provider/model`（调试行里的 `route=` 才是档位链来源，见下文） |
-| `ttftMs` | 步开始 → 第一条 assistant 消息，也就是首字延迟 |
-| `llmMs` | 步开始 → 最后一条 assistant 消息，也就是模型用时 |
-| `stepMs` | 整个步的墙钟，**包含**工具执行 |
-| `calls` / `errors` | 这一步的工具调用数 / 其中报错的调用数 |
-| `input` / `output` / `reasoning` / `cacheRead` / `cacheWrite` | 上游 `usage` 的实测 token |
-| `assistantMessages` | 这一步产生了几条 assistant 消息 |
+| `v` | 计量格式版本，当前为 1 |
+| `ts` | 这一步结束的 ISO 时间 |
+| `sid` / `turn` / `step` | 会话 id、轮次、步号 |
+| `mode` / `gear` | `on` 或 `off`；关闭时 gear 记为 `off` |
+| `effort` | **请求实际携带的思考强度，原样记录，不做任何改写**——这是"插件没有动 effort"的证据 |
+| `route` | 路由/模型的标签，仅用于分组 |
+| `ttftMs` | 首字延迟：步开始到第一条 assistant 消息 |
+| `llmMs` | 模型耗时：步开始到最后一条 assistant 消息 |
+| `stepMs` | 整步耗时，含工具等待 |
+| `calls` / `errors` | 本步的工具调用数与失败数 |
+| `input` / `output` / `reasoning` | 上游 usage 的输入、输出、推理 token；拿不到就不写 |
+| `cacheRead` / `cacheWrite` | 上游 usage 的缓存读写 token |
+| `assistantMessages` | 本步的 assistant 消息数 |
 
-- `metrics: false` 关掉计量；`metricsFile` 改路径。后者和 `benchmarkFile` 一样是 **composition 旋钮**（故意不是 volatile），只在加载时读，改它要动 `cordis.patch.yml`。
-- 报告里的"模型耗时"就是 `llmMs`，"首字"就是 `ttftMs`。别拿 `stepMs` 当模型速度：它包含你机器上工具跑的时间。
+`effort` 这一列是理解 1.0.0 的关键：它记录的是请求**实际带出去的**值。如果你在 UI 里选了 `high`，每一行就是 `high`；插件不会把它改成别的。
 
 ### 每个会话自己的开关
 
-0.6.2 之前，开关和档位是 profile 级的：在一个对话里点闪电，**所有**正在跑的会话都跟着变。0.7.0 把状态拆成两层。
+`sessions` 列的数据契约（也是你在导出配置时会看到的东西）：
 
-- 每个会话记自己的 `{enabled, gear}`。闪电面板里的开关和档位只作用于**打开面板的那个会话**，面板里开关下面那行写得很清楚：`仅本会话生效`。
-- 没有自己条目的会话沿用共享的 `enabled` / `gear`。这两个字段同时是**上次在任何地方做的选择**的记录，所以新开的会话从上次的选择开始，而不是从 schema 默认值开始。
-- 优先级：实验文件（`fast-mode-bench.json`）> 这个会话的条目 > 共享默认。实验分支没变，仍然**故意**压过 UI。
-- 存储是设置里一个 volatile 字段 `sessions`，内容是一段 JSON：`{"<sessionId>":{"enabled":true,"gear":"turbo","ts":1792826203058}}`。`ts` 是裁剪依据：超过 200 条就丢最旧的，被丢掉的会话回到共享默认。设置页里它会显示成一个文本框（这一版 schemastery 没有 `.hidden()`），由客户端半自动维护，别手改。
-- 点一下是**一次** `settings/update`，同时写共享的 `enabled`/`gear` 和这个会话的条目，带的是读到的 revision：不会出现面板显示一档、请求跑另一档，也没有两次写的 revision 竞争。写入被拒时三个字段一起回滚，原因写在面板状态行里。
+```json
+{"<sessionId>": {"enabled": true, "gear": "auto", "ts": 1730000000000}}
+```
+
+- 读取顺序：本会话条目 → 共享 `enabled`/`gear` → schema 默认值；
+- 条目里缺哪个字段，就退回共享字段的那个字段，而不是整体失效；
+- 写条目和写共享字段在同一次 patch 里完成；
+- 上限 200 条，超出淘汰 `ts` 最旧的；`enabled` 必须是布尔、`gear` 必须是字符串、`ts` 必须是有限数，损坏的条目会被丢弃而不是让整列失效。
 
 ### 按会话分配档位
 
-`~/.dsh/fast-mode-bench.json`（或 `benchmarkFile`）存在且 `enabled: true` 时，插件按会话分配档位：
+实验文件（默认 `~/.dsh/fast-mode-bench.json`）存在且 `enabled: true` 时，插件按会话 id 的 FNV-1a 哈希把会话分到不同档位，做到同一账号下随机对照：
 
 ```json
 {
   "enabled": true,
   "gears": ["off", "safe", "fast", "turbo", "max"],
-  "sessions": { "<session id>": "turbo" }
+  "sessions": { "<sessionId>": "max" }
 }
 ```
 
-- `gears` 里可以写 `"off"`：那是**对照组**，被分到的会话按关闭状态运行。没有它，实验只能回答"哪档更快"，回答不了"比不开快多少"——后者才是要证明的事。
-- 有显式 `sessions` 就用它；没有就按 `FNV-1a(会话 id) mod gears` 分配，同一个会话每次进来都落在同一档。
-- 文件最多 1 秒后生效，不用重启；删掉文件，下一次请求就回到配置里的开关与档位。
-- 被分配的会话**按分配结果运行，不看当前开关**：实验的 arm 由文件和哈希决定，否则忘了点开关的会话会悄悄落进对照组，而你以为在测 `turbo`。
-- 不在 `gears` 里的名字会被丢掉并打一条 warn；文件不是 JSON、或者一个已知档位都没有，实验保持惰性并抱怨一次。
+- `sessions` 里的显式钉子优先于哈希，用来把某个重要会话固定到某一档；
+- `off` 是对照组，表示关掉插件；
+- 不认识的名字被过滤掉并只警告一次；文件坏了也只警告一次，然后当作不存在；
+- 文件改动最多 1 秒生效（TTL 1 秒），不需要重启。
+
+分配结果在请求路径上**优先于**面板里按会话的开关——这是实验期间"别手动干预"的原因：面板显示你上次的选择，而实际执行的可能是分配到的档位。这也是面板只能引用它读得到的配置的原因之一。
 
 ### 报告：`dsh-fast-mode-report`
 
 ```bash
-node bin/report.mjs --since 2d     # checkout 里直接跑，一定可用
-dsh-fast-mode-report --json        # 包里的 bin 名；装进 profile 后由 pnpm 链接出来
+dsh-fast-mode-report                  # 默认文件，全部历史
+dsh-fast-mode-report --since 2d       # 只最近两天
+dsh-fast-mode-report --json           # 机器可读
+dsh-fast-mode-report --file ./m.jsonl # 另一个文件
+dsh-fast-mode-report --lan            # 附带局域网用量面板对照
 ```
 
-同名 npm 包还没发布，所以 `npx dsh-fast-mode-report` 现在拉不到（发布后等价）。
+输出分三块：
 
-| 选项 | 作用 |
-|---|---|
-| `--file <path>` | 测量文件，默认 `~/.dsh/fast-mode-metrics.jsonl` |
-| `--since <when>` | 只看最近一段：`2d` / `12h` / `90m`，或任何 `Date.parse` 接受的写法；`--lan` 时面板的查询窗口也跟着它放大 |
-| `--json` | 输出机器可读的 JSON（`{file,total,used,since,buckets,lan}`） |
-| `--lan` | 再对一遍局域网用量面板（见下） |
-| `-h` / `--help` | 用法 |
+1. **按 `mode|gear` 分桶的主表**：会话数、步数、步/轮、步耗时 p50/p90、模型耗时 p50、首字 p50、输出 token/步、输出 token/会话、工具调用/步、多调用步数；
+2. **相对关闭态的倍率表**（有基线时才出现）：模型耗时倍率、步耗时倍率、输出比例、每会话 token 比例、调用数比例。`> 1×` 表示该档位更快或更贵，看列名；
+3. **口径说明**：比较单位是"模型步"而不是整个会话（会话墙钟还包含人读和打字）；模型耗时与首字的定义；倍率基于均值，样本少时会抖动。
 
-默认输出三块：
-
-1. 每个 `mode|gear` 一行：会话数、步数、步/轮、步耗时 p50/p90、模型耗时 p50、首字 p50、输出 tok/步、输出 tok/会话、工具/步、多调步（一步里发了多个工具调用的步数）；
-2. 相对关闭状态的倍率表：模型耗时、步耗时、输出 tok/步、输出 tok/会话、工具/步（>1× 表示该档位更快 / 更贵）；
-3. 一行口径说明：比较单位是**步**，不是会话墙钟 —— 墙钟里大部分是人在读和打字。
-
-没有关闭状态的样本时，报告不会硬算倍率，而是告诉你要两边都跑：先关闪电跑同样的任务，再开启跑一遍。
-
-`--lan` 把本机行按会话 UUID 对到局域网里的用量面板（`/api/v1/sessions/recent`），补上上游模型名、总/输入/输出 token 和整段会话时长：
-
-- 只读，不发任何写请求；
-- token 从环境变量 `USAGE_TOKEN` 读，从不打印；面板地址默认是构建里写死的那个，可用 `USAGE_BASE` 覆盖；
-- 没有 token 就打印一句说明并跳过 `--lan`，报告其余部分照常输出；
-- 整个过程不出局域网；面板的查询窗口跟着 `--since` 走（面板只有 `1d`/`7d`/`30d` 三档，不给 `--since` 时默认 `7d`），对不上就直说，不猜。
+没有关闭态样本时它不会编倍率，而是直接告诉你"去关掉跑一遍"。`--lan` 需要 `USAGE_TOKEN` 环境变量（`USAGE_BASE` 可选），只读；缺 token 或请求失败只打印一条说明，不影响本机报表。
 
 ### 实验：`dsh-fast-mode-experiment`
 
-报告只在"两边的活儿是同类的、分档不是你挑的"时候才算数。这个命令管的就是那个文件，省得手写 JSON：
-
 ```bash
-node bin/experiment.mjs start                 # 四个档位，按会话 id 哈希分配
-node bin/experiment.mjs status                # 每档已有几个会话/几步、还缺什么
-node bin/experiment.mjs stop                  # 结束实验，回到配置里的开关与档位
-node bin/report.mjs --since 7d                # 对比
+dsh-fast-mode-experiment start        # 写实验文件
+dsh-fast-mode-experiment status       # 看进度和每档样本数
+dsh-fast-mode-experiment stop         # 结束实验
 ```
 
-| 选项 | 作用 |
-|---|---|
-| `--bench <path>` | 实验文件，默认 `~/.dsh/fast-mode-bench.json` |
-| `--metrics <path>` | 测量文件，默认 `~/.dsh/fast-mode-metrics.jsonl` |
-| `--gears a,b,c` | 参与实验的档位（默认 `off,safe,fast,turbo,max`，`off` 是对照组；少于两个直接拒绝） |
-| `--sessions n` | `status` 里"每档至少几个会话"的门槛，默认 3，只影响提示 |
-| `--force` | 覆盖正在跑的实验文件 |
+选项：`--bench`、`--metrics`、`--gears a,b,c`、`--sessions n`（只影响 status 的提示）、`--force`（覆盖已有实验文件）。默认实验臂是 `off,safe,fast,turbo,max`——注意这些是**旧的固定宽度臂**，按会话 override 原样执行：`fast` 是 4 宽 + 轻量输出纪律，`turbo` 是 6 宽，`max` 是 8 宽，`safe` 是"在场但不干预"，`off` 是对照。想看自适应调度器本身的效果，把 `auto` 加进 `--gears`。
 
-实验期间新开的会话**自动按分配结果运行**（`off` 之外都开着跑），不用点小闪电——否则忘了点的会话会悄悄落进对照组。`status` 会直说还缺哪些：没有关闭态样本、哪一档一个会话都没有、每档够不够 `n` 个会话。实验结束记得 `stop`，否则后续会话会继续被分档。
+实验文件和计量的配合方式：`start` 后跑任务，`status` 看每档是否够样本，`stop` 结束；再用 `report --since` 看倍率。样本太少时倍率会抖，这是统计事实，不是插件行为。
 
 ## 安全边界
 
-- **只观察，不改结果。** 两个工具 hook 永远转发原决策；决策逻辑抛异常时回退到 harness 原本选的档位。
-- **只发路由声明过的 id。** 有性质测试保证任何输入都不会产出该路由没声明过的档位；最坏情况是"什么都没做"，不是"这一轮坏了"。
-- **不写会话。** 观察数据只在内存里，按 agent 隔离、按轮重置，不占一个 token 的上下文。
-- **失败即沉默。** 问不到 provider、超时、日志文件不可写，全部静默降级。
-- **计量写不进去也不影响请求。** JSONL 只追加，目录懒创建，异常吞掉；报告侧只读测量文件，`--lan` 只发 GET，token 只在内存里用、不打印、不出内网。
-- **客户端半不会拖垮输入框。** 闪电按钮的每一次远端调用都在 try/catch 里；配置读不到时按钮仍然可点，点开在面板状态行里写明原因；slot 注册被别的插件占用就只打一条 warn，不抛给宿主。
+- **只观察，不改写。** `tools/pre-execute` / `tools/post-execute` 是纯观察者（记录开始时间和调用结果），`agent/request` 原样返回请求。除了注入提示段和两条 producer-owned notice（压缩后提醒、调度指令），插件不往会话里写任何东西。
+- **模型与 effort 不可写。** 源码里没有对 `reasoningEffort` 的赋值；测试会扫描源码，防止将来有人把它加回来。
+- **设置只在面板里改，且带 revision。** 没有后台静默改配置的路径；冲突写入会失败并回滚。
+- **计量是本地的。** 只写 `metricsFile`；`--lan` 是唯一的出网路径，只读，需要显式 token。
+- **看门狗只改 signal。** 调用方原来的 signal 在 `finally` 里恢复；取消后调用体的 rejection 被吞掉，不会变成未处理的拒绝。
 
 ## 诚实的限制
 
-- 输出 token 是串行的：一次生成里，思考变少只会让这一步更短，不会让这一步和下一步重叠。上游 `usage.outputTokens` 的 TPS 没有变，动的是模型用时和步数，不是"单个模型生成变快"。
-- 宿主插件无法"替模型发出并行调用"，只能抬高调度上限、或让模型自己把独立调用放进同一步。本插件做的是后者（外加在上限不足时提醒）。
-- 它只能给卡在慢命令上的调用设上限（超时取消后再让模型换个做法），不能替你把那条命令变快，也不是批处理独立调用的替代品。
-- 不集成任何外部"决策模型"端点（比如 Jev）：那会引入一个网络往返，与本插件的目的相反。
-- 省下多少墙钟取决于思考在你那一轮里占多大比重。上面那个会话里生成占绝对主导（每轮约 44 秒），这正是它针对的情形。
-- 引导段只在档位真的要指令时才注入：`safe` 和关闭状态零成本，其余档位每请求约 1 KB 文本（≈300 input tokens）。
-- 官方 API 上不关思考的合法降幅只有 `high → low`（16384 → 2048 思考预算）；`ludicrous` 关掉思考，质量代价是明示的，不是隐藏的。
-- 要数字请用上面那套测量与报告，而且比较的两边得做同类工作。
+**时延账本。** 在这套网关上实测，一步的墙钟约等于 `720 ms + 6.63 ms × 输出 token` 再加工具等待（R² = 0.93，689 步样本）。这条式子说明：减少步数、减少工具等待是真杠杆；思考强度和原始解码速度不是——前者改写答案，后者任何提示词都做不到。
+
+**扇出有前提。** 只有一步里真的存在多个互不依赖的查询时，加宽才有收益。单文件类的基准任务（HumanEval / AIME 形态）上，本插件测到的差异在噪声内（0.95×–1.09×），没有可测量的加速——那些任务本来就没有可并行的读集。把"这个插件让所有任务快 30%"当卖点是错的。
+
+**1.0 的调度器还没有大规模 A/B。** 上面的常量来自小样本观测与设计推理；`auto` 的宽度策略、6/12 步的阈值、3 步冷却都还需要真实会话的对照数据。`report` 与 `experiment` 就是为了补这一课，而不是为了证明它已经成立。
+
+**token 可能变多，而且这是接受的交换。** 更宽的步意味着每步塞进更多工具结果，输入 token 上升；输出纪律只减少过程文字，不承诺总 token 下降。不要用"省 token"来介绍这个插件。
+
+**提示是建议，不是强制。** 模型仍可能每步只发一个调用。真正同时执行多少个调用还受 `agentLoop.maxParallelToolCalls` 限制；插件发现目标宽度超过这个上限时会警告一次，并给出一条 `cordis.patch.yml` 的改法。
+
+**看门狗只看 shell 类工具。** 一个卡住的非 shell 调用（比如某个自定义工具的 promise 永不 resolve）不在保护范围内。被豁免的工具按设计不设上限——等用户、等后台任务本来就要等。
+
+**面板看不到实时宽度。** 它写的是 2–8 的区间和它能读到的单次调用上限；host 端为某个会话算出的当前宽度只出现在提示段和调试日志里。
+
+**`turnSteps` 的计数口径。** 每轮由 `turn/start` 清零，30 步的停止线只约束单轮；跨轮保留的是调度记忆，不是步数预算。
 
 ## 开发与测试
 
+模块分工：
+
+- `index.js`：组装、钩子、按会话取配置、提示段注册；
+- `src/auto.js`：调度器的状态、宽度、预算、指令；
+- `src/guidance.js`：模型可见的提示文本；
+- `src/stallguard.js`：看门狗与预算优先级；
+- `src/effort.js`：档位表与旧名字归一化（不再有 effort 阶梯）；
+- `src/config.js`：schema 与表单字段；
+- `src/state.js`：`sessions` 列的解析与编码；
+- `src/notices.js`：producer-owned notice 的构造与来源校验；
+- `src/metrics.js`：JSONL 计量与汇总；
+- `src/benchmark.js`：按会话哈希分配；
+- `src/peers.js`：冲突插件探测；
+- `client.js`：闪电 chip 与面板。
+
+跑测试：
+
 ```bash
-npm test        # 175 个测试，无网络、不需要 harness
+node --test test/*.test.js
 ```
 
-策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（坏值不会变成"无限制"）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；计量那组证明**关闭状态的会话也被记录**（一步一行、多消息步的首字取第一条），并覆盖 token/错误求和、按会话隔离、目录懒创建、空路径关掉 sink。会话状态那组针对 0.7.0 的会话级覆盖：把 `client.js` 里那份浏览器实现放进 `vm`、喂同一组夹具，证明它和 host 的 `src/state.js` 对同一列格式读写一致 —— 两份实现一旦漂移，开关就会显示"开着"而实际什么都不做；同时覆盖超过 200 条时按 `ts` 丢最旧、坏列退化成"没有覆盖"、host 对每个会话取自己的条目而没有条目的会话沿用共享的一对。实验分派那组证明哈希稳定且覆盖全部档位、显式 pin 优先、单会话 pin、文件 1 秒内生效、没有文件或 `enabled:false` 时完全惰性、坏文件只抱怨一次。报告那组跑真实的 `bin/report.mjs`：两张表、只有一边样本时用文字拒绝、`--since` 也放大面板查询窗口、`--json`、`--help` 不读文件、没 token 时跳过 `--lan`、有 token 时按会话 id 对上且**从不打印 token**、面板不通时降级成一句说明。最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），并把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端，而且这个远端按真实协议回 `{ok, value}` 信封 —— 信封没解包正是 0.5.1 那个"点不动的闪电"的根因，所以它现在是测试夹具的一部分）：证明 bundle 能解析、只 require `react`、空心画得出来、点一下只打开面板而不写任何东西、面板里的开关只发一次带 revision 的 `settings/update`、再点一次把它关回去、被拒时回滚并在提示与状态行里给出原因；同时钉住新的交互契约 —— 外框是**单个图标**（没有小三角、没有内联下拉）、按钮**永不 disabled**、只读/缺条目/`ok:false` 都渲染成"可点 + 一句原因"、五行档位各带速度与 token 倍率、`ludicrous` 带星号、选档在关闭状态下顺手把 `enabled` 一起写、已开启时选档不碰开关、客户端给出的档位 id 与 host 端 `GEARS` 完全一致、面板里的范围说明在中英两套词典里都非空（中文那句固定为 `仅本会话生效`）。最后用 schemastery 真实校验 schema：默认 `enabled: false`、五个档位名都能过、`gear: warp` 会当场报错、计量默认开启、四个 volatile 字段正好是 `enabled`/`gear`/`parallel`/`sessions`（最后一个由客户端半写，不是给人调的）、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
+当前 172 个测试全部通过（0 失败）。测试覆盖：调度器宽度与指令、预算优先级、提示段的开关条件、`sessions` 列在 host 与浏览器两份实现间的一致性、notice 来源校验、计量字段、分配哈希、报告与实验 CLI 的参数解析，以及一条扫描源码、确认没有改写 `reasoningEffort` 的回归测试。
+
+文档入口：`README.md`（中文）、`README.en.md`（English）、`BENCHMARK.md`（测量方法与历史数据）、`CHANGELOG.md`（每个版本删了什么、加了什么）。

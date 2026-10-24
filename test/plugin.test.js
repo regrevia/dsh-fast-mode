@@ -577,6 +577,33 @@ test('two conversations, one settings column: each runs at its own entry', async
   assert.match(await run('session-never-seen'), /up to \d+ independent calls/, 'inherits the shared gear')
 })
 
+test('the turn boundary resets the step budget instead of spending it for the session', async () => {
+  const ctx = fakeContext()
+  apply(ctx, ON)
+  const noticesOf = out => out.messages.filter(m => m.source?.form === 'notice')
+
+  // The 30-step breaker fires inside one very long turn.
+  let noticed = 0
+  for (let i = 0; i < 30; i += 1) {
+    const { out } = await step(ctx)
+    noticed += noticesOf(out).length
+  }
+  assert.equal(noticed, 1, '30 steps in one turn produce the stop notice once')
+
+  // A new turn starts with a fresh budget, not a spent one.
+  ctx.fire('session/event', { id: 'session-1' }, { type: 'turn/start' })
+  const { out } = await step(ctx)
+  assert.equal(noticesOf(out).length, 0, 'the next turn is not immediately told to stop')
+
+  // And the breaker is re-armed: another 30 steps in this turn speak again.
+  let again = 0
+  for (let i = 0; i < 30; i += 1) {
+    const result = await step(ctx)
+    again += noticesOf(result.out).length
+  }
+  assert.equal(again, 1, 'the budget applies per turn, so the next long turn is caught too')
+})
+
 test('the third lever is wired: the stall guard, the compaction reminder, the peer probe', () => {
   const ctx = fakeContext()
   apply(ctx, ON)
