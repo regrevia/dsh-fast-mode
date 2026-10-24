@@ -54,9 +54,9 @@ The full derivation, every control and the half that did not reproduce are in [B
 
 Legacy `fast` / `turbo` / `max` / `ludicrous` values resolve to `auto` and log a deprecation warning; they will **not** touch your thinking effort. `safe` remains for experiment scripts as a control arm (fixed width 2, no call ceiling, no prompt section).
 
-## The panel
+## The switch
 
-The bolt opens a 196 px popover: a switch on top, one live line saying what the scheduler is currently allowed to do (parallel 2–8 and the per-call ceiling, both read from config), and two lines of fine print — "thinking effort unchanged" and "where the speed comes from". No dropdown, no gears, no multiplier estimates: those choices no longer exist.
+The bolt *is* the switch: one click on, another click off. No popover, no dropdown, no gears, no multiplier estimates — those choices no longer exist. Every conversation keeps its own state, written on click and restored after a restart, so "medium + fast" comes back as "medium + fast" in that conversation. What makes it faster and what it changes live in the plugin description, not in the composer.
 
 Do not enable it together with `dsh-batch-tool-calls` or `dsh-ops` — their prompt guidance overlaps, so both would be paying twice for the same advice. Compression plugins (billion-context, image compression, gateway adapters) compose fine: one shrinks the input, the other shrinks the round trips. Details in [docs/REFERENCE.en.md](docs/REFERENCE.en.md).
 

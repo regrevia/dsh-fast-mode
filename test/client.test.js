@@ -163,46 +163,20 @@ async function mount(remote, sessionId = 'session-alpha') {
   return { ctx, module, render, t }
 }
 
-/** The panel element, rendered (the fake react does not call components). */
-function renderMenu(tree) {
-  const element = tree.children[1]
-  if (element === null || element === undefined) return undefined
-  return element.type(element.props)
-}
-
-/** The bolt: the chip carries exactly one control. */
+/** The bolt: the chip carries exactly one control, and it *is* the switch. */
 function boltOf(tree) {
   return tree.children[0]
 }
 
-/** Click the bolt and hand back the opened panel. */
-function openPanel(render) {
+/** One click on the bolt. The handler is async internally; callers await sleep. */
+function clickBolt(render) {
   boltOf(render()).props.onClick()
-  return renderMenu(render())
+  return sleep(20)
 }
 
-/** The on/off switch, inside the panel head row. */
-function switchOf(menu) {
-  return menu.children[0].children[1]
-}
-
-/** The gear rows of a rendered panel, in menu order. */
-function unusedGearRows(menu) {
-  return menu.children
-    .filter(element => element.props && element.props.className === 'fm-menu__item')
-    .map(element => element.props)
-}
-
-/** Every string inside a rendered subtree, in order. */
-function textOf(node) {
-  if (typeof node === 'string') return node
-  if (node === null || node === undefined) return ''
-  return (node.children ?? []).map(textOf).filter(Boolean).join(' ')
-}
-
-/** The trailing block of a panel: the fine print, or a status sentence. */
-function lastLine(menu) {
-  return textOf(menu.children.at(-1))
+/** Read the `sessions` column out of one recorded patch. */
+function columnOf(call) {
+  return JSON.parse(call.patch.sessions)
 }
 
 test('the bundle declares the loader contract and the services it needs', () => {
@@ -210,15 +184,6 @@ test('the bundle declares the loader contract and the services it needs', () => 
   assert.equal(bundle.id, 'dsh-fast-mode')
   assert.deepEqual([...module.inject], ['slots', 'locale', 'remote', 'remote.settings'])
   assert.equal(typeof module.apply, 'function')
-})
-
-test('the panel offers nothing to pick: fast mode has one behaviour, not a ladder', async () => {
-  const { module, render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
-  assert.equal(module.GEAR_MENU, undefined, 'there is no client-side gear table to drift from the host')
-  const menu = openPanel(render)
-  const pickers = menu.children.filter(el => el.props && /fm-menu__(item|cols)/.test(String(el.props.className)))
-  assert.deepEqual(pickers, [], 'no rows and no header: a picker would offer choices that no longer exist')
-  assert.equal(menu.children[0].props.className, 'fm-menu__head', 'the switch is the first thing in the panel')
 })
 
 test('it registers one chip on the composer slot beside the model selector, never on the selector itself', async () => {
@@ -241,221 +206,99 @@ test('it registers one chip on the composer slot beside the model selector, neve
   assert.equal(dict['zh-CN'], dict.zh, 'the zh-CN tag falls back to the same strings')
 })
 
-test('every dictionary key is flat, because the locale lookup indexes it flat', async () => {
-  const { ctx } = await mount(fakeRemote())
-  const dict = ctx.labels[0].dict
+test('the bolt is the switch: no popover, no caret, no dialog affordance', async () => {
+  const { module, render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
+  assert.equal(module.GEAR_MENU, undefined, 'there is no client-side gear table to drift from the host')
 
-  // `dsh-client-locale` resolves a key as `dict[locale][key]`. A nested object
-  // can never answer `'menu.title'`, which is why the shipped panel painted raw
-  // keys instead of words. Every shipped key must therefore be a dotted string.
-  for (const locale of ['zh', 'en']) {
-    for (const [key, value] of Object.entries(dict[locale])) {
-      assert.equal(typeof value, 'string', `${locale}: ${key} must be a string`)
-      assert.match(key, /^[a-z]+(\.[a-zA-Z]+)+$/, `${locale}: "${key}" must be a dotted flat key`)
-    }
-  }
-  assert.match(dict.zh['menu.auto'], /\{minutes\}/, 'the scheduler line carries the enforced ceiling')
-  assert.match(dict.zh['menu.auto'], /并行/, 'and the width policy it is allowed to use')
-  assert.match(dict.zh['menu.effort'], /思考强度/, 'the panel states the contract: effort is untouched')
-  assert.match(dict.zh['menu.mechanism'], /并行/, 'and names what actually makes it faster')
-  assert.match(dict.en['menu.effort'], /effort/i, 'English says the same thing')
-  assert.equal(/×|倍率/.test(`${JSON.stringify(dict.zh)}${JSON.stringify(dict.en)}`), false,
-    'no multiplier claim survives anywhere in the panel copy')
-})
-
-test('the outer control is one icon: no caret, no dropdown affordance', async () => {
-  const { render } = await mount(fakeRemote())
   const tree = render()
-
-  assert.deepEqual(tree.children.filter(Boolean).map(el => el.props.className), ['fm-chip__button'],
-    'closed: the chip is the bolt and nothing else')
+  assert.equal(tree.children.length, 1, 'the chip paints the bolt and nothing else')
   const bolt = boltOf(tree)
-  assert.equal(bolt.props.className, 'fm-chip__button')
-  assert.equal(bolt.props['aria-haspopup'], 'dialog', 'the bolt opens the panel')
-  assert.equal(bolt.props['aria-expanded'], false)
-  assert.equal(bolt.props.title.includes('chip.title'), true, 'the icon still explains itself on hover')
+  assert.equal(bolt.props.role, undefined, 'a pressed button is a switch, not a dialog trigger')
+  assert.equal(bolt.props['aria-haspopup'], undefined, 'there is nothing to open')
+  assert.equal(bolt.props['aria-expanded'], undefined)
+  assert.equal(bolt.props['aria-pressed'], true, 'the pressed state is the on/off state')
+  assert.equal(bolt.props['data-on'], 'true')
+  assert.equal(bolt.children.length, 1, 'one icon, no panel slot')
 })
 
-test('the chip answers the wire envelope: a payload-only describe still resolves the namespace', async () => {
+test('one click turns fast mode on for this conversation and writes immediately', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'turbo' })
-  // No envelope at all: the unwrapper must pass it through, not choke on it.
-  const describe = remote.settings.describe
-  remote.settings.describe = async () => (await describe()).value
+  const { render } = await mount(remote, 'session-alpha')
+  assert.equal(boltOf(render()).props['data-on'], 'false')
 
-  const { render } = await mount(remote)
-  const tree = render()
-  assert.equal(boltOf(tree).props['data-on'], 'false')
-  assert.equal(boltOf(tree).props.title, 'chip.titleOff', 'the tooltip no longer quotes a gear')
-})
+  await clickBolt(render)
 
-test('clicking the bolt opens the panel and writes nothing by itself', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
-  const { render } = await mount(remote)
-
-  const menu = openPanel(render)
-  assert.ok(menu !== undefined, 'the bolt opens the panel')
-  assert.equal(remote.calls.length, 0, 'opening the panel is not a configuration write')
-  assert.match(menu.props.className, /^fm-menu( |$)/)
-  assert.equal(menu.props['aria-label'], 'menu.title')
-  assert.equal(boltOf(render()).props['aria-expanded'], true, 'the icon reports the panel state')
-})
-
-test('the switch inside the panel turns Fast mode on with the revision it read', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
-  const { render } = await mount(remote)
-  const menu = openPanel(render)
-  assert.equal(switchOf(menu).props['aria-checked'], false, 'the switch starts off (hollow bolt)')
-
-  switchOf(menu).props.onClick()
-  await sleep(20)
-
-  assert.equal(remote.calls.length, 1)
+  assert.equal(remote.calls.length, 1, 'the click is the write; nothing opens in between')
   assert.equal(remote.calls[0].ns, 'fast-mode')
   assert.equal(remote.calls[0].patch.enabled, true)
-  assert.equal(remote.calls[0].revision, 3)
-
-  const after = render()
-  const onBolt = boltOf(after)
-  assert.equal(onBolt.props['data-on'], 'true', 'on is filled')
-  assert.equal(onBolt.children[0].children[0].props.fill, 'currentColor')
-  assert.match(onBolt.props.title, /titleOn/)
-  assert.equal(switchOf(renderMenu(after)).props['aria-checked'], true, 'the panel stays open and in sync')
+  assert.equal(remote.calls[0].patch.gear, 'auto', 'the scheduler is the only mode')
+  assert.equal(remote.calls[0].revision, 3, 'the write echoes the revision it read')
+  assert.equal(boltOf(render()).props['data-on'], 'true', 'the bolt fills after the host echoes')
+  assert.equal(boltOf(render()).props.title, 'chip.titleOn')
 })
 
-test('a second click on the switch turns it back off, still echoing the current revision', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'fast' })
+test('a second click turns it back off, still echoing the current revision', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote)
   assert.equal(boltOf(render()).props['data-on'], 'true')
 
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
+  await clickBolt(render)
 
-  assert.equal(remote.calls[0].ns, 'fast-mode')
   assert.equal(remote.calls[0].patch.enabled, false)
-  assert.equal(remote.calls[0].revision, 3)
   assert.equal(boltOf(render()).props['data-on'], 'false')
 })
 
-test('a refused write reverts the chip and explains itself in the tooltip and the panel', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'fast' }, { fail: true })
+test('the chip never writes a thinking effort, so the user choice cannot drift', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'auto' })
+  const { render } = await mount(remote, 'session-alpha')
+  await clickBolt(render)
+
+  const patch = remote.calls[0].patch
+  assert.deepEqual(Object.keys(patch).sort(), ['enabled', 'gear', 'sessions'],
+    'three fields: the switch, the scheduler, and the per-conversation column')
+  assert.equal(JSON.stringify(patch).includes('reasoningEffort'), false)
+  assert.equal(JSON.stringify(patch).includes('effort'), false)
+})
+
+test('a refused write reverts the bolt and explains itself in the tooltip', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'auto' }, { fail: true })
   const { render } = await mount(remote)
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
+  await clickBolt(render)
 
   const after = render()
   assert.equal(boltOf(after).props['data-on'], 'false', 'the optimistic paint must roll back')
   assert.match(boltOf(after).props.title, /error/, 'the tooltip reports the failure')
   assert.match(boltOf(after).props.title, /revision conflict/)
-
-  const menu = renderMenu(after)
-  assert.ok(menu !== undefined, 'the panel stays open so the reason stays visible')
-  assert.match(lastLine(menu), /revision conflict/, 'the panel states the reason')
+  assert.equal(after.children.length, 1, 'and there is no surface left open to explain it in')
 })
 
-test('the panel is one switch, one scheduler line, and two lines of fine print', async () => {
-  const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto', toolTimeoutMs: 120_000 }))
-  const menu = openPanel(render)
-
-  assert.equal(menu.children[0].props.className, 'fm-menu__head', 'the switch comes first')
-  assert.equal(switchOf(menu).props['aria-checked'], true)
-  assert.equal(menu.children[1].props.className, 'fm-menu__sep')
-
-  const live = menu.children.find(el => el.props && el.props.className === 'fm-menu__live')
-  assert.ok(live !== undefined, 'a live line says what the scheduler may do')
-  assert.equal(live.children[0].props.className, 'fm-menu__dot')
-  assert.equal(live.children[0].props['data-on'], 'true')
-  assert.equal(textOf(live.children[1]), 'menu.auto {"minutes":"2"}', 'two minutes, read off the host budget')
-
-  const foot = menu.children.find(el => el.props && el.props.className === 'fm-menu__foot')
-  assert.deepEqual(foot.children.map(textOf), ['menu.effort', 'menu.mechanism'],
-    'exactly two lines: the contract and the mechanism')
-
-  assert.equal(/×/.test(JSON.stringify(menu)), false, 'nothing in the panel advertises a speed multiplier')
-})
-
-test('the live line follows the host ceiling instead of a hard-coded number', async () => {
-  const live = async (config) => {
-    const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto', ...config }))
-    return textOf(openPanel(render).children.find(el => el.props && el.props.className === 'fm-menu__live').children[1])
-  }
-  assert.equal(await live({ toolTimeoutMs: 90_000 }), 'menu.auto {"minutes":"1.5"}',
-    'a 90 s budget reads as 1.5 min, not rounded up to 2')
-  assert.equal(await live({ stallGuard: false }), 'menu.autoOpen', 'with the guard off there is no ceiling to quote')
-
-  const { render } = await mount(fakeRemote({ enabled: false, gear: 'auto' }))
-  const offLine = openPanel(render).children.find(el => el.props && el.props.className === 'fm-menu__live')
-  assert.equal(textOf(offLine.children[1]), 'menu.autoOff', 'off says the harness is untouched')
-  assert.equal(offLine.children[0].props['data-on'], 'false', 'and the dot is grey, not blue')
-})
-
-test('the fine print wraps inside the 196 px popover instead of running off the edge', async () => {
-  const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
-  const menu = openPanel(render)
-
-  const foot = menu.children.find(element => element.props && element.props.className === 'fm-menu__foot')
-  assert.ok(foot !== undefined, 'the two notes live in one footer')
-  const lines = foot.children.filter(Boolean).map(textOf)
-  assert.equal(lines.length, 2, 'two short lines, so neither has to be clipped')
-
-  const probe = fakeRemote()
-  const { module: probeModule, styles } = loadClient(probe)
-  probeModule.apply(fakeContext(probe))
-  const css = styles[0].textContent
-  assert.match(css, /\.fm-menu\{[^}]*width:196px/, 'the popover keeps its 196 px budget')
-  const rule = /\.fm-menu__foot\{([^}]*)\}/.exec(css)
-  assert.ok(rule !== null, 'the footer has its own rule')
-  assert.equal(rule[1].includes('nowrap'), false, 'the footer may wrap; the old note was clipped by nowrap')
-})
-
-test('the switch is the only control, and it writes the scheduler with it', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
-  const { render } = await mount(remote)
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
-
-  assert.equal(remote.calls.length, 1, 'one control, one write')
-  assert.equal(remote.calls[0].patch.enabled, true)
-  assert.equal(remote.calls[0].patch.gear, 'auto', 'a stale gear never rides along with the switch')
-  assert.equal(remote.calls[0].revision, 3)
-})
-
-test('a read-only layer refuses to write and says so instead of going dead', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'fast' }, { writable: false })
+test('a read-only configuration accepts no writes and says so on the bolt', async () => {
+  const remote = fakeRemote({ enabled: false, gear: 'auto' }, { writable: false })
   const { render } = await mount(remote)
 
-  const tree = render()
-  assert.equal(boltOf(tree).props.disabled, undefined, 'read-only is explained, not disabled')
-  assert.equal(boltOf(tree).props.title, 'chip.readonly')
-
-  const menu = openPanel(render)
-  assert.ok(menu !== undefined, 'the panel still opens, with the reason in it')
-  assert.equal(lastLine(menu), 'chip.readonly')
-
-  switchOf(menu).props.onClick()
-  await sleep(10)
-  assert.equal(remote.calls.length, 0, 'a read-only chip must never write')
+  assert.match(boltOf(render()).props.title, /chip.readonly/)
+  await clickBolt(render)
+  assert.equal(remote.calls.length, 0, 'read-only means read-only')
 })
 
-test('a composition without this entry opens an explanation and never throws', async () => {
+test('the chip is never disabled: an unreadable configuration stays clickable and explains the error', async () => {
   const remote = fakeRemote()
-  remote.settings.describe = async () => ({ ok: true, value: { writable: true, hasDocument: true, namespaces: [] } })
+  remote.settings.describe = async () => ({ ok: false, error: { code: 'remote/closed', message: 'bridge is down' } })
   const { render } = await mount(remote)
 
   const tree = render()
-  assert.equal(boltOf(tree).props.disabled, undefined)
-  assert.equal(boltOf(tree).props['data-on'], 'false')
-  assert.equal(boltOf(tree).props.title, 'chip.absent')
+  assert.equal(boltOf(tree).props.disabled, undefined, 'a disabled button drops its tooltip in Chrome')
+  assert.match(boltOf(tree).props.title, /bridge is down/)
+})
 
-  const menu = openPanel(render)
-  assert.ok(menu !== undefined, 'an unknown configuration opens the panel with the reason')
-  assert.equal(lastLine(menu), 'chip.absent')
-  assert.equal(remote.calls.length, 0)
+test('the chip answers the wire envelope: a payload-only describe still resolves the namespace', async () => {
+  const remote = fakeRemote()
+  const { render } = await mount(remote)
+  assert.equal(boltOf(render()).props.title.includes('chip.absent'), false, 'the namespace was found')
 })
 
 test('a namespace with an empty value is still recognised by its declared schema', async () => {
   const remote = fakeRemote()
-  // The mount reported no projected value, only the schema. That used to be
-  // classified as "absent", which is what disabled the chip.
   remote.settings.describe = async () => ({
     ok: true,
     value: {
@@ -474,38 +317,36 @@ test('a namespace with an empty value is still recognised by its declared schema
   })
   const { render } = await mount(remote)
 
-  const tree = render()
-  assert.equal(boltOf(tree).props.title.includes('chip.absent'), false, 'the schema identified the namespace')
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
+  assert.equal(boltOf(render()).props.title.includes('chip.absent'), false, 'the schema identified the namespace')
+  await clickBolt(render)
   assert.equal(remote.calls.length, 1)
   assert.equal(remote.calls[0].ns, 'include:fast-mode')
   assert.equal(remote.calls[0].revision, 9)
 })
 
-test('an unsuccessful describe surfaces the error message rather than silence', async () => {
-  const remote = fakeRemote()
-  remote.settings.describe = async () => ({ ok: false, error: { code: 'remote/closed', message: 'bridge is down' } })
-  const { render } = await mount(remote)
+test('every dictionary key is flat, because the locale lookup indexes it flat', async () => {
+  const { ctx } = await mount(fakeRemote())
+  const dict = ctx.labels[0].dict
 
-  const tree = render()
-  assert.equal(boltOf(tree).props.disabled, undefined)
-  assert.match(boltOf(tree).props.title, /bridge is down/)
+  for (const lang of ['zh', 'en']) {
+    for (const key of Object.keys(dict[lang])) {
+      assert.match(key, /^[a-z]+(\.[a-zA-Z]+)+$/, `${lang}: "${key}" must be a dotted flat key`)
+    }
+  }
+  assert.deepEqual(Object.keys(dict.zh).sort(), Object.keys(dict.en).sort(), 'both languages carry the same keys')
+  assert.equal(Object.keys(dict.zh).some(key => key.startsWith('menu.')), false,
+    'the popover dictionary is gone; the explanation lives in the plugin description')
 })
 
-test('the panel says the switch is per conversation, in both languages', async () => {
-  const remote = fakeRemote()
-  const { render, ctx } = await mount(remote)
-
-  const menu = openPanel(render)
-  const scope = menu.children.find(child => child.props && child.props.className === 'fm-menu__scope')
-  assert.ok(scope, 'the panel owns the scope line')
-  assert.equal(scope.children[0], 'menu.scope')
-
+test('the copy states the two things the mode promises: same effort, this conversation only', async () => {
+  const { ctx } = await mount(fakeRemote())
   const dict = ctx.labels[0].dict
-  assert.equal(dict.zh['menu.scope'], '仅本会话生效', 'the default locale is Chinese')
-  assert.ok(dict.en['menu.scope'].length > 0, 'and English is not forgotten')
-  assert.ok(dict.zh['menu.scope'].length <= 8, 'one short line: the panel is 196px wide and already full')
+
+  assert.match(dict.zh['chip.titleOn'], /思考强度不变/, 'the tooltip states the contract: effort is untouched')
+  assert.match(dict.zh['chip.titleOn'], /本会话/, 'and that the choice is scoped to the conversation')
+  assert.match(dict.zh['chip.titleOn'], /点击关闭/, 'and what the click does')
+  assert.match(dict.en['chip.titleOn'], /effort unchanged/i, 'English says the same thing')
+  assert.equal(/×/.test(JSON.stringify(dict)), false, 'no multiplier claim survives anywhere in the chip copy')
 })
 
 test('styles are injected once per page, not once per apply', () => {
@@ -514,25 +355,19 @@ test('styles are injected once per page, not once per apply', () => {
   module.apply(fakeContext(remote))
   assert.equal(styles.length, 1, 'one <style> tag')
   assert.match(styles[0].textContent, /\.fm-chip__button/, 'the chip CSS travels with the bundle')
-  assert.match(styles[0].textContent, /\.fm-menu__live/, 'the live line CSS travels with the bundle')
-  assert.match(styles[0].textContent, /\.fm-menu__switch/, 'so does the switch inside the panel')
+  assert.equal(styles[0].textContent.includes('.fm-menu'), false, 'the popover CSS is gone with the popover')
+  assert.match(styles[0].textContent, /data-on="true"\]\{color:/, 'on is a filled bolt, not a panel')
   assert.equal(styles[0].textContent.includes('.fm-chip__caret'), false, 'the caret is gone for good')
+  assert.equal(styles[0].textContent.includes('nowrap'), false, 'nothing is clipped any more')
   assert.equal(styles[0].dataset.pluginCss, 'dsh-fast-mode/chip.css')
 })
 
 /* ------------------------------------------------- per-conversation state */
 
-/** Read the `sessions` column out of one recorded patch. */
-function columnOf(call) {
-  return JSON.parse(call.patch.sessions)
-}
-
-test('a switch click records the choice for its own conversation, next to the shared default', async () => {
+test('a click records the choice for its own conversation, next to the shared default', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'turbo' })
   const { render } = await mount(remote, 'session-alpha')
-
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
+  await clickBolt(render)
 
   assert.equal(remote.calls.length, 1, 'one patch carries both tiers')
   const patch = remote.calls[0].patch
@@ -545,16 +380,14 @@ test('a switch click records the choice for its own conversation, next to the sh
 })
 
 test('a conversation with its own entry keeps it when the shared switch moves', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'turbo' })
+  const remote = fakeRemote({ enabled: false, gear: 'auto' })
 
   const alpha = await mount(remote, 'session-alpha')
-  switchOf(openPanel(alpha.render)).props.onClick()
-  await sleep(20)
+  await clickBolt(alpha.render)
   assert.equal(boltOf(alpha.render()).props['data-on'], 'true')
 
   const beta = await mount(remote, 'session-beta')
-  switchOf(openPanel(beta.render)).props.onClick()
-  await sleep(20)
+  await clickBolt(beta.render)
 
   assert.equal(remote.calls.at(-1).patch.enabled, false, 'beta turned the shared switch off')
   const column = columnOf(remote.calls.at(-1))
@@ -563,6 +396,20 @@ test('a conversation with its own entry keeps it when the shared switch moves', 
 
   const again = await mount(remote, 'session-alpha')
   assert.equal(boltOf(again.render()).props['data-on'], 'true', 'reopening alpha paints its own entry')
+})
+
+test('a restart restores the last choice per conversation, not a global default', async () => {
+  const remote = fakeRemote({
+    enabled: true,
+    gear: 'auto',
+    sessions: JSON.stringify({ 'session-alpha': { enabled: false, gear: 'auto', ts: 2 } }),
+  })
+
+  const alpha = await mount(remote, 'session-alpha')
+  assert.equal(boltOf(alpha.render()).props['data-on'], 'false', 'alpha turned fast mode off before the restart')
+
+  const fresh = await mount(remote, 'session-brand-new')
+  assert.equal(boltOf(fresh.render()).props['data-on'], 'true', 'a new conversation starts from the last shared choice')
 })
 
 test('a conversation with no entry inherits the most recent choice', async () => {
@@ -588,23 +435,20 @@ test('an entry that pins only the gear still inherits the shared switch', async 
     sessions: JSON.stringify({ 'session-alpha': { gear: 'turbo', ts: 7 } }),
   })
   const { render } = await mount(remote, 'session-alpha')
-  const tree = render()
-  assert.equal(boltOf(tree).props['data-on'], 'true')
-  assert.equal(boltOf(tree).props.title, 'chip.titleOn')
+  assert.equal(boltOf(render()).props['data-on'], 'true')
 
-  switchOf(openPanel(render)).props.onClick()
-  await sleep(20)
+  await clickBolt(render)
   const column = columnOf(remote.calls[0])
-  assert.equal(column['session-alpha'].enabled, false, 'the switch is now pinned for this conversation')
-  assert.equal(column['session-alpha'].gear, 'auto', 'the panel only ever writes the scheduler')
+  assert.equal(column['session-alpha'].enabled, false, 'the click is now pinned for this conversation')
+  assert.equal(column['session-alpha'].gear, 'auto', 'the chip only ever writes the scheduler')
 })
 
 test('the conversation id is honoured whether it arrives injected or as a standard prop', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'fast' })
+  const remote = fakeRemote({ enabled: false, gear: 'auto' })
   const { render } = await mount(remote, undefined)
   const withProp = () => render({ sessionId: 'session-standard' })
 
-  switchOf(openPanel(withProp)).props.onClick()
+  boltOf(withProp()).props.onClick()
   await sleep(20)
 
   assert.equal(remote.calls.length, 1)

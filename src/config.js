@@ -74,7 +74,7 @@ export const Config = z.object({
     .default('')
     .volatile()
     .description(
-      '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true}}。渲染闪电面板时按会话读写；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。',
+      '会话级覆盖 / Per-session overrides（插件自动维护，请勿手动编辑）: {"sessionId":{"enabled":true}}。闪电每次点击只写本会话的条目；没有条目的会话沿用 enabled/gear，也就是“上次的选择”。重启后按条目恢复，所以每个会话记得自己的状态。',
     ),
 
   outputDiscipline: z
