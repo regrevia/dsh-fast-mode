@@ -644,3 +644,96 @@ test('two conversations, one settings column: each runs at its own entry', async
   const quietAgain = await run('session-quiet')
   assert.equal(quietAgain.out, quietAgain.resolved)
 })
+
+test('the third lever is wired: the stall guard, the compaction reminder, the peer probe', () => {
+  const ctx = fakeContext()
+  apply(ctx, ON)
+  for (const event of ['session/event', 'tools/execute', 'agent/pre-step']) {
+    assert.ok(ctx.handlers.has(event), `missing ${event}`)
+  }
+})
+
+/** The guard only protects shells; run a hung call with an explicit ceiling. */
+test('a hung shell call is cancelled at the configured ceiling', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'turbo', toolTimeoutMs: 20 })
+
+  let bodySignal
+  const exec = { name: 'bash', callId: 'c1', agent, signal: new AbortController().signal }
+  const result = await ctx.fire('tools/execute', exec, () => {
+    bodySignal = exec.signal
+    return new Promise(() => {})
+  })
+
+  assert.equal(result.isError, true, 'the model gets a failure instead of a hung turn')
+  assert.match(result.content[0].text, /run_in_background/)
+  assert.equal(bodySignal.aborted, true)
+})
+
+test('the guard leaves a tool it cannot stall, and the switched-off gear, alone', async () => {
+  const passthrough = async () => ({ isError: false, value: 'read-ok', content: [] })
+  const caller = new AbortController()
+
+  const guarded = fakeContext()
+  apply(guarded, { ...ON, gear: 'turbo', toolTimeoutMs: 10_000 })
+  const read = await guarded.fire('tools/execute', { name: 'read', callId: 'c1', agent, signal: caller.signal }, passthrough)
+  assert.equal(read.value, 'read-ok', 'a slow file read is not a stall')
+
+  const safe = fakeContext()
+  apply(safe, { ...ON, gear: 'safe' })
+  const bash = await safe.fire('tools/execute', { name: 'bash', callId: 'c2', agent, signal: caller.signal }, passthrough)
+  assert.equal(bash.value, 'read-ok', 'safe promises to intervene in nothing')
+})
+
+/** Drive one pre-step decision the way the harness would. */
+const step = (ctx, { sessionId = 'session-1', claimed = [] } = {}) => {
+  const decision = {
+    kind: 'enter',
+    messages: [{ id: 'sys', role: 'system', content: [] }, ...claimed, { id: 'last', role: 'assistant', content: [] }],
+  }
+  return ctx
+    .fire('agent/pre-step', { agent: { id: sessionId }, messages: claimed }, async () => decision)
+    .then(out => ({ out, decision }))
+}
+
+test('a compacted session is reminded on its next step, in its own conversation only', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'turbo', parallel: 6 })
+
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  const before = await step(ctx, { claimed })
+  assert.equal(before.out, before.decision, 'a step with nothing to say is handed back untouched')
+
+  ctx.fire('session/event', { id: 'session-1' }, { type: 'compaction/end' })
+
+  const other = await step(ctx, { sessionId: 'session-2', claimed })
+  assert.equal(other.out, other.decision, 'another conversation does not inherit the reminder')
+
+  const after = await step(ctx, { claimed })
+  const notice = after.out.messages[2]
+  assert.equal(notice.source.form, 'notice')
+  assert.equal(notice.source.plugin, 'fast-mode')
+  assert.match(notice.content[0].text, /up to 6 independent calls/)
+  assert.deepEqual(after.out.messages.map(m => m.id), ['sys', 'u1', notice.id, 'last'], 'the reminder sits after the message it belongs to')
+
+  const again = await step(ctx, { claimed })
+  assert.equal(again.out, again.decision, 'one reminder per compaction, not one per step')
+})
+
+test('a failed compaction schedules no reminder', async () => {
+  const ctx = fakeContext()
+  apply(ctx, ON)
+
+  ctx.fire('session/event', { id: 'session-1' }, { type: 'compaction/end', error: new Error('summariser failed') })
+  const { out, decision } = await step(ctx)
+  assert.equal(out, decision, 'the history is intact when the compaction failed')
+})
+
+test('the reminder can be switched off without switching the mode off', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'turbo', reassertAfterCompaction: false })
+
+  ctx.fire('session/event', { id: 'session-1' }, { type: 'compaction/end' })
+  const { out, decision } = await step(ctx)
+  assert.equal(out, decision)
+})

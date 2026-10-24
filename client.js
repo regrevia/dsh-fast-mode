@@ -71,7 +71,12 @@ window.__ModuleLoader__.load({
     /**
      * The gear ladder as the menu presents it.
      *
-     * `speed` / `tokens` are *estimates* relative to `safe`, not measurements.
+     * `speed` / `tokens` are **estimates** relative to `safe`, not measurements,
+     * and the footer says so in both locales. Our own runs do not support a
+     * per-gear ratio: on single-file tasks every enabled gear lands within noise
+     * of `safe`, and the one confirmatory fan-out experiment measured `turbo`
+     * only. The one *measured* number in the panel is `stall`, which is a policy
+     * budget rather than a prediction.
      * A gear changes two things: how early the policy is allowed to drop the
      * effort notch (`deepAfter`) and how many tool calls the model-facing
      * guidance asks for per step (`parallel`). Both cut wall-clock time by doing
@@ -84,14 +89,23 @@ window.__ModuleLoader__.load({
      * would be rejected by the schema union.
      */
     const GEAR_MENU = [
-      { id: 'safe', speed: 1, tokens: 1 },
-      { id: 'fast', speed: 1.3, tokens: 1.2 },
-      { id: 'turbo', speed: 1.6, tokens: 1.5 },
-      { id: 'max', speed: 2.2, tokens: 1.9 },
-      // The only gear that reaches past ~2x, because it is the only one allowed
-      // to drop reasoning to `off`. It carries a visible asterisk for that.
-      { id: 'ludicrous', speed: 3.4, tokens: 1.3, risky: true },
+      { id: 'safe', speed: 1, tokens: 1, stall: 0 },
+      { id: 'fast', speed: 1.3, tokens: 1.2, stall: 300_000 },
+      { id: 'turbo', speed: 1.6, tokens: 1.5, stall: 180_000 },
+      { id: 'max', speed: 2.2, tokens: 1.9, stall: 120_000 },
+      // The only gear allowed to drop reasoning to `off`. It carries a visible
+      // asterisk for that. `stall: 0` on `safe` means "intervene in nothing".
+      { id: 'ludicrous', speed: 3.4, tokens: 1.3, stall: 90_000, risky: true },
     ]
+
+    /**
+     * The per-gear ceiling on one guarded tool call, formatted for the footer.
+     *
+     * The numbers are the `STALL_BUDGET` table in `src/stallguard.js`; 90 s reads
+     * as "1.5 分", not "2 分", because rounding a budget up would advertise more
+     * patience than the guard actually has.
+     */
+    const formatMinutes = ms => `${Math.round((ms / 60_000) * 10) / 10}`
 
     /**
      * Dictionaries, written with **dotted top-level keys on purpose**.
@@ -122,14 +136,18 @@ window.__ModuleLoader__.load({
       'menu.switchOn': '已开启，点击关闭',
       'menu.switchOff': '已关闭，点击开启',
       'menu.busy': '写入中…',
-      'menu.note': '倍率预估：速度 · token',
+      'menu.note': '倍率预估 · 单次调用 ≤ {minutes} 分',
+      'menu.noteOff': '倍率预估 · 单次调用不限时',
       'menu.scope': '仅本会话生效',
-      'menu.warn': '* 关闭思考，质量会下降',
-      'gears.safe': '安全',
-      'gears.fast': '快速',
-      'gears.turbo': '涡轮',
-      'gears.max': '极限',
-      'gears.ludicrous': '极速',
+      'menu.warn': '* 关闭思考，质量可能下降',
+      'menu.colName': '档位',
+      'menu.colSpeed': '速度',
+      'menu.colTokens': 'token',
+      'gears.safe': 'Eco',
+      'gears.fast': 'Cruise',
+      'gears.turbo': 'Sport',
+      'gears.max': 'Track',
+      'gears.ludicrous': 'Redline',
     }
 
     const en = {
@@ -148,14 +166,18 @@ window.__ModuleLoader__.load({
       'menu.switchOn': 'On, click to turn off',
       'menu.switchOff': 'Off, click to turn on',
       'menu.busy': 'Writing…',
-      'menu.note': 'Estimates: speed · token',
+      'menu.note': 'Estimated ratios · one call ≤ {minutes} min',
+      'menu.noteOff': 'Estimated ratios · calls unbounded',
       'menu.scope': 'This conversation only',
+      'menu.colName': 'Gear',
+      'menu.colSpeed': 'speed',
+      'menu.colTokens': 'token',
       'menu.warn': '* reasoning off, quality drops',
-      'gears.safe': 'Safe',
-      'gears.fast': 'Fast',
-      'gears.turbo': 'Turbo',
-      'gears.max': 'Max',
-      'gears.ludicrous': 'Ludicrous',
+      'gears.safe': 'Eco',
+      'gears.fast': 'Cruise',
+      'gears.turbo': 'Sport',
+      'gears.max': 'Track',
+      'gears.ludicrous': 'Redline',
     }
 
     const CSS = [
@@ -174,15 +196,16 @@ window.__ModuleLoader__.load({
       '.fm-chip__button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
       '.fm-chip__button svg{display:block;flex:none}',
-      // The panel. Narrow on purpose: every row is `name  numbers`, and the
-      // explanatory text is one line at the bottom.
-      '.fm-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:196px;padding:5px;',
+      // The panel. Narrow on purpose, and laid out as a three-column table so
+      // the two numbers have a labelled home: the earlier version printed
+      // `1.6× · 1.5×` with no header, so nothing said which one was the speed
+      // and which one was the token cost.
+      '.fm-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:196px;padding:6px;',
       'border-radius:12px;background:var(--dsw-alias-bg-elevated,#fff);',
       'border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.08));box-shadow:0 10px 30px rgba(0,0,0,.18);',
       'font:inherit;color:var(--dsw-alias-label-primary,#141414);text-align:left}',
       '.fm-menu--dock{left:50%;bottom:104px;transform:translateX(-50%)}',
-      '.fm-menu__head{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 7px;',
-      'margin:0;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}',
+      '.fm-menu__head{display:flex;align-items:center;gap:8px;padding:4px 6px 7px}',
       '.fm-menu__title{flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;letter-spacing:.02em;',
       'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       // The switch: a real control, so the state reads without a sentence.
@@ -194,24 +217,35 @@ window.__ModuleLoader__.load({
       'box-shadow:0 1px 2px rgba(0,0,0,.28)}',
       '.fm-menu__switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
-      '.fm-menu__sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
-      '.fm-menu__item{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:5px 7px;',
-      'margin:0;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:12px;',
-      'cursor:pointer;text-align:left}',
+      '.fm-menu__sep{height:1px;margin:0 6px 5px;background:var(--dsw-alias-border-subtle,rgba(0,0,0,.07))}',
+      '.fm-menu__scope{padding:0 6px 4px;font-size:10px;line-height:1.5;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      // One grid shared by the header and every row: that is what makes the
+      // numbers line up under their labels, at any locale.
+      '.fm-menu__cols,.fm-menu__item{display:grid;align-items:center;column-gap:6px;',
+      'grid-template-columns:minmax(0,1fr) 38px 40px 8px}',
+      '.fm-menu__cols{padding:2px 6px 3px;font-size:10px;line-height:1.3;letter-spacing:.02em;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
+      '.fm-menu__col{text-align:right;white-space:nowrap}',
+      '.fm-menu__col[data-left="true"]{text-align:left}',
+      '.fm-menu__item{width:100%;box-sizing:border-box;padding:5px 6px;margin:0;border:0;border-radius:7px;',
+      'background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left}',
       '.fm-menu__item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
       '.fm-menu__item[data-current="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(77,107,254,.1))}',
       '.fm-menu__item[data-off="true"]{opacity:.5}',
-      '.fm-menu__name{flex:none;font-weight:600;white-space:nowrap}',
-      '.fm-menu__meter{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;',
+      '.fm-menu__name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.fm-menu__num{font-size:11px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;',
       'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
-      '.fm-menu__tick{flex:none;width:6px;height:6px;border-radius:50%;',
+      '.fm-menu__num[data-dim="true"]{color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
+      '.fm-menu__tick{width:6px;height:6px;border-radius:50%;',
       'background:var(--dsw-alias-state-business-primary,#4d6bfe)}',
       '.fm-menu__tick[data-empty="true"]{background:transparent}',
-      '.fm-menu__scope{padding:3px 7px 1px;font-size:10px;line-height:1.4;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.fm-menu__note{padding:4px 7px 2px;font-size:10px;line-height:1.4;',
-      'color:var(--dsw-alias-label-tertiary,#8b8b8b);white-space:nowrap}',
-      '.fm-menu__status{padding:6px 7px;font-size:11px;line-height:1.45;',
+      // The fine print wraps; the old one was `white-space:nowrap` and got cut.
+      '.fm-menu__foot{margin-top:5px;padding:5px 6px 1px;border-top:1px solid ',
+      'var(--dsw-alias-border-subtle,rgba(0,0,0,.07));font-size:10px;line-height:1.5;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b)}',
+      '.fm-menu__foot p{margin:0}',
+      '.fm-menu__status{padding:5px 6px;font-size:11px;line-height:1.45;',
       'color:var(--dsw-alias-state-error-primary,#c9353f)}',
     ].join('')
 
@@ -769,6 +803,9 @@ window.__ModuleLoader__.load({
         : undefined
       const status = statusLine(t)
       const on = store.phase === 'ready' && store.enabled
+      // The footer explains the selected gear's budget: it is a policy the user
+      // should be able to read off the panel, not a hidden constant.
+      const selected = GEAR_MENU.find(entry => entry.id === store.gear) ?? GEAR_MENU[0]
 
       const children = [
         react.createElement(
@@ -796,11 +833,23 @@ window.__ModuleLoader__.load({
         // a user who flips it in one tab has no way to know another tab keeps its
         // own stance. One short line, above the gears it governs.
         react.createElement('div', { className: 'fm-menu__scope' }, t('menu.scope')),
+        // The header the old panel was missing: two numbers per row need two
+        // names, or `1.6× · 1.5×` reads as one opaque pair.
+        react.createElement(
+          'div',
+          { className: 'fm-menu__cols', 'aria-hidden': 'true' },
+          react.createElement('span', { className: 'fm-menu__col', 'data-left': 'true' }, t('menu.colName')),
+          react.createElement('span', { className: 'fm-menu__col' }, t('menu.colSpeed')),
+          react.createElement('span', { className: 'fm-menu__col' }, t('menu.colTokens')),
+          react.createElement('span', { className: 'fm-menu__col' }),
+        ),
       ]
 
       for (const entry of GEAR_MENU) {
         const name = t(`gears.${entry.id}`)
-        const meter = `${formatX(entry.speed)} · ${formatX(entry.tokens)}`
+        const speed = formatX(entry.speed)
+        const tokens = formatX(entry.tokens)
+        const label = `${name} ${t('menu.colSpeed')} ${speed} ${t('menu.colTokens')} ${tokens}`
         children.push(react.createElement(
           'button',
           {
@@ -809,8 +858,8 @@ window.__ModuleLoader__.load({
             className: 'fm-menu__item',
             'data-current': store.gear === entry.id ? 'true' : 'false',
             'data-off': on ? 'false' : 'true',
-            title: `${name} ${meter}`,
-            'aria-label': entry.risky === true ? `${name} ${meter} ${t('menu.warn')}` : `${name} ${meter}`,
+            title: entry.risky === true ? `${label} ${t('menu.warn')}` : label,
+            'aria-label': entry.risky === true ? `${label} ${t('menu.warn')}` : label,
             onClick: () => { void chooseGear(remote, entry.id) },
           },
           react.createElement(
@@ -818,15 +867,21 @@ window.__ModuleLoader__.load({
             { className: 'fm-menu__name' },
             entry.risky === true ? `${name}*` : name,
           ),
-          react.createElement('span', { className: 'fm-menu__meter' }, meter),
+          react.createElement('span', { className: 'fm-menu__num' }, speed),
+          react.createElement('span', { className: 'fm-menu__num', 'data-dim': 'true' }, tokens),
           react.createElement('span', { className: 'fm-menu__tick', 'data-empty': store.gear === entry.id ? 'false' : 'true' }),
         ))
       }
 
+      // Two short lines instead of one long one: the old note concatenated the
+      // estimate sentence and the warning, and neither fitted 196 px.
       children.push(react.createElement(
         'div',
-        { className: 'fm-menu__note' },
-        GEAR_MENU.some(entry => entry.risky === true) ? `${t('menu.note')} ${t('menu.warn')}` : t('menu.note'),
+        { className: 'fm-menu__foot' },
+        react.createElement('p', null, selected.stall > 0
+          ? t('menu.note', { minutes: formatMinutes(selected.stall) })
+          : t('menu.noteOff')),
+        GEAR_MENU.some(entry => entry.risky === true) ? react.createElement('p', null, t('menu.warn')) : null,
       ))
       if (status !== '') children.push(react.createElement('div', { className: 'fm-menu__status' }, status))
 

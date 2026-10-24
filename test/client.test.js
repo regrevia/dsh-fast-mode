@@ -194,9 +194,16 @@ function gearRows(menu) {
     .map(element => element.props)
 }
 
-/** The trailing line of a panel: the estimate note, or a status sentence. */
+/** Every string inside a rendered subtree, in order. */
+function textOf(node) {
+  if (typeof node === 'string') return node
+  if (node === null || node === undefined) return ''
+  return (node.children ?? []).map(textOf).filter(Boolean).join(' ')
+}
+
+/** The trailing block of a panel: the fine print, or a status sentence. */
 function lastLine(menu) {
-  return menu.children.at(-1).children.join('')
+  return textOf(menu.children.at(-1))
 }
 
 test('the bundle declares the loader contract and the services it needs', () => {
@@ -246,10 +253,15 @@ test('every dictionary key is flat, because the locale lookup indexes it flat', 
       assert.match(key, /^[a-z]+(\.[a-zA-Z]+)+$/, `${locale}: "${key}" must be a dotted flat key`)
     }
   }
-  assert.match(dict.zh['menu.note'], /预估/, 'the multipliers are labelled as estimates')
-  assert.match(dict.en['menu.note'], /estimates/i)
-  assert.match(dict.zh['gears.turbo'], /涡轮/, 'the gears carry their own names')
-  assert.match(dict.zh['gears.ludicrous'], /极速/)
+  assert.match(dict.zh['menu.note'], /预估/, 'the multipliers are labelled as estimates, not measurements')
+  assert.match(dict.zh['menu.note'], /\{minutes\}/, 'and the line also carries the measured stall ceiling')
+  assert.match(dict.en['menu.note'], /Estimated/i)
+  assert.match(dict.zh['menu.noteOff'], /不限时/, 'the control gear has no ceiling, and says so')
+  assert.equal(dict.zh['gears.safe'], 'Eco', 'the gears carry their own names')
+  assert.equal(dict.zh['gears.fast'], 'Cruise')
+  assert.equal(dict.zh['gears.turbo'], 'Sport')
+  assert.equal(dict.zh['gears.max'], 'Track')
+  assert.equal(dict.zh['gears.ludicrous'], 'Redline')
   assert.match(dict.zh['menu.warn'], /质量/, 'the past-2x gear says what it costs')
 })
 
@@ -350,10 +362,10 @@ test('every gear row states its speed and token estimate, and the panel stays na
   const rows = gearRows(menu)
   assert.equal(rows.length, 5, 'four tiers plus the past-2x gear')
 
-  assert.match(rows[0]['aria-label'], /1\.0× · 1\.0×/)
-  assert.match(rows[2]['aria-label'], /1\.6× · 1\.5×/)
-  assert.match(rows[3]['aria-label'], /2\.2× · 1\.9×/, 'max is the last legal cut on a route without `off`')
-  assert.match(rows[4]['aria-label'], /3\.4× · 1\.3×/, 'the opt-in gear is where 3x lives')
+  assert.match(rows[0]['aria-label'], /menu\.colSpeed 1\.0× menu\.colTokens 1\.0×/)
+  assert.match(rows[2]['aria-label'], /1\.6× menu\.colTokens 1\.5×/)
+  assert.match(rows[3]['aria-label'], /2\.2× menu\.colTokens 1\.9×/, 'max is the last legal cut on a route without `off`')
+  assert.match(rows[4]['aria-label'], /3\.4× menu\.colTokens 1\.3×/, 'the opt-in gear is where 3x lives')
   assert.match(rows[4]['aria-label'], /质量|quality|warn/, 'the risky gear carries its warning')
   const riskyName = menu.children
     .filter(element => element.props && element.props.className === 'fm-menu__item')[4]
@@ -362,11 +374,72 @@ test('every gear row states its speed and token estimate, and the panel stays na
 
   assert.equal(rows[1]['data-current'], 'true', 'the current gear is marked')
   assert.equal(rows[0]['data-current'], 'false')
-  assert.equal(lastLine(menu), 'menu.note menu.warn', 'one line of fine print, not one per row')
+  assert.match(lastLine(menu), /^menu\.note \{[^}]*"minutes":"5"\} menu\.warn$/,
+    'fine print: one estimate line (carrying Cruise\'s 5 min ceiling), one warning line, never one per row')
 
   // The earlier panel repeated `速度`/`token` on every row and overflowed its
   // own 274px box. The rewritten one is a fixed narrow popover.
   assert.match(menu.props.className, /^fm-menu( |$)/)
+})
+
+test('the panel labels both number columns, so `1.6x 1.5x` is not an opaque pair', async () => {
+  const { render } = await mount(fakeRemote({ enabled: true, gear: 'turbo' }))
+  const menu = openPanel(render)
+
+  const cols = menu.children.find(element => element.props && element.props.className === 'fm-menu__cols')
+  assert.ok(cols !== undefined, 'the panel has a header row above the gears')
+  assert.deepEqual(cols.children.map(textOf), ['menu.colName', 'menu.colSpeed', 'menu.colTokens', ''],
+    'name, speed, token — in that order, with a slot for the tick')
+  assert.equal(cols.props['aria-hidden'], 'true', 'the header labels the columns, the rows carry the values')
+
+  // The header and every row share one grid template: that is what puts each
+  // number under its label instead of letting it drift with the gear name.
+  const probe = fakeRemote()
+  const { module: probeModule, styles } = loadClient(probe)
+  probeModule.apply(fakeContext(probe))
+  assert.match(styles[0].textContent,
+    /\.fm-menu__cols,\.fm-menu__item\{display:grid;align-items:center;column-gap:6px;grid-template-columns:minmax\(0,1fr\) 38px 40px 8px\}/,
+    'one grid, declared once, used by the header and the rows')
+})
+
+test('the footer quotes the host-side stall table, gear by gear', async () => {
+  const { STALL_BUDGET } = await import('../src/stallguard.js')
+
+  assert.deepEqual(Object.keys(STALL_BUDGET).sort(), Object.keys(GEARS).sort(),
+    'every gear has a ceiling, and the panel has no gear the host cannot budget')
+
+  for (const [gear, budget] of Object.entries(STALL_BUDGET)) {
+    const { render } = await mount(fakeRemote({ enabled: true, gear }))
+    const lines = openPanel(render).children.at(-1).children.filter(Boolean).map(textOf)
+
+    if (budget === 0) {
+      assert.equal(lines[0], 'menu.noteOff', `${gear}: no watch, so the footer says "unbounded"`)
+      continue
+    }
+    const minutes = `${Math.round((budget / 60_000) * 10) / 10}`
+    assert.equal(lines[0], `menu.note {"minutes":"${minutes}"}`, `${gear}: the footer repeats the host table`)
+  }
+})
+
+test('the fine print wraps inside the 196 px popover instead of running off the edge', async () => {
+  const { render } = await mount(fakeRemote({ enabled: true, gear: 'max' }))
+  const menu = openPanel(render)
+
+  const foot = menu.children.find(element => element.props && element.props.className === 'fm-menu__foot')
+  assert.ok(foot !== undefined, 'the estimate note and the warning live in one footer')
+  const lines = foot.children.filter(Boolean).map(textOf)
+  assert.equal(lines.length, 2, 'two short lines, so neither has to be clipped')
+  assert.match(lines[0], /^menu\.note \{[^}]*"minutes":"2"\}/, 'Track states its own 2 min ceiling')
+  assert.equal(lines[1], 'menu.warn')
+
+  const probe = fakeRemote()
+  const { module: probeModule, styles } = loadClient(probe)
+  probeModule.apply(fakeContext(probe))
+  const css = styles[0].textContent
+  assert.match(css, /\.fm-menu\{[^}]*width:196px/, 'the popover keeps its 196 px budget')
+  const rule = /\.fm-menu__foot\{([^}]*)\}/.exec(css)
+  assert.ok(rule !== null, 'the footer has its own rule')
+  assert.equal(rule[1].includes('nowrap'), false, 'the footer may wrap; the old note was clipped by nowrap')
 })
 
 test('picking a gear in the panel writes it, and turns Fast mode on if it was off', async () => {

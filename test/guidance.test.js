@@ -79,7 +79,10 @@ test('outputDiscipline: false keeps the fan-out and drops the prose rules', () =
 test('the guidance grows with the gear and stays small in absolute terms', () => {
   const sizes = ['fast', 'turbo', 'max'].map(gear => buildGuidance(resolve({ gear })).length)
   assert.deepEqual(sizes, [...sizes].sort((a, b) => a - b), 'a higher gear must not ship less guidance')
-  // ~4 chars per token: even the biggest gear stays under ~500 input tokens on
-  // a request that already carries a system prompt.
-  assert.ok(sizes.at(-1) < 2200, `guidance is ${sizes.at(-1)} chars`)
+  // ~4 chars per token: even the biggest gear stays under ~800 input tokens on
+  // a request that already carries a system prompt. The batching block is ~1 KB
+  // and the bounded-calls block ~0.5 KB; both are amortised over a step that
+  // costs ~90 k prompt tokens, so they are noise next to the round trips and the
+  // cancelled calls they remove.
+  assert.ok(sizes.at(-1) < 3000, `guidance is ${sizes.at(-1)} chars`)
 })

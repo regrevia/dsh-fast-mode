@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.9.0
+
+Tool wait is the third lever, and the panel stops claiming measurements it never
+made.
+
+- **A stall guard bounds one tool call.** `tools/execute` now races a guarded
+  shell-style call (`bash`, `script`, `monitor`, `pwsh`…) against a per-gear
+  budget: 300 / 180 / 120 / 90 s for Cruise / Sport / Track / Redline, and no
+  watch at all on Eco. On expiry the plugin aborts *its own* controller — never
+  the caller's signal, which the registry re-fuses anyway — gives the tool 250 ms
+  to unwind, restores the caller's signal, and returns a `ToolExecutionFailure`
+  telling the model to move the work to `run_in_background`, pass a `script_path`
+  instead of a heredoc, narrow the probe, and never re-issue the same command
+  unchanged. Waiting tools (`ask_user_question`, `wait_agent`, `job_output`,
+  `job_list`, `task_board_run`, `workflow`, `subagent`, `subagent_fork`) and the
+  file tools are exempt. The ceiling is a **policy budget, not a measurement**;
+  `stallGuard: false` or `toolTimeoutMs: -1` disables it, `toolTimeoutMs: 90000`
+  applies one number to every gear.
+- **The prompt half ships with it.** Four rules joined the execution-speed
+  section: bound any command that can hang, prefer `run_in_background`, write
+  long/quoted/multi-line commands to a file instead of a heredoc, and change the
+  command before retrying one that was cancelled or came back malformed.
+- **`dsh-batch-tool-calls` and `dsh-ops` must not be enabled together with it.**
+  The batch plugin is a static, gear-blind subset of this guidance; the ops plugin
+  adds two shells plus Windows-only binaries and conflicting timeout advice. The
+  host reads the profile's dependency files once on load (and probes for live
+  `ops_*` tools); if either is present it logs one warning and appends one notice
+  to the next step, then goes quiet. It never hard-fails the user. Both reference
+  manuals document the conflict.
+- **The panel says "estimate", and shows the one number that is not.** The footer
+  now reads `倍率预估 · 单次调用 ≤ 3 分` instead of `倍率 = 相对 Eco 的实测中位数`:
+  our own runs do not support a per-gear speed or token ratio — on single-file
+  tasks every enabled gear lands within noise of `safe` — so the multipliers are
+  labelled as estimates while the stall ceiling is quoted straight from the
+  host-side table for the selected gear.
+- **The five gears have names now: Eco / Cruise / Sport / Track / Redline.** The
+  ids are unchanged (`safe` / `fast` / `turbo` / `max` / `ludicrous`), so existing
+  patches, settings and experiment files keep working — only the labels moved.
+
+- **The five gears have names now: Eco / Cruise / Sport / Track / Redline.** The
+  ids are unchanged (`safe` / `fast` / `turbo` / `max` / `ludicrous`), so existing
+  patches, settings and experiment files keep working — only the labels moved.
+- **The gear menu labels its own columns.** The 0.8.0 popover printed
+  `1.6x · 1.5x` with no header, so nothing said which number was the speed and
+  which was the token cost. A `Gear / speed / token` header row now shares one
+  CSS grid with the five gear rows: the numbers sit under their labels, right
+  aligned in tabular figures, in both locales. Each row's `aria-label` names the
+  columns too, so the pair is not opaque to a screen reader either.
+- **The fine print wraps instead of running off the edge.** The old single line
+  (`倍率预估：速度 · token * 关闭思考，质量会下降`) was `white-space: nowrap`
+  inside a 196 px popover and got clipped mid-sentence. It is two short lines in
+  a footer above a hairline now — the estimate note (which also carries the
+  selected gear's stall ceiling) and the warning — and both wrap.
+- **README: 484 lines to 98.** The front page keeps the principle, the measured
+  table, thirty-second setup, the five gears, the coexistence rules and what is
+  next, one short paragraph each. Configuration, logging, measurement instruments,
+  experiment methodology, safety boundary, limits and the test guide moved to
+  `docs/REFERENCE.md`. The result table states the honest part in the open:
+  turbo is 537 ms slower and 5 % fatter per step — it wins on step count.
+
+198 tests, green. `test/stallguard.test.js` (12) covers the budget table, the
+signal dance, the failure text, the frozen notice messages and the peer scan;
+`test/plugin.test.js` adds the wiring cases (registration, a hung `bash`
+cancelled at `toolTimeoutMs: 20`, passthrough, the post-compaction reminder);
+one `test/client.test.js` case pins the footer to the host-side budget table so
+the two halves cannot drift.
+
 ## 0.8.0
 
 Everything up to 0.7.0 optimised effort, and Experiment E showed effort is not the

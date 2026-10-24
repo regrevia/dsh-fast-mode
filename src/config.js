@@ -21,7 +21,8 @@
  * knob (`floor`, `ladder`, `aliases`, `deepAfter`, `slowMs`, `bigChars`,
  * `window`, `holdTools`, `escalateAfterStep`, `discoverTimeoutMs`,
  * `baselineFromDefault`, `metrics`, `metricsFile`, `benchmarkFile`, `debug`,
- * `debugFile`) is a composition-level
+ * `debugFile`, `stallGuard`, `toolTimeoutMs`, `reassertAfterCompaction`) is a
+ * composition-level
  * troubleshooting value: schemastery passes undeclared keys through untouched,
  * so a hand-written patch keeps working without cluttering the form.
  *
@@ -82,6 +83,27 @@ export const Config = z.object({
     .default(true)
     .description(
       '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔（实测同一任务把每步可见输出从约 640 降到约 190 token，墙钟快约三分之一）。默认开启；关掉后只注入并行提示，不干预文风。',
+    ),
+
+  stallGuard: z
+    .boolean()
+    .default(true)
+    .description(
+      '卡顿看门狗 / Stall guard: 给单次工具调用加按档位收紧的上限（safe 不限；fast 300s、turbo 180s、max 120s、ludicrous 90s）。超时就取消这次调用并把“换个做法重试”写回给模型。只作用于 shell/脚本类工具，问用户、等后台任务、等子代理这类本来就要等的调用不受影响。',
+    ),
+
+  toolTimeoutMs: z
+    .number()
+    .default(0)
+    .description(
+      '单次工具调用上限 / Per-call ceiling in milliseconds: 0 = 按档位（见 stallGuard），负数 = 关闭看门狗，正数 = 所有档位都用这个值。',
+    ),
+
+  reassertAfterCompaction: z
+    .boolean()
+    .default(true)
+    .description(
+      '压缩后补提醒 / Reassert after compaction: 上下文被压缩后，在下一次请求里写一条极短的 notice，重申批量调用与有界调用两条规则。默认开启；关掉后提示段仍然生效，只是不再补这条消息。',
     ),
 
   metrics: z

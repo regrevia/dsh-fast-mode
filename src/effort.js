@@ -64,6 +64,7 @@ export const DOCUMENTED_ALIASES = Object.freeze({
   high: 'high',
   xhigh: 'high',
   max: 'max',
+  ultra: 'max',
 })
 
 /** Defaults for the adaptive thresholds. */
@@ -520,6 +521,21 @@ export function resolveConfig(raw, overrides) {
     escalateAfterStep: Math.floor(number(config.escalateAfterStep, DEFAULTS.escalateAfterStep, { positive: true })),
     discoverTimeoutMs: Math.floor(number(config.discoverTimeoutMs, DEFAULTS.discoverTimeoutMs, { positive: true })),
     baselineFromDefault: config.baselineFromDefault !== false,
+    /**
+     * The stall guard. Unlike every other field here it is not about how much
+     * the model deliberates: it bounds how long one tool call may run before it
+     * is cancelled and reported back as a failure. On by default, because the
+     * failure it prevents (an unbounded foreground command) is pure loss.
+     */
+    stallGuard: config.stallGuard !== false,
+    /**
+     * Explicit per-call ceiling in milliseconds. `0` follows the gear table,
+     * a negative value disables the guard, a positive value overrides the table
+     * for every gear. Kept signed on purpose: `-1` is the "off" switch.
+     */
+    toolTimeoutMs: Math.floor(number(config.toolTimeoutMs, 0)),
+    /** Re-state the batch/stall rules once after a context compaction. */
+    reassertAfterCompaction: config.reassertAfterCompaction !== false,
     debug: config.debug === true,
     debugFile: typeof config.debugFile === 'string' ? config.debugFile : '',
     /**

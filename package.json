@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "0.8.0",
-  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching, with a built-in speed/token benchmark. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
+  "version": "0.9.0",
+  "description": "DeepSeek Harness fast mode: a lightning switch in the composer, gear-based adaptive reasoning effort plus parallel tool batching, a per-gear stall guard that bounds a single tool call, and a built-in speed/token benchmark. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"
@@ -21,7 +21,9 @@
     "./package.json": "./package.json",
     "./metrics": "./src/metrics.js",
     "./benchmark": "./src/benchmark.js",
-    "./state": "./src/state.js"
+    "./state": "./src/state.js",
+    "./stallguard": "./src/stallguard.js",
+    "./peers": "./src/peers.js"
   },
   "files": [
     "index.js",
