@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/regrevia/dsh-fast-mode/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/regrevia/dsh-fast-mode/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/regrevia/dsh-fast-mode/releases"><img alt="release" src="https://img.shields.io/github/v/release/regrevia/dsh-fast-mode"></a>
-  <img alt="zero-deps" src="https://img.shields.io/badge/dependencies-0-brightgreen">
+  <img alt="deps" src="https://img.shields.io/badge/dependencies-1%20(schemastery)-blue">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
@@ -23,7 +23,7 @@
 
 ---
 
-A plugin that removes the "dead waiting time in multi-step tasks" from models that are **not slow to begin with**, like `deepseek-v4.1-flash`: one host plugin, zero dependencies, no session changes, no context writes.
+A plugin that removes the "dead waiting time in multi-step tasks" from models that are **not slow to begin with**, like `deepseek-v4.1-flash`: one host plugin plus one small client widget, no session changes, no context writes. Its only dependency is `@deepseek-ai/schemastery`, which the profile already contains — it declares the settings-page schema and carries no runtime logic.
 
 It does three things, all of them acting on the same request's **thinking gear** and **how many calls each step issues**:
 
@@ -33,7 +33,27 @@ It does three things, all of them acting on the same request's **thinking gear**
 | 2 | Emit only effort ids **the current route actually declares**, never a guess | `llm.resolveModelInfo()` discovers → notch only along that route's ladder |
 | 3 | At gear ≥ 2, inject a short "batch independent calls in parallel" instruction into the model, so one step performs reads that would have taken three | `systemPrompt.section` (order 520) |
 
-**Active as soon as it is installed**: the default gear is `fast` (gear 2), which is all three of the above turned on. To go fully back to the silent v0.3.0 behavior — no prompt injected, downgrades only after a clean streak — use `gear: safe`.
+## The lightning switch: off by default, one click to arm
+
+Since 0.5.0 this plugin is **opt-in**: once installed it does nothing until you explicitly turn it on. All three entry points write the same `enabled` field:
+
+| Entry point | Action | Good for |
+|---|---|---|
+| **The lightning in the composer** (new) | A bolt button right of the model selector: hollow = off, filled black = on, one click toggles | Everyday use |
+| **The settings page** (new) | Settings → Plugins → `fast-mode`, edit `enabled` / `gear` / `parallel` | Tweaking the gear |
+| **The patch** | Write `enabled: true` in `cordis.patch.yml` | Profiles managed by configuration |
+
+All three write the same user-layer configuration (`settings/update` → `applies: live`), so a click takes effect on the **next model call** with no restart. The first install (or a fresh upgrade to a build with a client half) needs one page reload / app restart so the client bundle is loaded.
+
+How to read the bolt:
+
+- **Hollow grey** = off (the default; the plugin does not intervene at all);
+- **Filled black** = on, and the hover tooltip carries the current gear;
+- **Greyed out and unclickable** = this layer of configuration is read-only, or this profile declares no entry for the plugin — the tooltip says which, and it never pretends the toggle worked.
+
+It registers on `conversation.input.activity` (right of the model selector, left of the stop button) and **never** occupies `conversation.input.model`, so it cannot shadow the harness's own model selector. A click is an optimistic update plus a read-back check: if the write fails the icon reverts and the tooltip explains why.
+
+Once armed, the default gear is `fast` (gear 2), which is all three mechanisms above turned on; to go fully back to the silent v0.3.0 behavior — no prompt injected, downgrades only after a clean streak — use `gear: safe`.
 
 ## Measured: where the time goes
 
@@ -102,9 +122,9 @@ Install into the current profile (DSH desktop → Plugin Manager → Install bun
 | **B. One terminal command** | `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | Then see the patch snippet below |
 | **C. Local development** | `pnpm add link:/path/to/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | Code changes take effect immediately |
 
-**Verified**: on DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop`, pointing the Plugin Manager at `github:regrevia/dsh-fast-mode` fetched the 0.4.0 tarball and applied it directly (`application: applied`, no warnings); the profile records `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`.
+**Verified**: on DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop`, pointing the Plugin Manager at `github:regrevia/dsh-fast-mode` fetched the tarball and applied it directly (`application: applied`, no warnings); the profile records `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`. That was 0.4.0, which had no client half. 0.5.0 adds the client half (the bolt) and applies just the same, but you **must reload the page / restart the app once** to see the icon — the host only scans `dsh.client` declarations at startup.
 
-The npm package of the same name **is not published yet** (`npm whoami` has no credentials on this machine), so for now do not use an npm spec like `dsh-fast-mode@0.4.0`; use the `github:` form above.
+The npm package of the same name **is not published yet** (`npm whoami` has no credentials on this machine), so for now do not use an npm spec like `dsh-fast-mode@0.5.0`; use the `github:` form above.
 
 Paths B / C need the plugin line inserted into the profile's `cordis.patch.yml` (path A writes it itself):
 
@@ -113,6 +133,7 @@ Paths B / C need the plugin line inserted into the profile's `cordis.patch.yml` 
     - id: fast-mode
       name: dsh-fast-mode
       config:
+        enabled: true      # off by default after install; this line is the real switch
         gear: 2            # 1 safe / 2 fast / 3 turbo / 4 max; the default is 2
         debug: true
         debugFile: /tmp/fast-mode.log
@@ -136,7 +157,7 @@ A gear is not a set of switches but **one posture**: how early downgrading is al
 | 3 | Turbo `turbo` | `low` | 3 | 5 | 6 per step | Heavy code reading, research, bulk triage |
 | 4 | Max `max` | `low` | 2 | 4 | 8 per step | Mechanical batch work; not recommended for critical changes unattended |
 
-- Use a number (`gear: 3`) or a name (`gear: turbo`); omit it and you get `fast`, anything invalid falls back to `safe`, never to "unlimited".
+- Use a number (`gear: 3`) or a name (`gear: turbo`); once armed, omitting it gives you `fast`, and anything invalid falls back to `safe`, never to "unlimited".
 - Explicit fields always beat the gear: `gear: 3` + `deepAfter: 8` is "turbo parallelism with a conservative downgrade rhythm".
 - No gear ever goes below `floor` (default `low`). To push harder, set `floor: minimal` or `floor: off` yourself; that amounts to allowing thinking to be turned off, and the quality risk is yours.
 - The higher the gear, the more input tokens a step usually carries (more tool results per step) and the fewer round trips — exactly the "trade tokens for time" deal.
@@ -208,7 +229,7 @@ On the official API the **finest downgrade grain** is `high → low` (there is n
 - id: fast-mode
   name: dsh-fast-mode
   config:
-    enabled: true
+    enabled: true              # the switch, default false; same field the composer bolt writes
     gear: 2                    # 1 safe / 2 fast / 3 turbo / 4 max (default 2)
     parallel: 4                # optional: overrides the gear's parallel target (only the number in the prompt and the warning are affected)
     floor: low                 # never choose a cheaper gear than this
@@ -228,7 +249,7 @@ On the official API the **finest downgrade grain** is `high → low` (there is n
 
 | Field | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | `false` makes the plugin do nothing at all |
+| `enabled` | `false` | the switch, and the field the composer bolt writes; only `true` makes the plugin intervene |
 | `gear` | `fast` | Gear; `1..4` or `safe`/`fast`/`turbo`/`max`; an invalid value falls back to `safe` |
 | `parallel` | follows the gear (4/6/8) | Parallel target in the injected prompt; `1` means no injection |
 | `floor` | `low` | never choose a cheaper gear; on the official route `floor: high` means no downgrade at all |
@@ -256,6 +277,7 @@ If every line reads `high=>high`, check in this order: whether the step number r
 - **Emit only ids the route declared.** A property test guarantees that no input can produce a gear the route did not declare; the worst case is "did nothing", never "broke the turn".
 - **No session writes.** Observation data stays in memory, isolated per agent and reset per turn; it does not occupy a single token of context.
 - **Failure is silent.** An unreachable provider, a timeout, an unwritable log file — all degrade silently.
+- **The client half cannot take the composer down.** Every remote call behind the bolt sits in a try/catch; an unreadable configuration renders an unclickable grey button that states why, and a slot registration taken by another plugin only logs a warn instead of escaping `apply`.
 
 ## Honest limitations
 
@@ -268,10 +290,10 @@ If every line reads `high=>high`, check in this order: whether the step number r
 ## Development and tests
 
 ```bash
-npm test        # 64 tests, no network, no harness required
+npm test        # 78 tests, no network, no harness required
 ```
 
-The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (an invalid value falls back to `safe`). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1; one last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs.
+The policy tests cover the planning-step exemption, single and double notches, `floor`, the no-upgrade rule, each struggle signal working on its own, a `holdTools` hit, per-turn reset, per-agent isolation, bounded observation memory, malformed argument handling, config normalization (a typo in `floor` degrades to the default rather than removing the floor), and gear normalization (an invalid value falls back to `safe`). The provider group runs the policy against the official adapter's real declaration (`off/low/high/max`), a wider alias list, a five-level self-hosted gateway, and a route that declares no gears at all — including a property test that no input can produce an id the route did not declare. The integration tests drive the registered handlers through a fake context in harness order, and verify that the system prompt is registered at gear ≥ 2 and completely absent at gear 1; one last test checks the plugin manifest itself — the `icon.png` in the package really is a PNG no larger than 256 KiB, both languages of `meta.title` / `meta.description` are present, and `files[]` covers every file the runtime needs. The same group also checks the client-half manifest contract (`dsh.client.platform === "web"`, `exports["./client"]`, `client.js` packed, the bundle id equal to the package name, and the registered slot being `conversation.input.activity` rather than the one that would shadow the model selector); the last group runs the shipped `client.js` verbatim in a `vm` sandbox with a stub `__ModuleLoader__` and a fake `settings` remote: the bundle parses, requires only `react`, paints hollow when off, sends exactly one `settings/update` carrying the revision it read, rolls back with a stated reason when that write is refused, and renders an unclickable chip over a read-only layer or an absent entry; another group validates the schema against real schemastery — `enabled` defaults to `false`, all four gear names pass, `gear: warp` fails loudly, and patch-level keys the schema does not declare (`floor`, `holdTools`) survive untouched.
 
 ## License
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0
+
+Fast mode becomes something you switch, not something an install decides for you.
+
+- **Opt-in.** `enabled` now defaults to `false`, and `apply()` registers nothing —
+  no hooks, no prompt section, no discovery — until something sets it to `true`.
+  Only a literal `true` arms it; `1` or `"yes"` do not.
+- **A lightning switch in the composer.** New client half (`client.js`, served
+  through `dsh.client`) registers on `conversation.input.activity`, beside the
+  model selector: hollow bolt = off, filled black = on, the tooltip carries the
+  gear and the reason when it is not clickable. It reads and writes the plugin's
+  own `enabled` through `remote.settings.describe()` / `update()`, so the chip,
+  the generated Settings page, and `cordis.patch.yml` are three views of one
+  field. Clicks are optimistic and then verified by polling `describe()`; a failed
+  write reverts the icon and surfaces the error in the tooltip. A registration
+  taken by another plugin, an unreadable document, or a read-only layer degrades
+  to a disabled chip, never to an error thrown into the composer.
+- **A config schema.** `Config` (schemastery) declares only the three fields a
+  form should show — `enabled`, `gear`, `parallel`. Undeclared patch-level keys
+  (`floor`, `holdTools`, `debug`, …) pass through untouched, so existing
+  compositions keep working.
+- **One dependency.** `@deepseek-ai/schemastery` (`~3.18.5`), which every shipped
+  DSH plugin that exposes a settings page already declares; the profile already
+  has it hoisted, so this adds no new runtime.
+- **Tests.** 78 (up from 64): the default-off contract, non-boolean configs not
+  arming the policy, real schemastery validation of the schema (`gear: warp`
+  fails loudly, unknown keys survive), the client-half manifest contract
+  (`dsh.client.platform`, `exports["./client"]`, packed `client.js`, bundle id,
+  and the slot being the one that never shadows the model selector), and eight
+  tests that run the shipped `client.js` verbatim in a `vm` sandbox with a stub
+  `__ModuleLoader__` and a fake `settings` remote — proving the bundle parses,
+  declares its loader contract, paints hollow when off and filled when on, sends
+  exactly one `settings/update` with the revision it read, rolls back and explains
+  itself when that write is refused, and never renders a clickable chip over a
+  read-only layer or an absent entry.
+
 ## 0.4.0
 
 Speed becomes a stance, not a single threshold, and the plugin now installs itself ON.

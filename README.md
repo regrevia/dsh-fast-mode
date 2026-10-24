@@ -15,14 +15,14 @@
 <p align="center">
   <a href="https://github.com/regrevia/dsh-fast-mode/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/regrevia/dsh-fast-mode/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/regrevia/dsh-fast-mode/releases"><img alt="release" src="https://img.shields.io/github/v/release/regrevia/dsh-fast-mode"></a>
-  <img alt="zero-deps" src="https://img.shields.io/badge/dependencies-0-brightgreen">
+  <img alt="deps" src="https://img.shields.io/badge/dependencies-1%20(schemastery)-blue">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <a href="README.en.md">English</a>
 </p>
 
 ---
 
-这是给 `deepseek-v4.1-flash` 这类**本来就不慢的模型**去掉"多步任务里白等的时间"的插件：一个 Host 插件、零依赖、不改会话、不写上下文。
+这是给 `deepseek-v4.1-flash` 这类**本来就不慢的模型**去掉"多步任务里白等的时间"的插件：一个 Host 插件 + 一个客户端小挂件，不改会话、不写上下文。唯一的依赖是宿主 profile 里本来就有的 `@deepseek-ai/schemastery`（只用来声明设置页的配置 schema，不含运行时逻辑）。
 
 它做三件事，全部作用在同一个请求的**思考档位**和**每一步的调用宽度**上：
 
@@ -32,7 +32,27 @@
 | 2 | 只发**当前路由真正声明过**的档位 id，绝不猜 | `llm.resolveModelInfo()` 发现 → 只在该路由的档位链上挪 |
 | 3 | 档位 ≥ 2 时，向模型注入一小段"独立调用请批量并行"的指令，让一步做完本来要三步的读 | `systemPrompt.section`（order 520） |
 
-**装好即生效**：默认档位是 `fast`（档位 2），也就是上面三件事全开。想完全回到 v0.3.0 那种"不注入任何提示、只在干净连击后降档"的静默行为，用 `gear: safe`。
+## 闪电开关：默认关闭，点一下才开
+
+从 0.5.0 起这个插件是 **opt-in**：装好之后它什么都不做，直到你明确打开它。三个入口写的是同一个字段 `enabled`：
+
+| 入口 | 操作 | 适合 |
+|---|---|---|
+| **对话框里的闪电**（新） | 模型选择器右边一枚闪电按钮：空心 = 关闭，实心黑色 = 开启，点一下就切换 | 日常 |
+| **设置页**（新） | 设置 → 插件 → `fast-mode`，改 `enabled` / `gear` / `parallel` | 顺手调档位 |
+| **patch** | `cordis.patch.yml` 里写 `enabled: true` | 用配置管理 profile |
+
+三处写的是同一份用户层配置（`settings/update` → `applies: live`），所以点完**下一次模型调用**就生效，不用重启。第一次装（或刚升级到带客户端半的版本）要重载一次页面 / 重启应用，让客户端 bundle 加载出来。
+
+闪电的读法：
+
+- **空心灰** = 关闭（默认，插件完全不干预）；
+- **实心黑** = 开启，hover 提示里带当前档位；
+- **灰掉不可点** = 这层配置只读，或本 profile 里没有声明这个插件条目 —— hover 提示会写明是哪一种，不会假装切换成功。
+
+它注册在 `conversation.input.activity`（模型选择器右侧、停止按钮左侧），**不占用** `conversation.input.model`，所以永远不会遮住宿主自己的模型选择器。点击是乐观更新 + 回读校验：写失败会把图标退回原状，并在提示里给出错误原因。
+
+开启后的默认档位是 `fast`（档位 2），也就是上面三件事全开；想完全回到 v0.3.0 那种"不注入任何提示、只在干净连击后降档"的静默行为，用 `gear: safe`。
 
 ## 实测：慢在哪
 
@@ -101,9 +121,9 @@
 | **B. 终端一条命令** | `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | 然后见下方 patch 片段 |
 | **C. 本地开发** | `pnpm add link:/path/to/dsh-fast-mode --dir ~/.dsh/profiles/desktop` | 改代码即时生效 |
 
-**已实测**：在 DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop` 上，把插件管理器的安装目标填成 `github:regrevia/dsh-fast-mode`，它拉下 0.4.0 的 tarball 并直接生效（`application: applied`，无 warning），profile 里记录为 `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`。
+**已实测**：在 DSH `0.2.1-rc.2` / `DSH_PROFILE=desktop` 上，把插件管理器的安装目标填成 `github:regrevia/dsh-fast-mode`，它拉下 tarball 并直接生效（`application: applied`，无 warning），profile 里记录为 `"dsh-fast-mode": "github:regrevia/dsh-fast-mode"`。0.4.0 无客户端半时就这样跑通；0.5.0 多了客户端半（闪电），重装后同样 applied，只是**必须重载一次页面 / 重启应用**才会看到图标 —— 宿主只在启动时扫描 `dsh.client` 声明。
 
-同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.4.0` 这类 npm spec，用上面的 `github:` 形式。
+同名 npm 包**尚未发布**（这台机器上 `npm whoami` 无凭据），所以暂时不要用 `dsh-fast-mode@0.5.0` 这类 npm spec，用上面的 `github:` 形式。
 
 方式 B / C 需要在 profile 的 `cordis.patch.yml` 里插入插件行（方式 A 会自己写）：
 
@@ -112,7 +132,8 @@
     - id: fast-mode
       name: dsh-fast-mode
       config:
-        gear: 2            # 1 稳 / 2 快 / 3 极速 / 4 极限；默认就是 2
+        enabled: true      # 装好默认关闭；这一行才是真正的开关
+        gear: 2            # 1 稳 / 2 快 / 3 极速 / 4 极限；默认为 2
         debug: true
         debugFile: /tmp/fast-mode.log
 ```
@@ -135,7 +156,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 | 3 | 极速 `turbo` | `low` | 3 | 5 | 6 个/步 | 大量读代码、调研、批量排查 |
 | 4 | 极限 `max` | `low` | 2 | 4 | 8 个/步 | 机械批量任务；不建议无人值守跑关键改动 |
 
-- 可以用数字（`gear: 3`）或名字（`gear: turbo`）；不写就是 `fast`，写错一律退回 `safe`，不会退回"无限制"。
+- 可以用数字（`gear: 3`）或名字（`gear: turbo`）；开启后不写就是 `fast`，写错一律退回 `safe`，不会退回"无限制"。
 - 显式字段永远优先于档位：`gear: 3` + `deepAfter: 8` 就是"极速的并行 + 保守的降档节奏"。
 - 任何档位都**不会**低于 `floor`（默认 `low`）。想要更狠可以自己设 `floor: minimal` 或 `floor: off`；那等于允许关掉思考，质量风险由你承担。
 - 档位越高，输入 token 通常越多（一步带更多工具结果），往返越少 —— 这正是"用 token 换时间"的那笔交易。
@@ -207,7 +228,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 - id: fast-mode
   name: dsh-fast-mode
   config:
-    enabled: true
+    enabled: true              # 总开关，默认 false；等价于点对话框里的闪电
     gear: 2                    # 1 稳 / 2 快 / 3 极速 / 4 极限（默认 2）
     parallel: 4                # 可选：覆盖档位给的并行目标（只影响提示词里的数字与告警）
     floor: low                 # 永不选比它更便宜的档位
@@ -227,7 +248,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
-| `enabled` | `true` | `false` 让插件完全不做任何事 |
+| `enabled` | `false` | 总开关，也是对话框里那枚闪电写的字段；只有 `true` 才会干预请求 |
 | `gear` | `fast` | 档位；`1..4` 或 `safe`/`fast`/`turbo`/`max`；写错退回 `safe` |
 | `parallel` | 随档位（4/6/8） | 注入提示里的并行目标；`1` 等于不注入 |
 | `floor` | `low` | 永不选比它更便宜的档位；官方路由上 `floor: high` 等于完全不降档 |
@@ -255,6 +276,7 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 - **只发路由声明过的 id。** 有性质测试保证任何输入都不会产出该路由没声明过的档位；最坏情况是"什么都没做"，不是"这一轮坏了"。
 - **不写会话。** 观察数据只在内存里，按 agent 隔离、按轮重置，不占一个 token 的上下文。
 - **失败即沉默。** 问不到 provider、超时、日志文件不可写，全部静默降级。
+- **客户端半不会拖垮输入框。** 闪电按钮的每一次远端调用都在 try/catch 里；配置读不到就渲染成不可点的灰色按钮并写明原因，slot 注册被别的插件占用就只打一条 warn，不抛给宿主。
 
 ## 诚实的限制
 
@@ -267,10 +289,10 @@ turn=8 step=21 gear=fast high=>high     route=provider obs=5 clean=0 err=1 slow=
 ## 开发与测试
 
 ```bash
-npm test        # 64 个测试，无网络、不需要 harness
+npm test        # 78 个测试，无网络、不需要 harness
 ```
 
-策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（写错退回 `safe`）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件。
+策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（写错退回 `safe`）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），最后一组把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端）：证明 bundle 能解析、只 require `react`、空心画得出来、点击只发一次带 revision 的 `settings/update`、被拒时回滚并在提示里给出原因、只读层和"没有这个条目"都渲染成不可点。另一组用 schemastery 真实校验 schema：默认 `enabled: false`、四个档位名都能过、`gear: warp` 会当场报错、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
 
 ## 许可
 
