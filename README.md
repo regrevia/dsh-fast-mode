@@ -416,7 +416,7 @@ node bin/report.mjs --since 7d                # 对比
 ## 开发与测试
 
 ```bash
-npm test        # 145 个测试，无网络、不需要 harness
+npm test        # 147 个测试，无网络、不需要 harness
 ```
 
 策略测试覆盖规划步豁免、单档与双档降幅、`floor`、不上调规则、每个挣扎信号单独生效、`holdTools` 命中、按轮重置、按 agent 隔离、观察内存有界、畸形参数处理、配置归一化（`floor` 打错字退到默认值而不是取消 floor）、档位归一化（坏值不会变成"无限制"）。provider 那组把策略跑在官方适配器真实的声明（`off/low/high/max`）、更宽的别名列表、五档自建网关、以及完全不声明档位的路由上 —— 其中包含一个性质测试：任何输入都不可能产出该路由没声明过的 id。集成测试用假 context 按 harness 顺序驱动注册进去的 handler，并验证档位 ≥2 时系统提示被注册、档位 1 时提示完全不存在；计量那组证明**关闭状态的会话也被记录**（一步一行、多消息步的首字取第一条），并覆盖 token/错误求和、按会话隔离、目录懒创建、空路径关掉 sink。实验分派那组证明哈希稳定且覆盖全部档位、显式 pin 优先、单会话 pin、文件 1 秒内生效、没有文件或 `enabled:false` 时完全惰性、坏文件只抱怨一次。报告那组跑真实的 `bin/report.mjs`：两张表、只有一边样本时用文字拒绝、`--since` 也放大面板查询窗口、`--json`、`--help` 不读文件、没 token 时跳过 `--lan`、有 token 时按会话 id 对上且**从不打印 token**、面板不通时降级成一句说明。最后一个测试检查插件清单本身——包里的 `icon.png` 真的是一张不超过 256 KiB 的 PNG，双语 `meta.title`/`meta.description` 齐全，`files[]` 覆盖了运行时要用到的每个文件；同一组测试还检查客户端半的清单约定（`dsh.client.platform === "web"`、`exports["./client"]`、`client.js` 被打包、bundle id 等于包名、注册的 slot 是 `conversation.input.activity` 而不是会遮住模型选择器的那个），并把发布出去的 `client.js` 原样放进 `vm` 沙箱里跑（桩 `__ModuleLoader__` + 假的 `settings` 远端，而且这个远端按真实协议回 `{ok, value}` 信封 —— 信封没解包正是 0.5.1 那个"点不动的闪电"的根因，所以它现在是测试夹具的一部分）：证明 bundle 能解析、只 require `react`、空心画得出来、点一下只打开面板而不写任何东西、面板里的开关只发一次带 revision 的 `settings/update`、再点一次把它关回去、被拒时回滚并在提示与状态行里给出原因；同时钉住新的交互契约 —— 外框是**单个图标**（没有小三角、没有内联下拉）、按钮**永不 disabled**、只读/缺条目/`ok:false` 都渲染成"可点 + 一句原因"、五行档位各带速度与 token 倍率、`ludicrous` 带星号、选档在关闭状态下顺手把 `enabled` 一起写、已开启时选档不碰开关、客户端给出的档位 id 与 host 端 `GEARS` 完全一致。最后用 schemastery 真实校验 schema：默认 `enabled: false`、五个档位名都能过、`gear: warp` 会当场报错、计量默认开启、三个 volatile 字段正好是 `enabled`/`gear`/`parallel`、不写进 schema 的 patch 字段（`floor`、`holdTools`）原样保留。
