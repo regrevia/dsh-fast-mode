@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -31,6 +32,50 @@ DEFAULT_CLI = ('/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/d
                'node_modules/@deepseek-ai/dsh/lib/bin.js')
 DEFAULT_MET = pathlib.Path.home() / '.dsh/fast-mode-metrics.jsonl'
 TOKEN_TIMEOUT = 1500
+# Run directories live OUTSIDE the repo on purpose. Inside bench/.runs the
+# fixtures were two levels up (../../suite/<task>/hidden, .../ref), and runs that
+# explored upward could read the hidden test or the reference solution — which
+# both invalidates the grade and adds a large, arm-dependent wall-clock swing.
+# The root must also be free of a SECOND copy of the fixtures. A stale mirror at
+# /tmp/fm-bench/suite was reachable from a /tmp run directory by listing the
+# parent, and one run read its hidden test there (caught by the canary below).
+# runs now live under the OS temp root and every copy of bench/suite outside the
+# repo is removed, so listing the parent yields nothing but sibling run dirs.
+DEFAULT_RUNS = pathlib.Path(os.environ.get('TMPDIR', '/tmp')) / 'dsh-runs'
+SESSIONS = pathlib.Path.home() / '.dsh' / 'sessions'
+LEAK_MARKERS = ('/hidden/', '/ref/', 'bench/suite/', 'fm-bench/suite', 'MANIFEST.json')
+
+
+def session_dir(dest):
+    """The per-cwd session store the harness writes for a run directory."""
+    # macOS resolves /tmp to /private/tmp; the store keys on the real path.
+    real = os.path.realpath(str(dest)).lstrip('/').replace('/', '-')
+    return SESSIONS / ('--' + real + '--')
+
+
+def session_ids(dest):
+    d = session_dir(dest)
+    if not d.is_dir():
+        return set()
+    # metrics rows carry the full directory name, including the prefix
+    return {p.name for p in d.iterdir()
+            if p.is_dir() and p.name.startswith('session-')}
+
+
+def leak_scan(dest):
+    """True when a run's transcript reached the fixture (hidden test or ref)."""
+    d = session_dir(dest)
+    if not d.is_dir():
+        return False
+    for f in d.glob('*/session.v4.jsonl.zstd'):
+        try:
+            raw = subprocess.run(['zstd', '-dc', str(f)], capture_output=True, timeout=120).stdout
+        except Exception:  # noqa: BLE001 - a missing zstd must not fail the block
+            return False
+        text = raw.decode('utf-8', 'replace')
+        if any(m in text for m in LEAK_MARKERS):
+            return True
+    return False
 
 
 def suite_digest(suite):
@@ -75,10 +120,25 @@ def load_task(suite, task):
 
 
 def verify(dest, meta):
-    """Grade the artifact. Returns hasEntry / passed / total / green."""
-    (dest / f"{meta['testmod']}.py").write_text(meta['hidden'])
+    """Grade the artifact. Returns hasEntry / passed / total / green.
+
+    Grading happens in a scratch copy, not in the run directory: a task is free to
+    leave its working directory read-only (the `shellops` arm did, with `chmod -R
+    a-w`, which crashed the block with EACCES when the hidden test was written in
+    place). The copy also keeps files the hidden test creates out of the artifact
+    that `hasEntry` looks at.
+    """
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix='grade-'))
+    work = tmp / 'w'
     try:
-        p = subprocess.run(['python3', '-m', 'unittest', meta['testmod']], cwd=dest,
+        shutil.copytree(dest, work, symlinks=True)
+        for q in [work, *work.rglob('*')]:
+            try:
+                q.chmod(q.stat().st_mode | 0o600)
+            except OSError:
+                pass
+        (work / f"{meta['testmod']}.py").write_text(meta['hidden'])
+        p = subprocess.run(['python3', '-m', 'unittest', meta['testmod']], cwd=work,
                            capture_output=True, text=True, timeout=300)
         out = p.stdout + p.stderr
         ran = re.search(r'Ran (\d+) test', out)
@@ -94,22 +154,32 @@ def verify(dest, meta):
         return {'hasEntry': entry.exists(), 'passed': max(total - bad, 0), 'total': total,
                 'green': p.returncode == 0}
     finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def force_rmtree(path):
+    """Remove a run directory a task may have chmod-ed read-only."""
+    if not path.exists():
+        return
+    for q in [path, *path.rglob('*')]:
         try:
-            (dest / f"{meta['testmod']}.py").unlink()
+            q.chmod(q.stat().st_mode | 0o700)
         except OSError:
             pass
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def run_one(cfg, arm, meta, tag):
     dest = cfg['runs'] / tag
     if dest.exists():
-        shutil.rmtree(dest)
+        force_rmtree(dest)
     dest.mkdir(parents=True)
     if meta['seed']:
         for item in meta['seed'].iterdir():
             (shutil.copytree if item.is_dir() else shutil.copy2)(item, dest / item.name)
     met = cfg['met']
     off = met.stat().st_size if met.exists() else 0
+    pre_sids = session_ids(dest)  # a resumed cell keeps earlier session dirs around
     t0 = time.time()
     try:
         p = subprocess.run([cfg['exe'], cfg['cli'], 'bench', '--patch',
@@ -123,10 +193,16 @@ def run_one(cfg, arm, meta, tag):
     time.sleep(0.4)
     rows = [json.loads(l) for l in met.read_text()[off:].splitlines() if l.strip()]
     rows = [r for r in rows if r.get('v') == 2]
+    # The metrics file is shared with every other session on the machine, so a
+    # bare byte-window happily counts the interactive session's steps too.
+    # Keep only rows that belong to this run's own session ids.
+    sids = session_ids(dest) - pre_sids
+    mine = [r for r in rows if r.get('sid') in sids] if sids else rows
     return {'task': meta['id'], 'arm': arm, 'wall': round(wall, 2), 'exit': rc,
-            'steps': len(rows),
-            'llm': round(sum(r.get('llmMs') or 0 for r in rows) / 1000, 2),
-            'out': sum(r.get('output') or 0 for r in rows), **verify(dest, meta)}
+            'steps': len(mine), 'stepsRaw': len(rows), 'sids': len(sids), 'exact': bool(sids),
+            'llm': round(sum(r.get('llmMs') or 0 for r in mine) / 1000, 2),
+            'out': sum(r.get('output') or 0 for r in mine),
+            'leak': leak_scan(dest), **verify(dest, meta)}
 
 
 def main():
@@ -138,7 +214,7 @@ def main():
     ap.add_argument('--suite', default=str(HERE / 'suite'))
     ap.add_argument('--arms-dir', default=str(HERE / 'arms'))
     ap.add_argument('--results', default=str(HERE / 'results'))
-    ap.add_argument('--runs', default=str(HERE / '.runs'))
+    ap.add_argument('--runs', default=str(DEFAULT_RUNS))
     ap.add_argument('--met', default=str(DEFAULT_MET))
     ap.add_argument('--dsh-exe', default=os.environ.get('DSH_BENCH_EXE', DEFAULT_EXE))
     ap.add_argument('--dsh-cli', default=os.environ.get('DSH_BENCH_CLI', DEFAULT_CLI))

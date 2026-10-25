@@ -14,7 +14,7 @@
    按输入顺序累加 `amount`，返回每一步之后的余额列表（长度与输入相同）。输入为空返回 `[]`。
 
 4. `apply_rules(entries, rules) -> list[dict]`
-   `rules` 是 list，元素 `{"category": str|None, "account": str|None, "multiplier": "金额字符串", "offset": "金额字符串"}`。对每条 entry，**按 rules 顺序**找**第一个**所有非 None 条件都匹配的规则（`category`/`account` 精确相等），把 `amount` 变成 `amount * multiplier + offset`（Decimal 运算，四舍五入到分，ROUND_HALF_UP）。没有匹配则原样。返回**新 list**，不改原 entries；每条 entry 保留全部原键，只替换 `amount`，并新增 `"rule_index": int|None`（命中的规则下标，没有则 None）。返回的 `amount` 仍是字符串，格式为：负数带前导 `-`，两位小数，无千位逗号（例如 `"-12.30"`）。
+   `rules` 是 list，元素 `{"category": str|None, "account": str|None, "multiplier": "金额字符串", "offset": "金额字符串"}`。对每条 entry，**按 rules 顺序**找**第一个**所有非 None 条件都匹配的规则（`category`/`account` 精确相等），把 `amount` 变成 `amount * multiplier + offset`（Decimal 运算，四舍五入到分，ROUND_HALF_UP；`multiplier` 与 `offset` 是任意位小数的金额字符串，例如 `"0.005"`、`"1.5000"`，按 Decimal 原样解析，只有最终结果才取两位小数——`parse_amount` 只管 entry 的 `amount` 字段，不要拿它去校验规则里的值）。没有匹配则原样。返回**新 list**，不改原 entries；每条 entry 保留全部原键，只替换 `amount`，并新增 `"rule_index": int|None`（命中的规则下标，没有则 None）。返回的 `amount` 仍是字符串，格式为：负数带前导 `-`，两位小数，无千位逗号（例如 `"-12.30"`）。
 
 5. `monthly_summary(entries) -> dict[str, dict]`
    按月份的 `"YYYY-MM"` 分组（用 date 的前 7 个字符），每个月返回 `{"count": int, "total": Decimal, "max_category": str}`：`count` 是该月条目数；`total` 是该月金额合计；`max_category` 是该月**金额绝对值合计**最大的类别（并列时取 ASCII 升序最小者），没有条目不会出现。外层 dict 按月份升序插入。

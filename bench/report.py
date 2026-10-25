@@ -62,6 +62,17 @@ def main():
     a = ap.parse_args()
 
     rows = load(a.files, a.dedupe)
+    # A run whose transcript reached the fixture (hidden test or reference) cannot
+    # be compared: it had the answer. Drop it rather than average it in.
+    leaked = [r for r in rows if r.get('leak')]
+    if leaked:
+        rows = [r for r in rows if not r.get('leak')]
+        print(f'leak: dropped {len(leaked)} run(s) that reached the fixture: '
+              + ', '.join(f"{r['task']} p{r['pair']} {r['arm']}" for r in leaked))
+    inexact = [r for r in rows if r.get('exact') is False]
+    if inexact:
+        print(f'warning: {len(inexact)} run(s) without session ids; steps/out use the '
+              'old byte-window attribution and are not comparable')
     arms = a.arm or sorted({r['arm'] for r in rows})
     if a.baseline not in arms:
         arms.insert(0, a.baseline)
@@ -99,7 +110,8 @@ def main():
             t[3] += 1
 
     base = totals[a.baseline]
-    out = {'rows': len(rows), 'arms': arms, 'baseline': a.baseline,
+    out = {'rows': len(rows), 'leakDropped': len(leaked), 'inexact': len(inexact),
+           'arms': arms, 'baseline': a.baseline,
            'completeCells': len(complete), 'reds': reds, 'gateViolations': gate,
            'totals': {}, 'perFamily': {}, 'paired': {}, 'tail': {}}
     for arm in arms:
@@ -135,6 +147,14 @@ def main():
                             'max': round(max(walls), 1) if walls else None,
                             'maxSteps': max((r['steps'] for r in mine), default=None)}
 
+    # Pass rate is reported over every run, never over the surviving cells:
+    # dropping red cells from totals is a gate, not a licence to hide a loss.
+    out['passRate'] = {}
+    for arm in arms:
+        mine = [r for r in rows if r['arm'] == arm]
+        ok = [r for r in mine if r['exit'] == 0 and r['green']]
+        out['passRate'][arm] = {'green': len(ok), 'runs': len(mine),
+                                'rate': round(len(ok) / len(mine), 3) if mine else None}
     if a.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -153,6 +173,10 @@ def main():
         t = out['totals'][arm]
         print(f"{arm:<10}{t['cells']:>6}{t['wall']:>10.1f}{t['wallRatio']:>8.2f}"
               f"{t['out']:>11}{t['outRatio']:>7.2f}{t['steps']:>8}{t['stepRatio']:>7.2f}")
+    print(f"\n{'arm':<10}{'green/runs':>12}{'pass rate':>11}")
+    for arm in arms:
+        pr = out['passRate'][arm]
+        print(f"{arm:<10}{str(pr['green']) + '/' + str(pr['runs']):>12}{pr['rate']:>11.3f}")
     print(f"\n{'family':<13}{'n':>3}  per-arm wall/out/step ratios vs {a.baseline}")
     for task, entry in out['perFamily'].items():
         parts = [f"{arm} {e['wallRatio']:.2f}/{e['outRatio']:.2f}/{e['stepRatio']:.2f}"

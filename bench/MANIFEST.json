@@ -1,5 +1,5 @@
 {
-  "aggregate": "2699cd64641007ac8ef45793c66557b55ecfe7f7d19ed27ccea9f9943355adf0",
+  "aggregate": "2d7546f8039ec9377807f3d18c91ffc7d5360494b22c804813ad45ecc2037542",
   "files": 68,
   "note": "sha256 per fixture file; aggregate = sha256 of \"path\\0hash\\n\" sorted by path. BENCHMARK.md 的 V15/TA3/TA4 三块结果由这些文件跑出；改动任一 fixture 都必须重跑并改 aggregate。",
   "sha256": {
@@ -31,7 +31,7 @@
     "suite/debugfix/ref/test_visible.py": "98914113ff41def72c56051ab9b896cf41591b81b71248952068ea2611b84980",
     "suite/debugfix/seed/pricer.py": "22467543d1d153a9740668cf5b331e27621ce90602f5651e75356cf41157a50f",
     "suite/debugfix/seed/test_visible.py": "98914113ff41def72c56051ab9b896cf41591b81b71248952068ea2611b84980",
-    "suite/ledger/PROMPT.txt": "d162607789a3f4f185ef1992ed491d31232c40e47f20d0ffc02afaa377f16d8d",
+    "suite/ledger/PROMPT.txt": "df053f61095724390d3c554a703148bc8452a365e8793e39e9fdd5ce38277bed",
     "suite/ledger/hidden/test_ledger.py": "f89a1f159070f3c00e9c622f1725e02cef14c5ecb7adb3fee2be382a002fc029",
     "suite/ledger/meta.json": "9e0984d6e039f66d1081b8c682bf7f0b6b92a62748c1afec31feacd32cddd0fc",
     "suite/ledger/ref/ledger.py": "91b032ea30a78f58d3e4786579cdeaf5078b5be0c66499e5704aa5133185dde9",
