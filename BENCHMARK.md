@@ -62,7 +62,7 @@ W1 出现过唯一一格门禁违规：`ledger` p1 的 `def15` 红在 `test_roun
 
 口径换了一次，这是本节和 1.4.4 及更早各节不能直接比数字的原因：**只看整任务完成后的总量**——每个「任务 × 对」把三臂都跑完才算一个单元，单元内比较总墙钟、总输出 token、总步数，再把 54 个单元（9 家族 × 6 对）加总。隐藏测试是门禁（runner 事后执行，agent 看不到测试文件），任何一臂红即该单元作废。
 
-> 本文件 1.5.0 的每个数字都可以在仓库里复算：fixture、跑批器、汇总器与三块原始结果都在 [`bench/`](bench/README.md)。`python3 bench/report.py --files bench/results/suite-V15.jsonl --baseline off` 会原样打出下面的总量表、分家族表与尾部分布，并逐条列出红行与「基线绿而该臂红」的门禁违规。改任何 fixture 都会让 `bench/MANIFEST.json` 的摘要对不上，跑批器会拒绝开跑。
+> 本文件 1.5.0 的每个数字都可以在仓库里复算：fixture、跑批器、汇总器与三块原始结果都在 [`bench/`](bench/README.md)。`python3 bench/report.py --files bench/results/suite-W3.jsonl --baseline off` 会原样打出下面的总量表、分家族表与尾部分布，并逐条列出红行与「基线绿而该臂红」的门禁违规。改任何 fixture 都会让 `bench/MANIFEST.json` 的摘要对不上，跑批器会拒绝开跑。
 
 ### A. 三臂总量（54 个单元，162 次运行）
 

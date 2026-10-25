@@ -13,8 +13,8 @@ keeping the last occurrence (a rerun supersedes the earlier attempt), then repor
   * tail shape per arm: wall p50 / p90 / max and max steps.
 
 Usage:
-  python3 bench/report.py --files bench/results/suite-V15.jsonl --baseline off
-  python3 bench/report.py --files bench/results/suite-TA4.jsonl --baseline def15 --arm open15
+  python3 bench/report.py --files bench/results/suite-W3.jsonl --baseline off
+  python3 bench/report.py --files bench/results/suite-W4.jsonl --baseline def15 --arm bud8
 """
 import argparse
 import collections
@@ -95,25 +95,40 @@ def main():
 
     complete = {k: v for k, v in cells.items()
                 if all(x in v and v[x]['exit'] == 0 and v[x]['green'] for x in arms)}
+    # A cell whose session ids were not captured, or where an arm's window came
+    # back empty, has no honest denominator for tokens or steps. Counting it as a
+    # zero would charge the arm for / credit it with work nobody measured, so the
+    # cell still counts for wall (which is a wall-clock truth regardless) and is
+    # dropped from the token and step sums with a printed note. Dropping it
+    # silently would be the same defect in the other direction.
     totals = collections.defaultdict(lambda: [0.0, 0, 0])
     per = collections.defaultdict(lambda: collections.defaultdict(lambda: [0.0, 0, 0, 0]))
-    for (task, _pair), cell in complete.items():
+    tokenDrops = []
+    for (task, pair), cell in complete.items():
+        counted = all(cell[x].get('exact') is True and cell[x]['out'] > 0
+                      and cell[x]['steps'] > 0 for x in arms)
+        if not counted:
+            tokenDrops.append({'task': task, 'pair': pair,
+                               'inexact': [x for x in arms if cell[x].get('exact') is not True],
+                               'empty': [x for x in arms if cell[x]['out'] <= 0 or cell[x]['steps'] <= 0]})
         for arm in arms:
             r = cell[arm]
             totals[arm][0] += r['wall']
-            totals[arm][1] += r['out']
-            totals[arm][2] += r['steps']
             t = per[task][arm]
             t[0] += r['wall']
-            t[1] += r['out']
-            t[2] += r['steps']
             t[3] += 1
+            if counted:
+                totals[arm][1] += r['out']
+                totals[arm][2] += r['steps']
+                t[1] += r['out']
+                t[2] += r['steps']
 
     base = totals[a.baseline]
     out = {'rows': len(rows), 'leakDropped': len(leaked), 'inexact': len(inexact),
            'arms': arms, 'baseline': a.baseline,
            'completeCells': len(complete), 'reds': reds, 'gateViolations': gate,
-           'totals': {}, 'perFamily': {}, 'paired': {}, 'tail': {}}
+           'totals': {}, 'perFamily': {}, 'paired': {}, 'tail': {},
+           'tokenDrops': tokenDrops}
     for arm in arms:
         w, o, s = totals[arm]
         out['totals'][arm] = {'cells': len(complete), 'wall': round(w, 1),
@@ -127,9 +142,9 @@ def main():
         for arm in arms:
             w, o, s, n = per[task][arm]
             entry[arm] = {'cells': n, 'wall': round(w, 1), 'out': o, 'steps': s,
-                          'wallRatio': round(w / b[0], 3),
-                          'outRatio': round(o / b[1], 3),
-                          'stepRatio': round(s / b[2], 3)}
+                          'wallRatio': round(w / b[0], 3) if b[0] else None,
+                          'outRatio': round(o / b[1], 3) if b[1] else None,
+                          'stepRatio': round(s / b[2], 3) if b[2] else None}
         out['perFamily'][task] = entry
     for arm in arms:
         if arm == a.baseline:
@@ -167,6 +182,10 @@ def main():
         print(f"GATE VIOLATIONS {len(gate)}: " + ', '.join(
             f"{g['task']} p{g['pair']} {g['arm']} (baseline {g['baselinePassed']} green)"
             for g in gate))
+    if out['tokenDrops']:
+        print(f"token/step sums exclude {len(out['tokenDrops'])} complete cell(s) with no honest "
+              f"denominator (wall still counts): " + ', '.join(
+                  f"{d['task']} p{d['pair']}" for d in out['tokenDrops']))
     print(f"\n{'arm':<10}{'cells':>6}{'wall s':>10}{'wall x':>8}{'out tok':>11}{'out x':>7}"
           f"{'steps':>8}{'step x':>7}")
     for arm in arms:
