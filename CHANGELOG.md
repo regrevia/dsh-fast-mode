@@ -15,7 +15,7 @@
 - **证据优先级**：最近三次调用都报错时，扇出宽度直接回到 1，压过“请求措辞像扇出”的分类。
 - **看门狗取消后等真实收尾**：取消一个卡住的调用后，先等它真正停下（窗口随预算缩放，250 ms–5 s）再返回失败，并把 `quiesced` 记进日志。以前是“先告诉模型已取消，清理还在跑”，下一个步骤可能和上一个进程并发写同一个目录。
 - **`enabled: false` 是真的关**：关闭态下看门狗预算为 0，不再按档位表在两分钟后取消调用。
-- **测试与 CI**：222 个测试在 Node 20.20.2、22.23.4、24 上全绿。顺带修掉 Node 20/22 上 `node:test` 报 “Promise resolution is still pending but the event loop has already resolved” 并取消 17 个用例的问题（看门狗定时器不再 `unref`，它本来就会被 `clearTimeout`）。
+- **测试与 CI**：223 个测试在 Node 20.20.2、22.23.4、24 上全绿。顺带修掉 Node 20/22 上 `node:test` 报 “Promise resolution is still pending but the event loop has already resolved” 并取消 17 个用例的问题（看门狗定时器不再 `unref`，它本来就会被 `clearTimeout`）。
 - **措辞更正**：不再声称“请求体逐字节不变”——真实契约是**不加请求字段**（不改 `reasoningEffort`、不注入 `service_tier` / `max_tokens`）；开着时模型输入里多出的内容是本插件自己的调度提示与提醒，关掉后不存在。
 - 移除从未被读取的常量 `AUTO_LIMITS.parallelMin`。
 - 1.4.4 的 1.86×（7 家族 14 对、`finishLineSteps: 10`）保留为**已退役默认的消融证据**，不是 1.5.0 的速度声明。1.5.0 的重基线：9 家族 54 个完整单元、隐藏测试全绿，总量 **0.86× 墙钟 / 0.95× 输出 / 0.85× 步数**；写文件型三家族（`migrate` 1.02×、`codeimpl` 1.09×、`perfrefactor` 1.33×）没有稳定加速，见 BENCHMARK.md。
