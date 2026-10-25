@@ -1,0 +1,66 @@
+# Task: calclang
+
+You are in an empty working directory. Write exactly one deliverable file, `calclang.py`
+(Python 3.9+, standard library only). No network, no package installs, no questions.
+
+## What to build
+
+A tiny expression language with a tokenizer, a recursive-descent parser, and an evaluator.
+
+Public API:
+
+    from calclang import evaluate, CalcError
+
+    evaluate(source: str, env: dict[str, int] | None = None) -> int
+
+`evaluate` returns an `int` (never a float) or raises `CalcError` (a subclass of `ValueError`)
+whose `str()` is exactly the message listed below.
+
+### Tokens
+
+- `INT`: one or more ASCII digits. A leading `-` is the unary operator, not part of the number.
+- `NAME`: `[A-Za-z_][A-Za-z0-9_]*`.
+- Operators and punctuation: `+ - * / % ( ) ,`
+- Whitespace (space, tab, newline) separates tokens and is otherwise ignored.
+- Any other character raises `CalcError("unexpected character: <c>")` where `<c>` is that character.
+
+### Grammar
+
+    expr     := term (("+" | "-") term)*
+    term     := unary (("*" | "/" | "%") unary)*
+    unary    := "-" unary | primary
+    primary  := INT | NAME | NAME "(" [expr ("," expr)*] ")" | "(" expr ")"
+
+Binding: `* / %` tighter than `+ -`; unary `-` binds tighter than `*`, so `2 * -3` is `-6`
+and `-2 * 3` is `-6`; `2 - -3` is `5`. All binary operators are left associative.
+
+### Names and functions
+
+- A `NAME` not followed by `(` is a variable: look it up in `env` (default empty). Missing →
+  `CalcError("unknown variable: <name>")`.
+- A `NAME` followed by `(` is a function call. Supported: `abs(expr)` (1 argument),
+  `min(expr, ...)` and `max(expr, ...)` (at least 1 argument).
+  Unknown name → `CalcError("unknown function: <name>")`.
+  Wrong argument count → `CalcError("bad arity: <name>")` (for `abs`: not exactly 1; for
+  `min`/`max`: zero arguments).
+
+### Arithmetic
+
+- `a / b`: integer division that is exact only. `7 / 2` → `CalcError("division is not exact")`.
+  `-7 / 2` → the same error. Division by zero → `CalcError("division by zero")` —
+  that check happens before the exactness check.
+- `a % b` follows Python's sign rules (`-7 % 3 == 2`); `a % 0` → `CalcError("modulo by zero")`.
+- `min`/`max` return an `int`.
+
+### Syntax errors
+
+- A dangling operator or an empty expression → `CalcError("unexpected end of input")`.
+- A `)` with no open `(` → `CalcError("unexpected token: )")` (the token text, no quotes around it).
+- An unclosed `(` at the end → `CalcError("unexpected end of input")`.
+- Trailing junk after a complete expression, e.g. `1 2` → `CalcError("unexpected token: 2")`.
+
+## Verification
+
+Hidden tests import `calclang` from this directory and exercise the API above. They also check
+that every error case raises `CalcError` with the exact message, and that no exception escapes as
+anything other than `CalcError`/`ValueError`. Do not print anything on import.

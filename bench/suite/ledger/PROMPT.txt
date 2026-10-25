@@ -1,0 +1,25 @@
+在**当前目录**实现一个单文件 Python 模块 `ledger.py`（不要建包、不要改别的文件）。只能用标准库。模块需精确实现下面 6 个函数；规范里没说的地方按“最不意外”的常规理解，边界情况我们会用隐藏测试检查。
+
+数据形状：`entries` 是一个 list，元素是 dict，键固定为：
+`{"date": "YYYY-MM-DD", "account": str, "category": str, "amount": str}`，
+其中 `amount` 是**字符串**金额，可能带正负号、千位逗号、货币符号 `$`、或用括号表示负数（会计写法），例如 `"1,234.50"`、`"-$99"`、`"($12.00)"`、`"0.10"`。可能有多余空格。
+
+1. `parse_amount(s) -> Decimal`
+   解析上面那种字符串，返回 `decimal.Decimal`，精确到分；无法解析时抛 `ValueError`。空字符串、`"--"`、`"N/A"` 都要抛 `ValueError`。括号写法与负号等价；`"$"` 可出现在最前或负号后。不要用 float。
+
+2. `sum_by_category(entries) -> dict[str, Decimal]`
+   按 `category` 汇总 `amount`，返回按**类别名 ASCII 升序**插入的普通 dict（Python 3.7+ 保持插入序）。没有条目不产生键。金额合计为 0 的类别**仍要保留**。
+
+3. `running_balance(entries) -> list[Decimal]`
+   按输入顺序累加 `amount`，返回每一步之后的余额列表（长度与输入相同）。输入为空返回 `[]`。
+
+4. `apply_rules(entries, rules) -> list[dict]`
+   `rules` 是 list，元素 `{"category": str|None, "account": str|None, "multiplier": "金额字符串", "offset": "金额字符串"}`。对每条 entry，**按 rules 顺序**找**第一个**所有非 None 条件都匹配的规则（`category`/`account` 精确相等），把 `amount` 变成 `amount * multiplier + offset`（Decimal 运算，四舍五入到分，ROUND_HALF_UP）。没有匹配则原样。返回**新 list**，不改原 entries；每条 entry 保留全部原键，只替换 `amount`，并新增 `"rule_index": int|None`（命中的规则下标，没有则 None）。返回的 `amount` 仍是字符串，格式为：负数带前导 `-`，两位小数，无千位逗号（例如 `"-12.30"`）。
+
+5. `monthly_summary(entries) -> dict[str, dict]`
+   按月份的 `"YYYY-MM"` 分组（用 date 的前 7 个字符），每个月返回 `{"count": int, "total": Decimal, "max_category": str}`：`count` 是该月条目数；`total` 是该月金额合计；`max_category` 是该月**金额绝对值合计**最大的类别（并列时取 ASCII 升序最小者），没有条目不会出现。外层 dict 按月份升序插入。
+
+6. `format_report(summary, width=72) -> str`
+   生成纯文本报表：第一行 `LEDGER REPORT`；随后每个月份一段，每段先一行 `2024-01  count=3  total=1234.56`（total 按第 4 条同样的金额格式，正数不带 `+`），再一行 `  top: food`。段与段之间空一行；整个字符串以单个换行结尾。`width` 参数保留，当前版本不参与排版。
+
+完成后在你的回答里只写一行：`ledger.py ready`。

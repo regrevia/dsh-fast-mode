@@ -1,0 +1,7 @@
+{
+  "id": "stategraph",
+  "entrypoint": "machine.mjs",
+  "testCmd": "python3 -m unittest test_stategraph",
+  "minSteps": 10,
+  "maxSteps": 25
+}

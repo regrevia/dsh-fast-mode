@@ -1,0 +1,21 @@
+# Task: inventory
+
+You are in a small Python repository (`inventory/`, `tests/`). Standard library only,
+Python 3.8+, no network, no installs. No questions.
+
+    python3 -m unittest discover -s tests
+
+Some of those tests already fail, and they describe real bugs. Fix the bugs, then add the
+two features below. Keep the existing public API and file layout; the hidden suite imports
+`inventory.store.Store` and `inventory.api` exactly as they are named today.
+
+1. TTL. `Store(clock=...)` already accepts an injectable clock; `Store.add(key, value, ttl=None)`
+   must honour `ttl` seconds against that clock. An entry is gone once `clock() >= deadline`:
+   `get` returns the default, the key disappears from `keys()`/`len()`, a later `add` starts a
+   fresh deadline, `ttl=None` never expires, and removing an already-expired key returns
+   `False` instead of raising.
+2. Pagination. `list_items(store, page=1, page_size=10)` must raise `ValueError` when `page`
+   or `page_size` is below 1, and return `{'items': [...], 'page': page, 'total': len(all live
+   items)}` for any other page - a page past the end is an empty list with the true total.
+3. Bugs. `remove` on a missing key must return `False` rather than raise, and
+   `total_value` must multiply by the quantity each item actually stores.

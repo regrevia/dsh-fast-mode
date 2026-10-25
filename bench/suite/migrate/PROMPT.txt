@@ -1,0 +1,81 @@
+# Task: v1 -> v2 record migration (migrate.py)
+
+Your working directory already contains, and you must not modify:
+
+- `SPEC.md` — the complete v1/v2 record specification
+- `data/` — about a dozen v1 records, one JSON object per file
+
+Deliver one file, `migrate.py`, in the working directory. Use only the Python 3
+standard library. No network, no packages.
+
+## CLI
+
+```
+python3 migrate.py migrate [--data DIR] [--out DIR]
+python3 migrate.py verify  [--data DIR] [--out DIR]
+```
+
+Defaults: `--data data`, `--out out`. Options may appear in either order.
+Exit codes:
+
+- `2` and a usage line on stderr when the subcommand is missing/unknown or an
+  option is malformed; the usage line starts with `usage: migrate.py`
+- `1` and `error: no input directory: <dir>` on stderr when the data directory
+  does not exist
+- otherwise `0` for `migrate`
+
+## `migrate`
+
+Reads every `*.json` file directly inside the data directory, in ASCII order of
+file name, and writes:
+
+- `out/v2/<id>.json` for each valid record, id zero-padded to 4 digits
+  (`0003.json`), content exactly `json.dumps(obj, indent=2, sort_keys=True,
+  ensure_ascii=False)` plus one trailing `\n`, UTF-8, LF only
+- `out/errors.txt` — always written, empty when there are no bad records; one
+  line per bad record, `<source file name>: <code>`, sorted ASCII by file name
+
+A bad record is reported and is not written to `out/v2/`; it is never silently
+dropped.
+
+Conversion rules (full detail in SPEC.md):
+
+- `name` = `"<last_name>, <first_name>"`
+- `address` fields are flattened to `street`, `line2`, `city`, `state`, and
+  `zip` -> `postal_code`
+- `currency` upper-cased
+- `balance` = `balance_cents / 100` as an exact `Decimal`, quantized to 2
+  decimals with round-half-away-from-zero, rendered as a string with exactly 2
+  decimals: `"123456"` -> `"1234.56"`, `"250.5"` -> `"2.51"`,
+  `"-1234.5"` -> `"-12.35"`, `"0.004"` -> `"0.00"`
+- absent optional fields (`email`, `phone`, `address.line2`) are absent from v2;
+  absent `tags` becomes `[]`, present `tags` keep their order
+- `id` is a positive integer; output is ordered by id because file names are
+  derived from the id
+
+Running `migrate` twice on the same input must leave every file under `out/`
+byte-identical (the second run rewrites identical bytes).
+
+## `verify`
+
+Reads the same data directory, writes nothing, and prints to stdout exactly one
+line, with no other output:
+
+```
+verify: <valid> valid, <invalid> invalid
+```
+
+Exit `0` when `invalid` is `0`, exit `2` otherwise.
+
+## Error codes
+
+`bad_json`, `bad_address`, `missing_field:<path>`, `bad_id`, `bad_currency`,
+`bad_balance`, `bad_tags` — definitions in SPEC.md. Files not ending in `.json`
+and subdirectories are ignored.
+
+## Finish
+
+When `migrate.py` exists, works for both subcommands, and you have exercised it
+against `data/`, reply with exactly this one line and nothing else:
+
+migrate.py ready

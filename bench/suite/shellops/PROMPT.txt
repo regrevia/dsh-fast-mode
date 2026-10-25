@@ -1,0 +1,48 @@
+# Task: logops
+
+You are in an empty working directory. Write exactly one deliverable file, `ops.sh`, a
+portable bash script (bash 3.2 / macOS default tools: awk, sed, grep, sort, cut, wc — no
+network, no installs, no Python). No questions.
+
+## Invocation
+
+    bash ops.sh DIR
+
+`DIR` is a directory of log files named `*.log` (any other files may exist and must be ignored).
+
+## Output
+
+Print one line per `*.log` file, ordered by filename (byte order, e.g. `a.log` before `b.log`):
+
+    <basename> <total_lines> <error_lines>
+
+`<basename>` is the file name including `.log`. `<total_lines>` counts every line, including
+blank ones. `<error_lines>` counts lines that start with the exact five characters `ERROR`
+(the rest of the line may contain anything, including spaces and `|`).
+
+After the per-file lines, print exactly one summary line:
+
+    TOTAL <sum_total_lines> <sum_error_lines>
+
+Nothing else on stdout. Numbers are decimal with no padding and no leading zeros beyond `0`.
+
+## Exit status
+
+- `0` when every file has zero `ERROR` lines (including when there are no `.log` files at all).
+- `3` when at least one `ERROR` line was seen anywhere.
+- `2` when `DIR` is missing or is not a directory; in that case print nothing on stdout and
+  print `no such directory: <DIR>` on stderr, then exit.
+
+## Constraints
+
+- File names may contain spaces, apostrophes and unicode; the script must handle them.
+- The script must not modify, move, rename or delete anything inside `DIR`, and must leave no
+  temporary files behind (a temp file outside `DIR` is fine only if it is removed).
+- Lines may be very long; do not truncate.
+- `bash ops.sh` with no argument is a usage error: print `usage: ops.sh DIR` on stderr, exit `2`.
+
+## Verification
+
+Hidden tests build their own directories (including one with 3000 lines and one with no logs),
+run the script with `bash ops.sh ...`, compare stdout byte for byte, check exit codes, and verify
+that every input file is unchanged afterwards. Do not print anything else.

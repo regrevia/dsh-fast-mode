@@ -1,0 +1,15 @@
+{
+  "address": {
+    "city": "Hampton",
+    "state": "VA",
+    "street": "100 NASA Rd",
+    "zip": "23666"
+  },
+  "balance_cents": "-1234.5",
+  "currency": "USD",
+  "first_name": "Katherine",
+  "id": 7,
+  "last_name": "Johnson",
+  "phone": "+1-555-0142",
+  "tags": []
+}

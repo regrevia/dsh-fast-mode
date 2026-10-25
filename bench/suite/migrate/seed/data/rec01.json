@@ -1,0 +1,19 @@
+{
+  "address": {
+    "city": "Springfield",
+    "state": "IL",
+    "street": "12 Main St",
+    "zip": "62701"
+  },
+  "balance_cents": "0",
+  "currency": "usd",
+  "email": "ada@example.com",
+  "first_name": "Ada",
+  "id": 1,
+  "last_name": "Lovelace",
+  "phone": "+1-555-0100",
+  "tags": [
+    "math",
+    "history"
+  ]
+}

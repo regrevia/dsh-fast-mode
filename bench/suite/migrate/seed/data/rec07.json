@@ -1,0 +1,17 @@
+{
+  "address": {
+    "city": "Boston",
+    "state": "MA",
+    "street": "77 Type St",
+    "zip": "02108"
+  },
+  "balance_cents": "12,34",
+  "currency": "USD",
+  "email": "bl@example.com",
+  "first_name": "Barbara",
+  "id": 12,
+  "last_name": "Liskov",
+  "tags": [
+    "types"
+  ]
+}

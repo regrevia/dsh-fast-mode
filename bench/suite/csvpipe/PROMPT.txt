@@ -1,0 +1,108 @@
+# Task: csvpipe
+
+You are in an empty working directory. Write exactly one deliverable file, `report.py`
+(Python 3.9+, standard library only). No network, no package installs, no questions.
+
+## Invocation
+
+    python3 report.py FILE [FILE ...]
+
+Every FILE is a UTF-8 CSV file. An optional UTF-8 BOM at the very start of a file is
+ignored. Parse rows with RFC 4180 quoting rules (use `csv`): a field may be wrapped in
+double quotes, a quoted field may contain commas, and `""` inside a quoted field is one
+literal quote character.
+
+## Schema
+
+The first row of every file must be exactly these five column names, in this order:
+
+    date,region,sku,qty,unit_price
+
+Any other header (different names, different order, missing or extra column) is a bad
+header. A file with no rows at all is also a bad header.
+
+Column meaning and coercion:
+
+* `date`    - free-form text, never used for grouping, never printed.
+* `region`  - text; used verbatim after stripping leading/trailing spaces (internal
+              spaces are kept).
+* `sku`     - text; same stripping rule. It may contain commas when quoted.
+* `qty`     - integer, possibly negative.
+* `unit_price` - decimal number with at most 4 decimal places, possibly negative.
+
+Missing / empty fields:
+
+* empty `qty` -> skip the whole data row: it creates no group and contributes nothing.
+* empty `unit_price` -> treat the price as 0; the quantity still counts.
+* `qty` / `unit_price` are stripped of surrounding spaces before parsing.
+* empty or whitespace-only lines are skipped.
+
+## Aggregation
+
+The group key is `(region, sku)`. Rows with the same key are merged across all input
+files and across all dates.
+
+For each group:
+
+* `total_qty` = sum of `qty`, an integer.
+* `amount` = sum of `qty * unit_price`, computed exactly (do not round individual
+  rows), then rounded exactly once to 2 decimal places with `ROUND_HALF_UP`
+  (half away from zero, so `0.375 -> 0.38` and `-0.375 -> -0.38`).
+* A group whose amount is exactly zero prints as `0.00`, never `-0.00`.
+
+## Output
+
+Stdout carries the report; every line, including the last, ends with `\n`.
+There is no trailing whitespace.
+
+    region|sku|total_qty|amount
+    <one line per group, same 5-column shape, amount always exactly 2 decimals>
+
+Ordering: `total_qty` descending, ties broken by `region` ascending by Unicode code
+point, remaining ties by `sku` ascending by Unicode code point. Do not lowercase or
+case-fold when sorting (`Z` sorts before `a`). If no group exists, print only the
+header line.
+
+## Errors
+
+On any error: exit code 2, print exactly one line on stderr, and print nothing at all
+on stdout.
+
+* no arguments            -> `ERROR: no input`
+* file cannot be opened   -> `ERROR: cannot read: <path>`   (path exactly as given)
+* bad header              -> `ERROR: bad header: <path>`
+* malformed data row      -> `ERROR: bad row: <path>:<line>` where `<line>` is the
+  1-based physical line number of that row inside the file (the header is line 1).
+  A row is malformed when it does not have exactly 5 fields, or when `qty` is not an
+  integer, or when a non-empty `unit_price` is not a decimal number.
+
+Files are validated in the order they are given; the first problem found is the one
+reported.
+
+## Sample
+
+Create `a.csv` with exactly this content:
+
+    date,region,sku,qty,unit_price
+    2024-03-01,EU,A-100,2,12.50
+    2024-03-01,EU,A-100,3,12.50
+    2024-03-02,APAC,"B-7,5",1,7.25
+    2024-03-02,EU,Z-9,,3.00
+    2024-03-03,APAC,C-1,-1,0.10
+
+Then `python3 report.py a.csv` must print exactly these four lines (the third line is
+not split on the comma inside `B-7,5`; the report joins fields with `|`):
+
+    region|sku|total_qty|amount
+    EU|A-100|5|62.50
+    APAC|B-7,5|1|7.25
+    APAC|C-1|-1|-0.10
+
+(The `Z-9` row is skipped because its quantity is empty.)
+
+## Done
+
+When `report.py` is written and you have checked it against the sample, reply with
+exactly this one line and nothing else:
+
+    report.py ready

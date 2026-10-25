@@ -1,0 +1,55 @@
+# Task: debugfix
+
+Your working directory already contains two files:
+
+    pricer.py        - the pricing module used by the billing service
+    test_visible.py  - the small smoke-test file that ships with the module
+
+`pricer.py` is imported as `pricer`. Its public functions are `money`, `parse_price`,
+`line_net`, `tax_rate`, `tax_for`, `order_total`, `apply_adjustments`,
+`statement_rows` and `rank_lines`; they take and return `Decimal` money values
+(strings are accepted where a number is parsed). Keep their names and argument
+order.
+
+Support has collected these symptoms from the billing service:
+
+1. Totals come out one cent low when a unit price has three decimals, e.g. a line of
+   1 x 1.005 rounds down instead of up.
+2. A 15% discount on a line of 3 x 10.00 prints 29.85 instead of 25.50.
+3. An order total can differ by a cent from the sum of the rows printed on that
+   order's statement, because the rounding happens in the wrong place.
+4. Building a second statement in the same process returns the first statement's
+   rows in front of the new rows.
+5. Bad price text such as `abc` is silently accepted as 0.00 instead of being
+   rejected.
+6. Lines with equal amounts come back in input order instead of sorted by SKU.
+
+Required behaviour when you are done:
+
+* Rounding is half away from zero (ROUND_HALF_UP) to 2 decimals, and each amount is
+  rounded exactly once, on the value the docstring says is rounded. `-1.005` rounds
+  to `-1.01`.
+* `discount_pct` is a percentage of the gross line amount; `line_net("10.00", 3, 15)`
+  is `25.50`.
+* `order_total` sums unrounded line amounts, rounds the net once, computes tax on the
+  rounded net, and returns net + tax.
+* `apply_adjustments` adds `(label, amount)` pairs and never keeps state between
+  calls.
+* `parse_price` accepts optional surrounding spaces and a leading `$`, and raises
+  `ValueError` (message contains `price`) for empty, non-numeric or non-finite text.
+* `statement_rows` returns a fresh list of `(sku, "0.00"-style string)` per call.
+* `rank_lines` sorts by line net descending, ties by SKU ascending on Unicode code
+  points (`Z` before `a`), and does not reorder the caller's list.
+
+Rules:
+
+* Fix `pricer.py` only. Do **not** modify, delete or weaken `test_visible.py`; the
+  grader verifies its hash. `python3 -m unittest test_visible` must pass when you are
+  done (it currently does not).
+* Standard library only, no network, no new files needed.
+* Do not ask questions; decide from the docstrings and the symptoms above.
+
+Deliverable: `pricer.py` in the run directory. When it is fixed, reply with exactly
+this one line and nothing else:
+
+    pricer.py fixed

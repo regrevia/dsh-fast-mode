@@ -1,0 +1,8 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false

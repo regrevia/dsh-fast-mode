@@ -1,0 +1,7 @@
+{
+  "id": "csvpipe",
+  "entrypoint": "report.py",
+  "testCmd": "python3 -m unittest test_csvpipe",
+  "minSteps": 10,
+  "maxSteps": 25
+}

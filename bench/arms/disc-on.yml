@@ -1,0 +1,11 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false
+    guidance: true
+    outputDiscipline: true
+    shellParallel: false

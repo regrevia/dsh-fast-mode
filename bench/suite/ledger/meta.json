@@ -1,0 +1,8 @@
+{
+ "id": "ledger",
+ "entrypoint": "ledger.py",
+ "testCmd": "python3 -m unittest test_hidden_ledger",
+ "minSteps": 10,
+ "maxSteps": 25,
+ "tests": 22
+}

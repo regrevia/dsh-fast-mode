@@ -1,0 +1,17 @@
+{
+  "address": {
+    "city": "Zurich",
+    "state": "ZH",
+    "street": "5 Pascal Pl",
+    "zip": "8001"
+  },
+  "balance_cents": "75000",
+  "currency": "CHF",
+  "email": "nw@example.ch",
+  "first_name": "Niklaus",
+  "id": 22,
+  "last_name": "Wirth",
+  "tags": [
+    "pascal"
+  ]
+}

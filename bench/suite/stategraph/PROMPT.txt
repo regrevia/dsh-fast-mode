@@ -1,0 +1,91 @@
+Build a small guarded state machine as a Node.js ES module.
+
+Environment: an empty working directory. Node.js is installed. Standard library only:
+no npm install, no dependencies, no network. Your working directory is the run directory;
+all paths below are relative to it.
+
+Deliverable: `machine.mjs`, an ES module exporting exactly two named functions:
+`createMachine` and `fromJSON`.
+
+## createMachine(definition)
+
+`definition` is an object `{states, transitions}`.
+
+- `states`: a non-empty array of unique, non-empty strings. `states[0]` is the initial state.
+- `transitions`: an array of objects `{from, event, to, guard?}`.
+  - `from` and `to` must be members of `states`.
+  - `event` must be a non-empty string.
+  - `guard`, when present, must be a function. It takes no arguments; its return value is
+    interpreted as truthy/falsy. A transition without a guard always passes.
+  - Declaration order is priority order.
+
+Validation errors must be `Error` objects (throw `new Error(message)`), in this precedence:
+
+1. `definition` is not a non-null object → message `definition must be an object`.
+2. `states` is not a non-empty array of unique non-empty strings → message
+   `states must be a non-empty array of unique non-empty strings`.
+3. `transitions` is not an array → message `transitions must be an array`.
+4. A transition is not an object, has a non-string/empty `event`, or has a non-function
+   `guard` → message `invalid transition at index <i>` (0-based).
+5. A transition's `from` is not in `states` → message `unknown source state: <from>`.
+6. A transition's `to` is not in `states` → message `unknown target state: <to>`.
+
+The returned machine object has:
+
+- `state`: the current state name (readable property).
+- `send(event)`: applies at most one transition and returns a result object (see below).
+- `toJSON()`: returns a fresh plain object `{state, history}` (see below).
+
+## send(event)
+
+Only transitions whose `from` equals the current state and whose `event` equals `event`
+(using `===`) are candidates. Each candidate guard is evaluated at most once per `send`.
+
+- If there are no candidates at all, throw `new Error` whose message is exactly
+  `unknown event: <event> for state <state>`. The machine's state and history are unchanged.
+- Otherwise try candidates in declaration order. The first candidate whose guard is absent
+  or truthy fires:
+  - the new state is its `to`;
+  - one history entry `{from, event, to}` is appended, describing the transition that fired;
+  - the result is `{state, changed: true, history}`;
+  - a transition whose `to` equals its `from` still counts as fired (`changed: true`).
+- If candidates exist but every guard is falsy, nothing fires:
+  - the result is `{state: <current state>, changed: false, history}` with the history
+    unchanged in content;
+  - this is a no-op, not an error.
+
+`history` in every result is an immutable snapshot: a frozen array (`Object.isFrozen(...)`
+is `true`) whose entries are frozen plain objects `{from, event, to}`. It must reflect all
+transitions fired so far, including ones fired by earlier calls. Attempting to mutate the
+array or an entry must throw a `TypeError` (module code is strict). Different `send` calls
+must return different array instances.
+
+## toJSON() and fromJSON(snapshot, definition)
+
+`toJSON()` returns `{state, history}` where `history` is a new array of new mutable plain
+objects `{from, event, to}` that `JSON.stringify` serializes without loss.
+
+`fromJSON(snapshot, definition)` rebuilds a machine from such a snapshot plus the same
+definition shape accepted by `createMachine`. It must restore both the current state and
+the full history, so that `fromJSON(machine.toJSON(), definition).toJSON()` deep-equals
+`machine.toJSON()`, and so that the restored machine can keep calling `send`, appending to
+the restored history.
+
+Validate the snapshot, throwing `new Error` with these messages:
+
+1. `snapshot` is not a non-null object → `snapshot must be an object`.
+2. `snapshot.state` is not in `definition.states` → `invalid state: <state>`.
+3. `snapshot.history` is not an array → `history must be an array`.
+4. An entry is not an object, has a non-string/empty `event`, or has `from`/`to` outside
+   `states`, or the entries do not form a single chain (entry 0 starts at `states[0]`; each
+   later entry starts where the previous one ended; the last entry ends at `snapshot.state`;
+   an empty history requires `snapshot.state === states[0]`) → `history is inconsistent`.
+
+## Finishing
+
+Verify your module yourself with `node`. Do not ask questions and do not require manual
+confirmation.
+
+Your final answer must be exactly this one line and nothing else:
+
+machine.mjs ready

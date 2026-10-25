@@ -1,0 +1,17 @@
+{
+  "address": {
+    "city": "Stanford",
+    "state": "CA",
+    "street": "1 Literate Way",
+    "zip": "94305"
+  },
+  "balance_cents": "100",
+  "currency": "usd",
+  "first_name": "Donald",
+  "id": 13,
+  "last_name": "Knuth",
+  "tags": [
+    "café",
+    "tex"
+  ]
+}

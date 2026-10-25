@@ -1,0 +1,13 @@
+{
+  "address": {
+    "city": "Geneva",
+    "state": "GE",
+    "street": "8 Web Ave",
+    "zip": "1201"
+  },
+  "balance_cents": "-7",
+  "currency": "CHF",
+  "first_name": "Tim",
+  "id": 31,
+  "last_name": "Berners-Lee"
+}

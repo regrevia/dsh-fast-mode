@@ -1,0 +1,14 @@
+{
+  "address": {
+    "city": "Arlington",
+    "line2": "Bldg 7",
+    "state": "VA",
+    "street": "1 Navy Yard",
+    "zip": "22202"
+  },
+  "balance_cents": "123456",
+  "currency": "USD",
+  "first_name": "Grace",
+  "id": 2,
+  "last_name": "Hopper"
+}
