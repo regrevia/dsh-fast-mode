@@ -68,6 +68,8 @@ Every raw number, the step buckets, the rejected candidates and the failure mode
 
 Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a deprecation log; they **never** lower thinking strength.
 
+**Troubleshooting**: a task cut short by `Stop working now and report instead` means an install at 1.1.0 or older — that build stops unconditionally at 30 steps in a turn or 12 steps without new output. From 1.5.0 nothing wraps up on a step counter by default: no progress changes the approach instead of ending the turn, and a hard stop exists only when you set `stepBudget` yourself. Upgrade and restart once (host-side code loads at start).
+
 ## The switch
 
 The bolt is the switch: one click writes on/off, per conversation, restored on reload. No panel, no dropdown, no multiplier estimate.
