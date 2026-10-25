@@ -348,6 +348,51 @@ test('an output token budget fires on real usage, once per turn, not on step cou
   assert.equal(autoSchedule(state, 's1').directive, undefined, 'a new turn is charged from zero')
 })
 
+test('the shape gate goes silent on a write-dominated turn, and only for that turn', () => {
+  const state = createAutoState()
+  // Both reminders are armed, so silence can only come from the gate itself.
+  notePolicy(state, 's1', { lateDiscipline: true, finishLineSteps: 1, shapeGate: true })
+
+  // Three calls are not enough evidence: a turn often opens by reading.
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'a', chars: 1, digest: 'a' })
+  noteTool(state, 's1', { name: 'edit', argsKey: 'b', chars: 1, digest: 'b' })
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'finish-line', 'the gate has not seen enough calls yet')
+
+  // The fourth write tips it: the turn is a write job, so every reminder is a
+  // round trip the work cannot reuse. Native behaviour means no directive.
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'c', chars: 1, digest: 'c' })
+  noteTool(state, 's1', { name: 'edit', argsKey: 'd', chars: 1, digest: 'd' })
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'a write-dominated turn is left alone')
+
+  // A read-dominated turn is business as usual.
+  notePolicy(state, 's2', { lateDiscipline: true, finishLineSteps: 1, shapeGate: true })
+  noteTurn(state, 's2')
+  noteStep(state, 's2')
+  for (let i = 0; i < 4; i += 1) noteTool(state, 's2', { name: 'read', argsKey: `r-${i}`, chars: 1, digest: `r-${i}` })
+  assert.equal(autoSchedule(state, 's2').directive?.kind, 'finish-line', 'reads keep their reminders')
+
+  // The next turn starts from zero calls, so the gate re-earns its evidence.
+  noteTurn(state, 's1')
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'read', argsKey: 'e', chars: 1, digest: 'e' })
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'read', argsKey: 'f', chars: 2, digest: 'f' })
+  // One schedule call, because the scheduler consumes its own reminder when it
+  // produces one: asking twice would report the second, silent answer.
+  const next = autoSchedule(state, 's1')
+  assert.equal(next.stats.turnCalls, 2, 'the call counter restarts with the turn')
+  assert.notEqual(next.directive, undefined, 'a new turn is not silenced by the last one')
+
+  // Default stays off: same evidence, no gate.
+  notePolicy(state, 's3', { lateDiscipline: true, finishLineSteps: 1 })
+  noteTurn(state, 's3')
+  noteStep(state, 's3')
+  for (let i = 0; i < 4; i += 1) noteTool(state, 's3', { name: 'write', argsKey: `w-${i}`, chars: 1, digest: `w-${i}` })
+  assert.equal(autoSchedule(state, 's3').directive?.kind, 'finish-line', 'shapeGate is opt-in')
+})
+
 test('a hard stop exists only when the user asks for a step budget', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 8, finishLineSteps: 0 })

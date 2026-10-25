@@ -74,7 +74,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
     'benchmarkFile', 'enabled', 'finishLineSteps', 'gear', 'guidance', 'metrics', 'metricsFile',
-    'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'reassertAfterCompaction', 'sessions', 'shellParallel', 'stallGuard',
+    'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'reassertAfterCompaction', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs',
   ])
 
@@ -92,7 +92,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   // Measurement paths are composition knobs, like `debugFile`: they are read at
   // load and deliberately stay out of the form. Changing where the file goes is
   // an edit in cordis.patch.yml, not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'outputDiscipline', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'outputDiscipline', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

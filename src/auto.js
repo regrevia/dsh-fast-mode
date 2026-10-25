@@ -113,7 +113,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -125,6 +125,9 @@ export function notePolicy(state, agent, policy) {
   entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
   entry.openBatch = policy?.openBatch === true
+  // Opt-in shape gate: when a turn's calls are mostly writes, the scheduler has
+  // nothing to batch and every reminder is a round trip the task cannot use.
+  entry.shapeGate = policy?.shapeGate === true
 }
 
 /** A whole step count, or `fallback` when the value is not a usable number. */
@@ -205,6 +208,10 @@ function entryOf(state, agent) {
     /** One "batch the opening step" reminder per turn, never more. */
     openBatch: false,
     openingSent: false,
+    /** Opt-in: stay silent on a turn whose calls turned out to be writes. */
+    shapeGate: false,
+    turnCalls: 0,
+    turnUnsafe: 0,
   }
   state.sessions.set(key, entry)
   if (state.sessions.size > AUTO_SESSIONS) {
@@ -235,6 +242,8 @@ export function noteTurn(state, agent) {
   entry.outBudgetSent = false
   entry.openingSent = false
   entry.turnOutTokens = 0
+  entry.turnCalls = 0
+  entry.turnUnsafe = 0
   entry.entryWidth = undefined
   entry.pendingWidth = undefined
 }
@@ -324,8 +333,12 @@ export function noteTool(state, agent, observation) {
 
   entry.calls += 1
   entry.stepCalls += 1
+  entry.turnCalls += 1
   if (argsKey.length > 0) entry.stepArgs.add(argsKey)
-  if (!SAFE_CALLS.has(name)) entry.stepUnsafe += 1
+  if (!SAFE_CALLS.has(name)) {
+    entry.stepUnsafe += 1
+    entry.turnUnsafe += 1
+  }
   if (Number.isFinite(obs.durationMs) && obs.durationMs >= 0) {
     entry.waits.push(Number(obs.durationMs))
     if (entry.waits.length > AUTO_LIMITS.waitWindow) entry.waits.shift()
@@ -488,6 +501,8 @@ export function autoSchedule(state, agent) {
     steps: entry.steps,
     turnSteps: entry.turnSteps,
     turnOutTokens: entry.turnOutTokens,
+    turnCalls: entry.turnCalls,
+    turnUnsafe: entry.turnUnsafe,
     noProgress: entry.noProgress,
     errors: entry.errors,
     calls: entry.calls,
@@ -511,6 +526,13 @@ export function autoSchedule(state, agent) {
  * @returns {{kind: string, text: string, summary: string}|undefined}
  */
 function directiveFor(entry, stats) {
+  // Shape gate: a turn that has already spent most of its calls on writes is
+  // not a turn the scheduler can accelerate — there is nothing to batch, and
+  // every reminder costs a round trip the work cannot reuse. Silence is the
+  // native behaviour, so the switch falls back to it instead of guessing.
+  if (entry.shapeGate && stats.turnCalls >= 4 && stats.turnUnsafe * 10 >= stats.turnCalls * 6) {
+    return undefined
+  }
   if (entry.openBatch && !entry.openingSent && stats.turnSteps <= 1) {
     // A short task never reaches the finish line, so it pays the per-call fixed
     // cost (TTFT) of every round trip and nothing else. One line at the opening
