@@ -385,6 +385,15 @@ test('the shape gate goes silent on a write-dominated turn, and only for that tu
   assert.equal(next.stats.turnCalls, 2, 'the call counter restarts with the turn')
   assert.notEqual(next.directive, undefined, 'a new turn is not silenced by the last one')
 
+  // An explicit step budget outranks the gate: a write-heavy turn still gets
+  // the stop line the user asked for.
+  notePolicy(state, 's4', { lateDiscipline: true, stepBudget: 2, shapeGate: true })
+  noteTurn(state, 's4')
+  noteStep(state, 's4')
+  for (let i = 0; i < 4; i += 1) noteTool(state, 's4', { name: 'write', argsKey: `m-${i}`, chars: 1, digest: `m-${i}` })
+  noteStep(state, 's4')
+  assert.equal(autoSchedule(state, 's4').directive?.kind, 'stop-and-report', 'the user stop line beats the gate')
+
   // Default stays off: same evidence, no gate.
   notePolicy(state, 's3', { lateDiscipline: true, finishLineSteps: 1 })
   noteTurn(state, 's3')

@@ -530,7 +530,10 @@ function directiveFor(entry, stats) {
   // not a turn the scheduler can accelerate — there is nothing to batch, and
   // every reminder costs a round trip the work cannot reuse. Silence is the
   // native behaviour, so the switch falls back to it instead of guessing.
-  if (entry.shapeGate && stats.turnCalls >= 4 && stats.turnUnsafe * 10 >= stats.turnCalls * 6) {
+  // An explicit `stepBudget` is the user's own instruction and outranks the
+  // gate: "don't accelerate this" must never turn into "ignore my stop line".
+  const userAskedStop = entry.turnStepBudget > 0 && stats.turnSteps >= entry.turnStepBudget
+  if (!userAskedStop && entry.shapeGate && stats.turnCalls >= 4 && stats.turnUnsafe * 10 >= stats.turnCalls * 6) {
     return undefined
   }
   if (entry.openBatch && !entry.openingSent && stats.turnSteps <= 1) {
