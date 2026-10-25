@@ -39,7 +39,6 @@ export const AUTO = 'auto'
 
 /** The numbers the scheduler is allowed to pick from. */
 export const AUTO_LIMITS = Object.freeze({
-  parallelMin: 2,
   parallelBase: 4,
   parallelMax: 8,
   /** Widest step is only asked for after this many clean steps. */
@@ -50,12 +49,21 @@ export const AUTO_LIMITS = Object.freeze({
   stallMultiplier: 3,
   /** Consecutive no-progress steps before the model is told to change approach. */
   noProgressWarn: 6,
-  /** Consecutive no-progress steps before it is told to stop and report. */
-  noProgressStop: 12,
-  /** Steps in one turn before the same stop-and-report fires. */
-  turnStepBudget: 30,
-  /** Steps into a turn where the soft finish line asks for the report (0 = off). */
-  finishLineSteps: 10,
+  /**
+   * Steps in one turn before the hard stop fires. Off by default: a step count
+   * is a cost metric, not evidence that the work is finished, and a plugin that
+   * ends a turn on a counter can cut a progressing task short. A user who wants
+   * a hard ceiling sets `stepBudget` themselves.
+   */
+  turnStepBudget: 0,
+  /**
+   * Steps into a turn where an optional soft finish line asks for the report.
+   * Off by default, and this one is the retired default: at step 10 it told the
+   * model to stop re-reading files and stop re-running checks, which is exactly
+   * what a task that just edited code after a green test must keep doing. Kept
+   * as an opt-in ablation, never as the shipped stance.
+   */
+  finishLineSteps: 0,
   /** How many recent call durations the p90 is taken over. */
   waitWindow: 32,
   /** Steps between two directives, so the reminder cannot become the noise. */
@@ -110,8 +118,13 @@ export function noteEntry(state, agent, width) {
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
   entry.lateDiscipline = policy?.lateDiscipline === true
-  entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 4)
+  // A token budget counts decode work, which is what the wall clock is actually
+  // made of; 0 is the off switch, exactly like stepBudget.
+  entry.outBudget = stepCount(policy?.outputBudget, 0, 0)
+  // 0 is a value, not "unset": it is how a caller asks for no hard stop at all.
+  entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
+  entry.openBatch = policy?.openBatch === true
 }
 
 /** A whole step count, or `fallback` when the value is not a usable number. */
@@ -151,13 +164,29 @@ function entryOf(state, agent) {
     lastStepReadOnly: false,
     /** True when every call in the last step read a different target. */
     lastStepDistinct: false,
+    /** Output tokens this turn has been charged for, from upstream usage. */
+    turnOutTokens: 0,
     /** Width chosen from the request text, consumed by the turn's first step. */
     entryWidth: undefined,
     pendingWidth: undefined,
     readOnlyStreak: 0,
     errors: 0,
-    /** @type {Map<string, {chars: number, errored: boolean}>} */
+    /** @type {Map<string, {digest: string, chars: number, errored: boolean}>} */
     seen: new Map(),
+    /**
+     * A monotone counter of observed mutations. A check result is only reusable
+     * while the epoch it was recorded under is still the current one; any write
+     * or build command bumps it and invalidates every stored result at once.
+     */
+    epoch: 0,
+    /** @type {Map<string, {epoch: number, digest: string}>} */
+    checks: new Map(),
+    /** Signature of a check that just repeated with a still-valid stored pass. */
+    reuseHint: '',
+    /** Epoch in which the reuse reminder last fired, so it fires once per epoch. */
+    reuseSentEpoch: -1,
+    /** True when the current step produced at least one new observation. */
+    stepProgress: false,
     /** @type {number[]} */
     waits: [],
     lastDirectiveStep: -Infinity,
@@ -173,6 +202,9 @@ function entryOf(state, agent) {
     finishLineSteps: AUTO_LIMITS.finishLineSteps,
     /** One finish-line reminder per turn, never more. */
     finishLineSent: false,
+    /** One "batch the opening step" reminder per turn, never more. */
+    openBatch: false,
+    openingSent: false,
   }
   state.sessions.set(key, entry)
   if (state.sessions.size > AUTO_SESSIONS) {
@@ -197,10 +229,31 @@ export function noteTurn(state, agent) {
   entry.stepUnsafe = 0
   entry.stepArgs.clear()
   entry.stopped = false
+  entry.stepProgress = false
   entry.disciplineSent = false
   entry.finishLineSent = false
+  entry.outBudgetSent = false
+  entry.openingSent = false
+  entry.turnOutTokens = 0
   entry.entryWidth = undefined
   entry.pendingWidth = undefined
+}
+
+/**
+ * Charge one assistant message's output tokens to the current turn.
+ *
+ * The harness reports usage on every completed message, so this is the same
+ * number the meter bills: decode time, not round trips. The scheduler reads it
+ * to decide whether a turn has already spent enough output to justify a warning.
+ *
+ * @param {ReturnType<typeof createAutoState>} state
+ * @param {string} agent
+ * @param {number} tokens
+ */
+export function noteOutputTokens(state, agent, tokens) {
+  const n = Number(tokens)
+  if (!Number.isFinite(n) || n <= 0) return
+  entryOf(state, agent).turnOutTokens += n
 }
 
 /**
@@ -229,7 +282,13 @@ export function noteStep(state, agent) {
     // but is really a chain.
     entry.lastStepDistinct = entry.lastStepReadOnly && entry.stepArgs.size === entry.stepCalls
     entry.readOnlyStreak = entry.lastStepReadOnly ? entry.readOnlyStreak + 1 : 0
+    // Stall is a property of a whole step, not of one call: a step that polled
+    // status five times with the same text still produced nothing, while a step
+    // whose five calls all returned the same *length* may have produced plenty.
+    if (entry.stepProgress) entry.noProgress = 0
+    else entry.noProgress += 1
   }
+  entry.stepProgress = false
   entry.stepCalls = 0
   entry.stepUnsafe = 0
   entry.stepArgs.clear()
@@ -238,15 +297,20 @@ export function noteStep(state, agent) {
 /**
  * Record one finished tool call and decide whether it made progress.
  *
- * "Progress" is deliberately observable rather than semantic: a signature the
- * session has not issued before, a result whose size changed, or a call that
- * used to fail and now succeeds. Anything else is a retry wearing a new hat —
- * including a successful rerun of the identical command, which is why the size
- * of the result is part of the test.
+ * "Progress" is observable, and it is compared on **content**, not size: a
+ * status poll that walks `completed 10 / 99` → `11 / 99` has the same length
+ * every time, so a length test called a perfectly healthy wait a stall. The
+ * digest also separates two results of equal size that say different things.
+ * A call that used to fail and now succeeds is progress; an identical
+ * successful rerun of the same call is not.
+ *
+ * The same observation feeds the check registry: a successful call is stored
+ * with the artifact epoch it ran under, and repeating it verbatim while that
+ * epoch is current is what the "reuse the result" reminder is for.
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{name?: string, argsKey?: string, isError?: boolean, chars?: number, durationMs?: number}} observation
+ * @param {{name?: string, argsKey?: string, isError?: boolean, chars?: number, digest?: string, durationMs?: number}} observation
  */
 export function noteTool(state, agent, observation) {
   const entry = entryOf(state, agent)
@@ -255,6 +319,7 @@ export function noteTool(state, agent, observation) {
   const argsKey = typeof obs.argsKey === 'string' ? obs.argsKey : ''
   const signature = `${name}\u0000${argsKey}`
   const chars = Number.isFinite(obs.chars) ? Number(obs.chars) : -1
+  const digest = typeof obs.digest === 'string' && obs.digest.length > 0 ? obs.digest : `chars:${chars}`
   const isError = obs.isError === true
 
   entry.calls += 1
@@ -266,28 +331,89 @@ export function noteTool(state, agent, observation) {
     if (entry.waits.length > AUTO_LIMITS.waitWindow) entry.waits.shift()
   }
 
+  // A mutation invalidates every stored check at once; the epoch is the only
+  // bookkeeping the reuse reminder needs. A verbatim *repeated* check is the
+  // exception: `npm test` is a shell call that looks like a writer, and without
+  // this branch it would bump its own epoch on every run, so the one command
+  // the reuse reminder exists for could never trigger it.
+  const priorCheck = entry.checks.get(signature)
+  const repeatedCheck = priorCheck !== undefined && priorCheck.epoch === entry.epoch
+  if (isMutation(name, argsKey) && !(SHELL_CALLS.has(name) && repeatedCheck)) {
+    entry.epoch += 1
+    entry.checks.clear()
+    entry.reuseHint = ''
+  }
+
   const previous = entry.seen.get(signature)
   let progress = false
   if (isError) {
     entry.errors += 1
     if (previous) previous.errored = true
-    else entry.seen.set(signature, { chars, errored: true })
+    else entry.seen.set(signature, { digest, chars, errored: true })
   } else {
     if (!previous) progress = true
     else if (previous.errored) progress = true
-    else if (previous.chars !== chars) progress = true
-    entry.seen.set(signature, { chars, errored: false })
+    else if (previous.digest !== digest) progress = true
+    entry.seen.set(signature, { digest, chars, errored: false })
     entry.errors = 0
+    noteCheck(entry, name, argsKey, signature, digest)
   }
 
-  if (progress) entry.noProgress = 0
-  else entry.noProgress += 1
+  if (progress) entry.stepProgress = true
 
   // Bounded memory: a long session may issue hundreds of distinct calls and the
   // scheduler only needs to recognise the recent ones.
   if (entry.seen.size > 128) {
     const oldest = entry.seen.keys().next().value
     if (oldest !== undefined) entry.seen.delete(oldest)
+  }
+}
+
+/** Calls whose whole purpose is to wait, so a repeat carries no reuse meaning. */
+const WAITING_CALLS = Object.freeze(new Set([
+  'ask_user_question', 'wait_agent', 'job_output', 'job_list', 'task_board_run',
+  'workflow', 'subagent', 'subagent_fork',
+]))
+
+/**
+ * Shell commands that write. The argument string is all the scheduler has, so
+ * this is a conservative read: anything that looks like a redirection or one of
+ * the common mutators bumps the epoch, and a false positive only costs one
+ * unnecessary reminder — a false negative would let a stale check look valid.
+ */
+const MUTATOR = /(?:>>?|\btee\b|\bcp\b|\bmv\b|\brm\b|\bmkdir\b|\btouch\b|\bchmod\b|\bln\b|\bpatch\b|\bdd\b|\bpip3?\b|\bnpm\b|\bpnpm\b|\byarn\b|\bmake\b|\bsed\s+-i\b|\bgit\s+(?:clone|init|add|commit|checkout|switch|apply|reset|stash|merge|rebase|rm)\b)/
+
+/** @param {string} name @param {string} argsKey */
+function isMutation(name, argsKey) {
+  if (MUTATING_CALLS.has(name)) return true
+  if (SHELL_CALLS.has(name)) return MUTATOR.test(argsKey)
+  return false
+}
+
+const MUTATING_CALLS = Object.freeze(new Set(['write', 'edit', 'apply_patch', 'patch']))
+const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_code', 'exec']))
+
+/**
+ * Store a successful call as a reusable result, and raise the hint when it is a
+ * verbatim repeat of one that is still valid for the current epoch.
+ *
+ * @param {object} entry
+ * @param {string} name
+ * @param {string} argsKey
+ * @param {string} signature
+ * @param {string} digest
+ */
+function noteCheck(entry, name, argsKey, signature, digest) {
+  if (argsKey.length === 0 || WAITING_CALLS.has(name)) return
+  const stored = entry.checks.get(signature)
+  if (stored && stored.epoch === entry.epoch && stored.digest === digest && entry.reuseHint === '') {
+    entry.reuseHint = signature
+    return
+  }
+  entry.checks.set(signature, { epoch: entry.epoch, digest })
+  if (entry.checks.size > 64) {
+    const oldest = entry.checks.keys().next().value
+    if (oldest !== undefined) entry.checks.delete(oldest)
   }
 }
 
@@ -321,10 +447,11 @@ export function autoSchedule(state, agent) {
   // width 1 silences the whole guidance section, so a write-heavy or
   // dependency-bound stretch is not told to batch, and pays no prompt tax.
   let parallel = 1
-  // A classified fan-out holds for the whole turn: later steps of the same task
-  // are the same shape even when their last call happened to be a write or a
-  // single shell command.
-  if (entry.turnSteps >= 1 && Number.isFinite(entry.entryWidth) && entry.entryWidth >= 1) {
+  // Recent error evidence outranks the request classification: a fan-out shape
+  // whose last three calls failed is not a shape worth asking for again.
+  if (entry.errors >= 3) {
+    parallel = 1
+  } else if (entry.turnSteps >= 1 && Number.isFinite(entry.entryWidth) && entry.entryWidth >= 1) {
     // Classified from the request itself: this is the only signal available on
     // the very first step, so it must outrank the "nothing observed" probe.
     parallel = entry.entryWidth
@@ -332,7 +459,7 @@ export function autoSchedule(state, agent) {
     // Nothing observed yet: one cheap probe block, small enough to stay honest
     // on tasks that turn out to have nothing to fan out.
     parallel = AUTO_LIMITS.parallelBase
-  } else if (entry.noProgress >= 3 || entry.errors >= 3) {
+  } else if (entry.noProgress >= 3) {
     parallel = 1
   } else if (entry.lastStepDistinct && entry.lastStepCalls >= 2) {
     // The strongest local signal: the last step was already a block of
@@ -360,6 +487,7 @@ export function autoSchedule(state, agent) {
   const stats = {
     steps: entry.steps,
     turnSteps: entry.turnSteps,
+    turnOutTokens: entry.turnOutTokens,
     noProgress: entry.noProgress,
     errors: entry.errors,
     calls: entry.calls,
@@ -383,10 +511,23 @@ export function autoSchedule(state, agent) {
  * @returns {{kind: string, text: string, summary: string}|undefined}
  */
 function directiveFor(entry, stats) {
+  if (entry.openBatch && !entry.openingSent && stats.turnSteps <= 1) {
+    // A short task never reaches the finish line, so it pays the per-call fixed
+    // cost (TTFT) of every round trip and nothing else. One line at the opening
+    // step is the only harness lever that can remove a round trip outright.
+    entry.openingSent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'open-batch'
+    return {
+      kind: 'open-batch',
+      text: 'Auto schedule: batch now. Put every independent tool call you already know you need in one '
+        + 'block this step, and chain shell commands with && instead of one call per command.',
+      summary: 'auto: batch the opening step',
+    }
+  }
   const since = entry.steps - entry.lastDirectiveStep
   if (since < AUTO_LIMITS.directiveCooldown) return undefined
 
-  let kind = ''
   if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= AUTO_LIMITS.disciplineAfterSteps) {
     // Late engagement: the prompt carried no prose rules, so the only cost of a
     // short task was its own work. By this step the task is demonstrably long,
@@ -403,6 +544,24 @@ function directiveFor(entry, stats) {
       summary: 'auto: compress output for the rest of the turn',
     }
   }
+  const outBudget = entry.outBudget
+  if (outBudget > 0 && !entry.outBudgetSent && stats.turnOutTokens >= outBudget) {
+    // Evidence that the turn is expensive, not that it is long: the counter is
+    // the provider's own usage. A three-step turn that wrote 30 000 tokens is a
+    // cost problem the step counter cannot see, and a twenty-step turn that
+    // wrote 2 000 tokens is not.
+    entry.outBudgetSent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'output-budget'
+    return {
+      kind: 'output-budget',
+      text: `Auto schedule: this turn has written about ${stats.turnOutTokens} output tokens, and decode time `
+        + 'is the wall clock. Close the smallest complete loop for what you are holding: finish the current '
+        + 'file or function, run the one check that proves it, and report. Do not expand scope, do not '
+        + 'rewrite a file that already works, do not restate what you wrote.',
+      summary: 'auto: output token budget reached',
+    }
+  }
   if (entry.finishLineSteps > 0 && !entry.finishLineSent && stats.turnSteps >= entry.finishLineSteps) {
     // Soft stop: the tail of a long turn is where the wall clock and the
     // correctness both go wrong — the model keeps adding scope and re-verifying
@@ -414,43 +573,60 @@ function directiveFor(entry, stats) {
     entry.lastDirectiveKind = 'finish-line'
     return {
       kind: 'finish-line',
-      text: 'Auto schedule: finish line. From here, stop adding scope: no new features, no rewrites, no '
-        + 're-reading your own files, and no second run of a check that already passed. Run only the '
-        + 'deliverable\'s own check that is still failing, fix what it reports, then report in a few lines.',
+      text: 'Auto schedule: finish line. Stop adding scope: no new features, no rewrites, no re-reading '
+        + 'your files, no re-running a check that passed. Fix only what still fails, then report.',
       summary: 'auto: finish line, stop adding scope',
     }
   }
-  const budget = entry.turnStepBudget > 0 ? entry.turnStepBudget : AUTO_LIMITS.turnStepBudget
-  if (stats.noProgress >= AUTO_LIMITS.noProgressStop || stats.turnSteps >= budget) {
+  // A hard stop exists only when the user asked for one (`stepBudget`). The
+  // scheduler itself never ends a turn on a step counter: the counter measures
+  // cost, and the evidence for "the work is done" lives in the work.
+  const budget = entry.turnStepBudget
+  if (budget > 0 && stats.turnSteps >= budget) {
     if (entry.stopped) return undefined
-    kind = 'stop-and-report'
-  } else if (stats.noProgress >= AUTO_LIMITS.noProgressWarn) {
-    kind = 'change-approach'
-  }
-  if (kind === '') return undefined
-
-  entry.lastDirectiveStep = entry.steps
-  entry.lastDirectiveKind = kind
-  if (kind === 'stop-and-report') entry.stopped = true
-
-  if (kind === 'stop-and-report') {
+    entry.stopped = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'stop-and-report'
     return {
-      kind,
-      text: `Auto schedule: ${stats.noProgress} steps without progress or ${stats.turnSteps} steps in one turn. `
-        + 'Stop working now and report instead: what is finished, what is blocked, the exact command or path that fails, '
-        + 'and the smallest next step that would unblock it. Do not start another long-running call, '
-        + 'and do not retry the same command with the same arguments.',
-      summary: 'auto: stop and report, no progress',
+      kind: 'stop-and-report',
+      text: `Auto schedule: this turn reached the step budget it was given (${budget}). `
+        + 'Report where the work stands — finished, still open, the exact command or path that fails, and '
+        + 'the smallest next step — and stop starting new long-running work.',
+      summary: 'auto: user step budget reached',
     }
   }
-  return {
-    kind,
-    text: `Auto schedule: ${stats.noProgress} consecutive steps produced nothing new. `
-      + 'Change the approach before the next call: run the slow command in the background and poll it, '
-      + 'write the script to a file and execute that file, or narrow it to one path or one pattern. '
-      + 'Repeating the same command with the same arguments is not progress, and it will be cancelled again.',
-    summary: 'auto: change approach, no progress',
+  if (entry.reuseHint !== '' && entry.reuseSentEpoch !== entry.epoch) {
+    // The narrowest, most defensible kind of saving: the same check, verbatim,
+    // already passed on this exact artifact version. Anything that wrote since
+    // then bumped the epoch and this branch is unreachable, which is what makes
+    // the reminder safe for a task that edits code after a green test.
+    entry.reuseHint = ''
+    entry.reuseSentEpoch = entry.epoch
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'reuse-check'
+    return {
+      kind: 'reuse-check',
+      text: 'Auto schedule: that check already passed on the current files and nothing relevant changed '
+        + 'since. Use the result you already have and spend this step on the remaining work; run it again only '
+        + 'after the files it covers change.',
+      summary: 'auto: reuse a passing check',
+    }
   }
+  if (stats.noProgress >= AUTO_LIMITS.noProgressWarn) {
+    // A stall is a reason to change method, never a reason to end the task: the
+    // same step evidence that looks like a loop can be a slow, healthy wait.
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'change-approach'
+    return {
+      kind: 'change-approach',
+      text: `Auto schedule: ${stats.noProgress} consecutive steps produced nothing new. `
+        + 'Check the preconditions and change the method before the next call: run the slow command in the '
+        + 'background and poll it, write the script to a file and execute that file, or narrow it to one path '
+        + 'or one pattern. Repeating the same call with the same arguments will not move the task forward.',
+      summary: 'auto: change approach, no progress',
+    }
+  }
+  return undefined
 }
 
 /**

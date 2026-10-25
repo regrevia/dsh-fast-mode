@@ -122,6 +122,56 @@ test('a hung call is cancelled at its budget, and the failure says what to chang
   assert.equal(exec.signal, caller.signal)
 })
 
+test('a cancelled call does not report until its body has really stopped', async () => {
+  const caller = new AbortController()
+  const exec = { name: 'bash', signal: caller.signal }
+  let stalled
+  const guard = createStallGuard({
+    budgetFor: () => 20,
+    onStall: (info) => { stalled = info },
+  })
+
+  // The body ignores the abort at first and keeps writing for 40 ms after the
+  // deadline. Reporting at 20 ms would hand the harness a "cancelled" result
+  // while the command is still running.
+  const events = []
+  const result = await guard(exec, () => new Promise((resolve) => {
+    const signal = exec.signal
+    signal.addEventListener('abort', () => {
+      events.push('aborted')
+      setTimeout(() => {
+        events.push('settled')
+        resolve({ isError: true, error: { message: 'killed' }, content: [] })
+      }, 40)
+    }, { once: true })
+  }))
+
+  assert.equal(result.isError, true)
+  assert.deepEqual(events, ['aborted', 'settled'])
+  assert.equal(stalled.quiesced, true, 'the body had settled before the failure was returned')
+  assert.equal(exec.signal, caller.signal)
+})
+
+test('a body that ignores its signal is reported without waiting forever', async () => {
+  const caller = new AbortController()
+  const exec = { name: 'bash', signal: caller.signal }
+  let stalled
+  const guard = createStallGuard({
+    budgetFor: () => 20,
+    graceMs: 10,
+    onStall: (info) => { stalled = info },
+  })
+
+  const began = Date.now()
+  const result = await guard(exec, () => new Promise(() => {}))
+  const elapsed = Date.now() - began
+
+  assert.equal(result.isError, true, 'the turn still gets its failure back')
+  assert.equal(stalled.quiesced, false, 'the wait was bounded, and the report says so')
+  assert.ok(elapsed < 1_000, `a stuck body must not hang the caller (waited ${elapsed} ms)`)
+  assert.equal(exec.signal, caller.signal)
+})
+
 test('a cancellation from the caller is forwarded, not invented', async () => {
   const caller = new AbortController()
   const exec = { name: 'bash', signal: caller.signal }

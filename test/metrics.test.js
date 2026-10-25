@@ -7,12 +7,12 @@
  * summing), not about the harness — the wiring is covered by the plugin tests.
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { compare, createRecorder, METRICS_VERSION, summarise } from '../src/metrics.js'
+import { compare, createRecorder, METRICS_ROTATE_BYTES, METRICS_VERSION, summarise } from '../src/metrics.js'
 
 /** A session-shaped object: only `id` is ever read. */
 const session = id => ({ id })
@@ -336,4 +336,46 @@ test('usage under the gateway spelling is folded too', () => withTempFile((file)
     { input: row.input, output: row.output, reasoning: row.reasoning, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite },
     { input: 500, output: 40, reasoning: 5, cacheRead: 900, cacheWrite: 60 },
   )
+}))
+
+test('the sink rotates once at its size cap instead of growing without bound', () => withTempFile((file, dir) => {
+  // An installed profile keeps this journal across months: one row per step with
+  // no cap is a slow disk leak. The writer rotates the current generation away
+  // and keeps writing into a fresh file, and the previous one survives.
+  writeFileSync(file, '\n'.repeat(METRICS_ROTATE_BYTES))
+  const recorder = createRecorder({ file })
+  step(recorder, 's1', { start: 1000, ttft: 1200, end: 1400, usage: { inputTokens: 10, outputTokens: 2 } })
+
+  const rotated = `${file}.1`
+  assert.equal(existsSync(rotated), true, 'the old generation is kept as <file>.1')
+  assert.equal(statSync(rotated).size, METRICS_ROTATE_BYTES)
+  assert.ok(statSync(file).size < 4096, 'the new generation starts small')
+  assert.equal(readRows(file).length, 1, 'the triggering row lands in the new file')
+  assert.equal(existsSync(join(dir, 'metrics.jsonl')), true)
+}))
+
+test('a second rotation replaces the older generation instead of stacking files', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  step(recorder, 's1', { start: 1000, ttft: 1200, end: 1400, usage: { inputTokens: 10, outputTokens: 2 } })
+  writeFileSync(file, '\n'.repeat(METRICS_ROTATE_BYTES))
+  step(recorder, 's2', { start: 2000, ttft: 2200, end: 2400, usage: { inputTokens: 10, outputTokens: 2 } })
+  writeFileSync(file, '\n'.repeat(METRICS_ROTATE_BYTES))
+  step(recorder, 's3', { start: 3000, ttft: 3200, end: 3400, usage: { inputTokens: 10, outputTokens: 2 } })
+  assert.equal(existsSync(`${file}.2`), false, 'exactly one previous generation is kept')
+  assert.equal(readRows(file).length, 1)
+}))
+
+test('the rotation cap can be raised at runtime so a campaign never rotates mid-window', () => withTempFile((file) => {
+  const previous = process.env.DSH_FAST_MODE_METRICS_MAX_BYTES
+  try {
+    process.env.DSH_FAST_MODE_METRICS_MAX_BYTES = '268435456'
+    writeFileSync(file, '\n'.repeat(METRICS_ROTATE_BYTES))
+    const recorder = createRecorder({ file })
+    step(recorder, 's1', { start: 1000, ttft: 1200, end: 1400, usage: { inputTokens: 10, outputTokens: 2 } })
+    assert.equal(existsSync(`${file}.1`), false, 'a raised cap keeps the oversized file in place')
+    assert.equal(readRows(file).length, 1, 'the row is appended past the default cap')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_FAST_MODE_METRICS_MAX_BYTES
+    else process.env.DSH_FAST_MODE_METRICS_MAX_BYTES = previous
+  }
 }))

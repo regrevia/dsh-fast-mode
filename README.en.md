@@ -9,7 +9,7 @@
 
 <p align="center">
   <b>Same thinking strength. Speed only where reads can run together.</b><br>
-  Wide when there is evidence, native when there is not; the request body is untouched.
+  Wide when there is evidence, native when there is not; no request fields are added or changed.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@ A step costs round-trip overhead × steps + decode time × output tokens + tool 
 - **Output discipline.** It trims process narration (no call previews, no restating results, no progress reports); the final answer is untouched.
 - **Stall watchdog.** Shell/script calls get a 120–300 s adaptive cap; a stuck call is cancelled and "change the approach" is written back into the context.
 
-No model switch, no `reasoningEffort` rewrite, no request-body injection. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
+No model switch, no `reasoningEffort` rewrite, no request-field injection (`service_tier`, `max_tokens`, anything like them). While the mode is on, the model's input carries this plugin's own scheduling guidance and reminders — that is the mechanism; switch the mode off and they are gone. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
 
 ## Three words, defined
 
@@ -38,30 +38,19 @@ No model switch, no `reasoningEffort` rewrite, no request-body injection. DeepSe
 - **Rate**: the reciprocal of wall clock (1/wall). 10 s → 8 s is a 1.25× rate.
 - **Speedup**: `wall(off) / wall(on)`. **Above 1 means faster**: 1.28× means 22 % less time; 0.8× means 25 % slower. A 95 % CI that crosses 1 means "indistinguishable from off".
 
-## Measured on v1.2.0 (relative only)
+## Measured
 
-Same model (`deepseek-v4.1-flash`), same route, same `reasoningEffort: medium`; the only difference between arms is the plugin switch. 8 multi-file tasks × 5 ABBA pairs = 80 real headless runs, deterministic quality gate **80/80 passed** (5/5 per arm per task).
+**1.5.0 ships no step-based finish line by default.** `finishLineSteps` and `stepBudget` both default to `0`: there is no "remind me at step 10" and no "stop at step 30". When to finish is decided by task state and completion evidence — repeating an already-passing check verbatim against the same artifact suggests reusing the result and spending the step on what is left; several steps with no new result suggests changing the method (a reminder only, it never ends the turn); a stuck tool is cancelled by the watchdog and awaited until it really stops. A finished task is reported normally; a reminder never votes to stop for you.
 
-| Task (shape) | Wall: off → on | Speedup | 95 % CI |
-|---|---|---|---|
-| t1: 8 files, per-item table (native by rule) | 10.0 s → 9.5 s | 1.02× | 0.86–1.40 | 12 |
-| t2: 40 files counted | 5.8 s → 6.0 s | 0.98× | 0.82–1.34 | 8 |
-| t3: 6 dirs summed (shell) | 5.6 s → 4.9 s | 1.03× | 0.67–1.36 | 15 |
-| t4: 12 modules audited (serial) | 9.1 s → 11.0 s | 1.03× | 0.55–1.19 | 5 |
-| t5: 12×5 hot symbol | 6.8 s → 7.6 s | 1.07× | 0.43–1.35 | 5 |
-| t6: 24 logs totalled | 8.7 s → 5.6 s | 1.43× | 1.00–2.57 | 5 |
-| t7: 18-node chain (serial) | 4.4 s → 4.3 s | 1.06× | 0.76–1.30 | 5 |
-| t8: 16 manifests, dupes | 6.9 s → 5.4 s | 1.29× | 0.98–1.61 | 5 |
-| t9: 6 modules edited (write fan-out) | 9.6 s → 8.8 s | 0.98× | 0.73–1.59 | 8 |
-| t10: 10 logs, aggregate report (mixed) | 7.0 s → 6.4 s | 1.11× | 0.84–1.39 | 8 |
+**1.5.0 rebaseline (9 families, 54 complete units, hidden tests all green).** Totals over whole completed tasks, no runs dropped: off **7142.3 s / 1 196 707 tokens / 1155 steps**; the default arm **0.86× wall / 0.95× output / 0.85× steps**; the retired `fl10` **0.78× / 0.79× / 0.72×**. The gain sits in read-heavy and from-scratch work (`csvpipe` 0.79×, `debugfix` 0.56×, `ledger` 0.73×, `shellpipeline` 0.87×, `stategraph` 0.82×); **the three write-file families show no stable speedup** (`migrate` 1.02×, `codeimpl` 1.09×, `perfrefactor` 1.33×), which is why `fl10` stays an ablation arm. On the everyday "fix bugs and add TTL plus pagination in a small repo" family the default arm is 0.84× wall and 0.79× output. Two baseline runs looped on their own; dropping them moves the default arm's wall ratio back to 0.88× — that sensitivity is in [BENCHMARK.md](BENCHMARK.md).
 
-**All 76 pairs: median speedup 1.06× (CI 1.00–1.15×), 45/76 pairs faster, mean 1.15×.** This is the honest number after enlarging the sample: there is **no** reliable large speedup. The 1.86× (t1) and 1.77× (t3) quoted in 1.4.0 rested on 5 pairs each; at 15 pairs they fall to 1.02× and 1.03× — a small-sample multiple is noise, not a win.
+**The retired default: `finishLineSteps: 10`.** On 7 families and 14 pairs it produced a median **1.86×**, 13/14 pairs faster (sign test **p = 0.002**), output **−52 %**, steps **−10.0**, hidden tests **14/14 green**. That line was genuinely fast, and the cost was real too: it fired at step 10 even on a long task that was still making progress. So 1.5.0 demotes it to an ablation arm (`fl10`), off by default.
 
-One mechanism survives: **only shapes whose step count actually drops get faster** (t3 shell fan-out 4.7→3.5 steps, t9 5.9→5.2, t10 5.1→4.9); wall time is dominated by decode tokens, so the ~0.7 s/step saved is often eaten by a larger single-step output. The 1.4×/1.3× on t6/t8 still rest on 5 pairs and should be read as provisional.
+**Honest history:** after 1.4.1 grew the sample from 5 pairs to 76, the 1.4.0 1.86× fell to a median **1.06×** (45/76 pairs faster) — small-sample multiples are noise. Short tasks (1–5 steps) have little to save; the gain appears with step count.
 
-Why "accelerate only the parallel shape" has not fully landed yet: the scheduler's evidence comes from calls that have **already happened**, and these eight tasks are single-turn — they saw only the 4-wide probe of a fresh session before they finished. 1.3.0 removes that probe: the shape is read from the request's own wording instead.
+**One-line conclusion:** speed-up was observed on the limited tasks measured; no regression was observed on their hidden assertions. That is not a general quality guarantee.
 
-Method, raw numbers and failure modes: [BENCHMARK.md](BENCHMARK.md).
+Every raw number, the step buckets, the rejected candidates and the failure modes: [BENCHMARK.md](BENCHMARK.md).
 
 ## Install
 

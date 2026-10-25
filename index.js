@@ -1,13 +1,16 @@
 /**
  * dsh-fast-mode 1.0.0: the harness's own fast mode.
  *
- * The single rule that defines this release: **the plugin never changes thinking
- * effort, the model, or the request body.** `agent/request` awaits the next
- * handler and returns the resolved request untouched. Whatever effort the user
- * picked — a per-conversation UI choice or the profile's `agent-default-model`
- * pin — is what every call runs at, on every request, across restarts. There is
- * no policy here that could drift it, because the mechanism was deleted rather
- * than gated.
+ * Two rules define this release. **1. The plugin never changes thinking effort,
+ * the model, or the request body.** `agent/request` awaits the next handler and
+ * returns the resolved request untouched. Whatever effort the user picked — a
+ * per-conversation UI choice or the profile's `agent-default-model` pin — is
+ * what every call runs at, on every request, across restarts. There is no policy
+ * here that could drift it, because the mechanism was deleted rather than gated.
+ * **2. Nothing it adds is hidden.** Model input is not byte-identical while the
+ * mode is on: the guidance section and the scheduler's notices are text in the
+ * conversation by design, and they are the whole mechanism. What the mode never
+ * does is add a request field, rewrite a message, or touch the effort.
  *
  * What the plugin does instead, on the three places a turn actually loses time:
  *
@@ -18,11 +21,14 @@
  * 2. **Output discipline.** The same section asks for less process narration.
  *    It never asks for a shorter answer: the deliverable is exempt by
  *    construction.
- * 3. **Bounded calls and loop breaking.** Shell-class tool calls get a
- *    cancellable ceiling (`auto`: 120 s, self-tuning to 300 s from the recent
- *    p90; `safe`: none). A call that hits it is cancelled and the model is told
- *    to change approach. Six no-progress steps warn, twelve stop, and after
- *    thirty steps in one turn the scheduler stops widening.
+ * 3. **Bounded calls and evidence-based loop breaking.** Shell-class tool calls
+ *    get a cancellable ceiling (`auto`: 120 s, self-tuning to 300 s from the
+ *    recent p90; `safe`: none). A cancelled call is waited on until its body
+ *    really stops, then the model is told to change approach. A step that
+ *    produced a new result is progress even when the result has the same size as
+ *    the last one; a repeated check whose artifact version has not changed gets
+ *    "reuse that result" once. The scheduler never ends a turn on a step counter:
+ *    a hard stop exists only when the user sets `stepBudget`.
  *
  * ## Switching it on
  *
@@ -41,12 +47,14 @@
  * ## Provider independence
  *
  * The plugin adds no provider-specific field and asks the route for no
- * vocabulary. Because the request is returned unchanged, an official DeepSeek
+ * vocabulary. Only the guidance text and notices differ from the harness's own
+ * prompt; the request object is returned unchanged, so an official DeepSeek
  * route, a self-hosted gateway and a LAN deployment behave identically here:
  * whatever the harness resolved is what goes out. The `effort` column in the
  * metrics journal is therefore evidence — it records the effort the request
  * carried, not one this plugin chose.
  */
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -60,6 +68,7 @@ import {
   autoSchedule,
   createAutoState,
   noteEntry,
+  noteOutputTokens,
   notePolicy,
   noteStep,
   noteTool,
@@ -85,7 +94,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.4.4'
+export const VERSION = '1.5.0'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -217,6 +226,28 @@ function agentKey(agent) {
 }
 
 /**
+ * A short content digest for the scheduler's progress test.
+ *
+ * The comparison is on **content**, not size: a status poll that walks
+ * `completed 10 / 99` → `11 / 99` returns the same number of characters every
+ * time, and a length test would call that healthy wait a stall. Two results of
+ * the same size that say different things must also count as different, which a
+ * digest gives for free.
+ *
+ * @param {unknown} content - the tool result's content blocks.
+ * @returns {string}
+ */
+function contentDigest(content) {
+  let text
+  try {
+    text = typeof content === 'string' ? content : JSON.stringify(content ?? null)
+  } catch {
+    text = String(content)
+  }
+  return createHash('sha1').update(text).digest('hex').slice(0, 16)
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} [rawConfig]
  */
@@ -278,6 +309,20 @@ export function apply(ctx, rawConfig) {
     // has already been tried must survive, because that is what a stuck loop
     // re-reads. Without this the 30-step breaker would be a per-session budget
     // that fires once and stays silent forever.
+    // Output tokens are the wall clock: every one of them is decode time. The
+    // scheduler's token budget needs the provider's own number, not an estimate.
+    if (event && event.type === 'assistant/message') {
+      try {
+        const data = event.data ?? event
+        const usage = data.usage ?? (data.message && data.message.usage)
+        const out = usage && typeof usage === 'object' ? usage.outputTokens : undefined
+        if (typeof out === 'number' && Number.isFinite(out) && out > 0) {
+          noteOutputTokens(auto, agentKey(session), out)
+        }
+      } catch {
+        // A counter that can fail a turn is worse than no counter.
+      }
+    }
     if (event && event.type === 'turn/start') {
       try {
         noteTurn(auto, agentKey(session))
@@ -372,6 +417,11 @@ export function apply(ctx, rawConfig) {
       const agent = agentKey(exec?.agent)
       const sid = agent === GLOBAL_AGENT ? undefined : agent
       const cfg = configFor(sid)
+      // Switched off means switched off: the guard used to fall through to the
+      // gear table and keep cancelling calls after the user turned the mode off,
+      // because `stallGuard` defaults to true in the schema. The switch is the
+      // outermost gate, so it is checked first.
+      if (!cfg.enabled) return 0
       const base = stallBudgetFor(cfg)
       // The adaptive ceiling only replaces the gear table: an explicit
       // `toolTimeoutMs`, a disabled guard, and every fixed gear keep their own
@@ -383,13 +433,13 @@ export function apply(ctx, rawConfig) {
     onStall: (info) => {
       stalls += 1
       ctx.logger?.warn?.(
-        '%s stall guard cancelled %s after %d ms (budget %d ms)',
-        TAG, info.name, info.elapsedMs, info.budgetMs,
+        '%s stall guard cancelled %s after %d ms (budget %d ms, settled=%s)',
+        TAG, info.name, info.elapsedMs, info.budgetMs, String(info.quiesced),
       )
       if (initial.debug) {
         appendDebug(
           initial.debugFile,
-          `stall v${VERSION}: ${info.name} cancelled at ${info.elapsedMs}ms budget=${info.budgetMs}ms total=${stalls}`,
+          `stall v${VERSION}: ${info.name} cancelled at ${info.elapsedMs}ms budget=${info.budgetMs}ms settled=${info.quiesced} total=${stalls}`,
         )
       }
     },
@@ -579,6 +629,7 @@ export function apply(ctx, rawConfig) {
           argsKey: stableKey(exec.arguments),
           isError: result?.isError === true,
           chars: contentChars(result?.content),
+          digest: contentDigest(result?.content),
           durationMs: began === undefined ? 0 : Math.max(0, Date.now() - began),
         }
         // The scheduler reads the same observation: a call that returns the same

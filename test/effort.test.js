@@ -186,11 +186,14 @@ test('no shipped module constructs a thinking-level field', async () => {
 
 test('the step knobs reach the policy, and off-gear keeps them out of the way', () => {
   const auto = resolveConfig({ enabled: true, gear: 'auto' })
-  assert.equal(auto.stepBudget, 30, 'the hard budget defaults to the measured constant')
-  assert.equal(auto.finishLineSteps, 10, 'the finish line defaults to the measured step 10')
+  assert.equal(auto.stepBudget, 0, 'no hard budget by default: a step counter is not completion evidence')
+  assert.equal(auto.finishLineSteps, 0, 'no finish-line reminder by default: it retires unverified work')
 
-  const tuned = resolveConfig({ enabled: true, gear: 'auto', stepBudget: 12, finishLineSteps: 7 })
+  assert.equal(auto.openBatch, false, 'the opening batch line is opt-in')
+
+  const tuned = resolveConfig({ enabled: true, gear: 'auto', stepBudget: 12, finishLineSteps: 7, openBatch: true })
   assert.equal(tuned.stepBudget, 12)
+  assert.equal(tuned.openBatch, true, 'the opening line rides the scheduler like the other two')
   assert.equal(tuned.finishLineSteps, 7,
     'a policy reminder is only useful with a scheduler, so a fit gear still carries it')
 })

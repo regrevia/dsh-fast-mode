@@ -111,6 +111,18 @@ test('--since drops rows older than the window', () => withRows(comparison(), as
   assert.ok(recent.used < 4, 'the fixture is older than an hour, so a 1h window must exclude rows')
 }))
 
+test('the rotated generation is still counted, so rotation loses no history', () => withRows(
+  comparison(),
+  async (file) => {
+    // The writer keeps at most one previous generation as `<file>.1`; a report
+    // that only read the live file would silently drop everything before the
+    // last rotation.
+    writeFileSync(`${file}.1`, JSON.stringify(row('old-1', 'on', 'fast')))
+    const payload = JSON.parse((await run(process.execPath, [CLI, '--file', file, '--json'])).stdout)
+    assert.equal(payload.total, 5, 'four live rows plus one rotated row')
+  },
+))
+
 test('--lan without a token says so and reports without it', () => withRows(comparison(), async (file) => {
   const { stdout } = await run(process.execPath, [CLI, '--file', file, '--lan'], {
     env: { ...process.env, USAGE_TOKEN: '', USAGE_BASE: '' },

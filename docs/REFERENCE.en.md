@@ -1,6 +1,6 @@
 # Reference: principles, configuration and limits
 
-This manual describes what **dsh-fast-mode 1.0.0** actually does, matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
+This manual describes what **dsh-fast-mode 1.5.0** actually does, matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
 
 **The one contract: fast mode never changes reasoning effort, the thinking budget, or the model.** The `agent/request` hook does exactly one thing — `await next()`, read the `reasoningEffort` the request already carries for measurement, then return it unchanged. Whatever effort the user picked (the per-session choice in the UI, or the effort pinned by the profile's agent-default-model) is the effort every request uses.
 
@@ -39,29 +39,40 @@ The constants live in `AUTO_LIMITS` in `src/auto.js`:
 
 | Name | Value | Meaning |
 |---|---|---|
-| `parallelMin` / `parallelBase` / `parallelMax` | 2 / 4 / 8 | Width floor, starting point, ceiling |
+| `parallelBase` / `parallelMax` | 4 / 8 | First probe, ceiling (`1` is the documented "native" value, so the scheduler can pick it) |
 | `widenAfterSteps` | 2 | Steps before width starts following recent behaviour |
 | `stallFloorMs` / `stallCeilMs` | 120000 / 300000 | Clamp for the stall budget (2–5 minutes) |
 | `stallMultiplier` | 3 | Budget = 3× the p90 of recent call latency |
-| `noProgressWarn` / `noProgressStop` | 6 / 12 | Consecutive no-progress warning line, stop line |
-| `turnStepBudget` | 30 | Step count at which the model is told to stop and report |
+| `noProgressWarn` | 6 | Consecutive no-progress steps that earn one "change the approach" reminder; a reminder only, never an ending |
+| `turnStepBudget` | 0 | The scheduler's own hard step ceiling; 0 = off, which is the default |
+| `outputBudget` | 0 | Optional output-token budget: at that many cumulative `outputTokens` (upstream usage) in a turn, one reminder to close the current loop and run the check that proves it; 0 = off, which is the default |
+| `finishLineSteps` | 0 | Optional soft finish line; 0 = off, which is the default. `10` is the retired 1.4.4 default and is kept only as an ablation arm |
+| `disciplineAfterSteps` | 4 | Step at which the late output discipline starts |
 | `waitWindow` | 32 | Recent calls that feed the p90 |
 | `directiveCooldown` | 3 | Minimum steps between two scheduler directives |
 
 Width is computed in this order, first match wins:
 
-1. 3 or more consecutive no-progress steps, or 3 or more errors: **2**;
-2. otherwise, at least 2 steps and the previous step issued at least 2 calls: **8**;
-3. otherwise, at least 2 steps: **6**;
-4. otherwise (the first step or two): **4**.
+1. 3 or more errors: **1** (native). Error evidence outranks the request classifier, so a turn that keeps failing is never pushed to batch;
+2. the turn already has steps and the request classifier produced a width: **that width** (1–8). It is the only signal available on the first step of a turn, so it precedes the "nothing observed yet" probe;
+3. the session has not issued any call yet: **4** (one cheap probe);
+4. 3 or more consecutive no-progress steps: **1** (native, the whole guidance section is not rendered);
+5. the previous step was read-only, issued at least 2 calls, and no two calls touched the same target (a "distinct read block"): **8**;
+6. 2 or more consecutive read-only steps and the previous step issued at least 2 calls: **8**;
+7. at least 1 step into the turn, the previous step was read-only and issued at least 3 calls: **8**;
+8. at least 2 steps into the turn and the previous step issued at least 2 calls: **8**;
+9. a new turn with no parallel shape in its history: **1** (native);
+10. otherwise: **1**.
 
-"No progress" is observable, not semantic: the same `(tool name, arguments)` signature appears again, returns the same number of characters, and did not fail last time. A new signature, a previously failing call that now succeeds, or a result whose size changed all count as progress. That keeps a successful rerun of an identical command from being mistaken for new information.
+"No progress" is judged on **result content**, not on character counts and not on call counts: every finished call is keyed by its `(tool name, arguments)` signature, and a step counts as progress when a result digest changed, when a call that used to fail now succeeds, or when the signature is one never seen before. An identical successful rerun does not count. A status poll that walks `completed 10 / 99` → `11 / 99` is therefore progress (the content moved), while running the same command eight times verbatim inside one step is one signature and the step is still unproductive. The unit is the **step**: one call with new information makes the whole step productive.
 
 Stall budget: take the p90 of the last 32 tool-call durations, multiply by 3, clamp to 120–300 seconds. With no samples the p90 is 0, which clamps to the 120-second starting point; the ceiling loosens as the session slows down and tightens as it speeds up.
 
-Directives: 6 consecutive no-progress steps emit "change the approach"; 12 steps, or a cumulative 30 steps, emit "stop and report". At least 3 steps pass between directives. Directives are inserted into the message list as producer-owned notices (source `plugin:fast-mode`), so the model reads them and they remain visible in the transcript.
+Directives: 6 consecutive no-progress steps emit "change the approach" — it asks for a different method, not for the turn to end. No step-count directive ends a turn by default: `stepBudget` above 0 emits one "report where you are" at its line, and `finishLineSteps` above 0 emits one "stop widening scope" at its line. At least 3 steps pass between directives. Directives are inserted into the message list as producer-owned notices (source `plugin:fast-mode`), so the model reads them and they remain visible in the transcript.
 
-On the counting: `turnSteps` is genuinely per turn. `index.js` calls `noteTurn` on the session's `turn/start` event, which clears the per-turn counters while the session-level memory of what has been tried and how long it has stalled survives — that memory is exactly what a stuck loop re-reads. The 30-step stop line is therefore **30 steps per turn**, not a budget for the whole session.
+**Reusing a check result (`reuse-check`).** When a call with arguments succeeds, its result is stored under its signature together with the artifact epoch it ran under. If the model then re-runs that same check verbatim and nothing wrote in between, the scheduler stops pestering it and says once: "that check already passed on the current files, rely on its result and finish the remaining requirements." A write, an edit, `apply_patch`/`patch`, or a shell call carrying a redirection or a common mutator (`sed -i`, `git apply`, `npm`, `make`, …) bumps the epoch, and one bump invalidates every stored check at once — so "passed" can never be mistaken for "still passed after the code changed". It is **advice only**: the plugin returns no cached result, skips no call, and never ends the turn; the model may still re-run it.
+
+On the counting: `turnSteps` is genuinely per turn. `index.js` calls `noteTurn` on the session's `turn/start` event, which clears the per-turn counters while the session-level memory of what has been tried and how long it has stalled survives — that memory is exactly what a stuck loop re-reads. There is no step-count stop line by default; if `stepBudget` is set above 0, that ceiling is **per turn**, not a budget for the whole session.
 
 ### 3. Prompt guidance: `fast-mode:execution-speed`
 
@@ -82,16 +93,17 @@ The cost is explicit: about 2,700 characters under `auto`, paid as input tokens 
 
 ### 4. The stall guard: a ceiling on one call
 
-It hangs off the `tools/execute` waterfall and honours the only mutation that hook allows: it replaces `exec.signal`, races the call body against a timer, aborts on timeout, and hands the model a failure result instead of waiting forever. Cancellation leaves a 250 ms grace period for the tool to unwind, and the caller's original signal is restored in `finally` either way.
+It hangs off the `tools/execute` waterfall and honours the only mutation that hook allows: it replaces `exec.signal`, races the call body against a timer, aborts on timeout, and hands the model a failure result instead of waiting forever. After the abort it waits for the cancelled body to actually settle (up to 5 s on a large budget, scaled down with the budget, floor 250 ms) and records `quiesced` on the observation, which says whether the cancellation drained cleanly or the tool kept running past the grace window. The caller's original signal is restored in `finally` either way.
 
 It only guards **shell and script** tool names (matching `bash|shell|sh|zsh|exec|pwsh|powershell|cmd|script|monitor|terminal`). Tools whose purpose is to wait are explicitly exempt: `ask_user_question`, `wait_agent`, `job_output`, `job_list`, `task_board_run`, `workflow`, `subagent`, `subagent_fork`, `run_code`.
 
 Budget precedence, highest first:
 
-1. `stallGuard: false` → 0 (no guard at all);
-2. `toolTimeoutMs < 0` → 0 (same thing, said numerically);
-3. `toolTimeoutMs > 0` → that fixed value, for every gear;
-4. otherwise the per-gear starting value:
+1. `enabled: false` → 0. The master switch is outermost: once it is off, no call is cancelled even if `stallGuard` is still its default `true` or a `toolTimeoutMs` was set. Before 1.5.0 the lookup fell through to the gear table, so an off mode kept cancelling calls;
+2. `stallGuard: false` → 0 (no guard at all);
+3. `toolTimeoutMs < 0` → 0 (same thing, said numerically);
+4. `toolTimeoutMs > 0` → that fixed value, for every gear;
+5. otherwise the per-gear starting value:
 
    | Gear | Starting ceiling |
    |---|---|
@@ -103,7 +115,7 @@ Budget precedence, highest first:
    | `fast` | 300 s |
    | unknown | 300 s |
 
-5. Under `auto`, when the starting value is non-zero and no explicit `toolTimeoutMs` was set, the scheduler's live budget (from the recent p90) replaces the table value.
+6. Under `auto`, when the starting value is non-zero and no explicit `toolTimeoutMs` was set, the scheduler's live budget (from the recent p90) replaces the table value.
 
 A cancelled call returns a normal tool failure (`isError: true`). Its text says the call ran N seconds and was cancelled, gives three concrete suggestions (background the server/watcher, write the long command to a file and run the file, narrow a full sweep to one probe), and closes by saying not to re-issue the same command unchanged — it will be cancelled again.
 
@@ -127,8 +139,9 @@ In the profile's `cordis.patch.yml`:
     gear: auto
     # parallel: 4            # optional starting width; auto adjusts it later
     # outputDiscipline: late   # or true / false
-    # stepBudget: 30           # per-turn step budget, asks the model to wrap up
-    # finishLineSteps: 10      # soft finish line, 0 = off
+    # stepBudget: 0            # per-turn hard step ceiling, 0 = none (default)
+    # finishLineSteps: 0       # optional soft finish line, 0 = off (default)
+    # outputBudget: 0          # output-token budget, 0 = off (default)
     # stallGuard: true
     # toolTimeoutMs: 0
     # reassertAfterCompaction: true
@@ -144,15 +157,17 @@ In the profile's `cordis.patch.yml`:
 | `parallel` | derived, 4 under `auto` | Starting parallel ceiling, 1–8. `auto` treats it as a starting point only; `1` means "no batching section". |
 | `sessions` | `''` | Plugin-maintained per-conversation overrides, see above. **Do not edit by hand.** |
 | `outputDiscipline` | `'late'` | Output discipline. `late` (default) writes no output constraint for the first 4 steps and has the scheduler remind once from step 4; `true` applies for the whole turn; `false` still injects batching and bounded-call rules. |
-| `stepBudget` | `30` | Per-turn step budget. At the line the scheduler sends one "stop widening scope, run one verification, report" notice without blocking tools — a hard cut would land mid-edit. Under `auto` it is what reins in the 40–80 step tail. |
-| `finishLineSteps` | `10` | Soft finish line: from step N the scheduler asks once to stop widening scope, skip checks that already passed, and fix only what still fails. `0` = off. Over 14 paired runs across 7 families: median 1.86×, 13/14 faster (p=0.002), output −52 %, steps −10.0, correctness 14/14 unchanged; a task that ends in fewer than 10 steps never reaches it. |
+| `openBatch` | `false` | Opening batch: one notice on the first step of each turn asking for every independent call in one block and shell commands chained with `&&`. A short task spends its time on per-call fixed cost (TTFT ≈ 0.5 s), so one fewer round trip is one fewer TTFT. It only touches the first step of a turn. Experimental, off by default. |
+| `stepBudget` | `0` | Per-turn hard step ceiling. `0` = unlimited, which is the default: a step count measures cost, not whether the task is done, so nothing is asked to wrap up on a counter. Set above 0, the line sends one "report where you are" notice without blocking tools — a hard cut would land mid-edit. |
+| `outputBudget` | `0` | Output-token budget: once cumulative `outputTokens` in the turn (the upstream `usage.outputTokens`, not an estimate) reach this value, one reminder to close the current loop, run the check that proves it, and report — at most once per turn. `0` = off, which is the default. It triggers on real decode volume rather than step count — three steps that write 30 000 tokens are expensive, twenty steps that write 2 000 are not — but tokens are still a cost signal, not evidence of completion, so it ships off. |
+| `finishLineSteps` | `0` | Optional soft finish line: at step N the scheduler asks once to stop widening scope, skip checks that already passed, and fix only what still fails. `0` = off, which is the default. **`10` is the retired 1.4.4 default and is kept only as an ablation arm**: the 14 paired runs across 7 families (median 1.86×, 13/14 faster, p=0.002, output −52 %, steps −10.0, correctness 14/14 unchanged) were measured on that default. It saves re-verification, but on a task that edits after its tests pass it also suppresses the second verification that task needs, so it went back to off. Numbers and boundaries: `BENCHMARK.md`. |
 | `stallGuard` | `true` | Whether to cap a single shell/script call. Under `auto` the budget self-tunes between 2 and 5 minutes. |
 | `toolTimeoutMs` | `0` | Per-call ceiling in milliseconds. `0` = adaptive (see `stallGuard`), negative = no guard, positive = that value for every gear. |
 | `guidance` | `true` | Whether to inject the prompt section. Off keeps the scheduler, width computation and watchdog exactly as they are and only stops the text, so "what the text does" can be measured apart from "what the harness does". |
 | `shellParallel` | `false` | Whether to register the `shell_parallel` tool (one call, a bounded pool of independent shell jobs). Off by default: measured 2026-10-24 on six 5 s jobs, 9.1 s native vs 26.3 s with the tool (0.35×) — the model already fans shell work out with inline `&` + `wait`, and the extra tool invited a verification pass. |
 | `reassertAfterCompaction` | `true` | After a compaction, the next request carries one very short notice restating batching and bounded calls. The guidance section itself is unaffected. |
 | `metrics` | `true` | Whether to write the metrics file. Off writes nothing. |
-| `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | Metrics path, one JSONL row per step. |
+| `metricsFile` | `~/.dsh/fast-mode-metrics.jsonl` | Metrics path, one JSONL row per step; rotated to `.1` past 8 MB. |
 | `benchmarkFile` | `~/.dsh/fast-mode-bench.json` | Experiment assignment path. Missing file, or `enabled` not true, means no assignment. |
 
 On the old names: the schema still accepts `fast`, `turbo`, `max` and `ludicrous` (otherwise an old patch would fail to load), but when one appears in a user config `resolveConfig` maps it to `auto` and logs a warning that the name used to lower thinking effort, that it now runs the auto scheduler, and that the effort stays whatever the user chose. The experiment path's per-session override is the exception and keeps the name verbatim (see "Assigning gears per session").
@@ -313,7 +328,7 @@ How the file and the metrics work together: `start`, run tasks, use `status` to 
 
 **Fan-out has a precondition.** Widening pays off only when a step really contains several independent queries. On single-file benchmark tasks (HumanEval / AIME shaped) this plugin measured differences inside the noise (0.95×–1.09×) with no measurable speed-up — those tasks have no parallel read set to begin with. "This plugin makes every task 30% faster" is a false claim.
 
-**The 1.0 scheduler has not been A/B measured at scale.** The constants above come from small-sample observation and design reasoning; the `auto` width policy, the 6/12-step thresholds and the 3-step cooldown still need controlled data from real sessions. `report` and `experiment` exist to close that gap, not to prove it already holds.
+**There is no step-count stop line by default.** 1.5.0 sets both `finishLineSteps` and `stepBudget` to 0: a turn that is still producing new results is not ended by a counter, and not asked to wrap up — cutting a half-finished long task on a step count costs more than being slow. The only recurring directive left is one "change the approach" after 6 consecutive no-progress steps, which swaps method without ending the turn. The constant values still come from small-sample observation and design reasoning; controlled data from real sessions is missing, and `report` and `experiment` exist to close that gap, not to prove it already holds.
 
 **Token use may rise, and that is the accepted trade.** Wider steps mean more tool output per step, hence more input tokens; output discipline trims narration and promises nothing about total tokens. Do not introduce this plugin as "token saving".
 
@@ -323,7 +338,7 @@ How the file and the metrics work together: `start`, run tasks, use `status` to 
 
 **The client cannot show live width.** It states 2–8 only in the plugin description; the width the host computed for a given conversation appears only in the guidance section and the debug log.
 
-**The `turnSteps` counting caveat.** It resets on every `turn/start`, so the 30-step stop line constrains a single turn; what survives across turns is the scheduler memory, not a spent step budget.
+**The `turnSteps` counting caveat.** It resets on every `turn/start`; if `stepBudget` is set above 0, that ceiling constrains a single turn, and what survives across turns is the scheduler memory, not a spent step budget.
 
 ## Development and tests
 
@@ -348,6 +363,6 @@ Run the tests:
 node --test test/*.test.js
 ```
 
-All 172 tests currently pass (0 failures). Coverage includes scheduler width and directives, budget precedence, the guidance section's on/off conditions, `sessions` parity between the host and browser implementations, notice source validation, metrics fields, assignment hashing, report and experiment CLI argument parsing, and a regression test that scans the source to confirm nothing assigns `reasoningEffort`.
+All 220 tests currently pass on Node 20.20.2, 22.23.4 and 24 (220/220 on each, 0 failures). Coverage includes scheduler width and directives, budget precedence, the guidance section's on/off conditions, `sessions` parity between the host and browser implementations, notice source validation, metrics fields, assignment hashing, report and experiment CLI argument parsing, and a regression test that scans the source to confirm nothing assigns `reasoningEffort`.
 
 Documentation entry points: `README.md` (Chinese), `README.en.md` (English), `BENCHMARK.md` (method and historical data), `CHANGELOG.md` (what each version deleted and added).

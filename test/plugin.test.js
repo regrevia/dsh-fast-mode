@@ -577,31 +577,18 @@ test('two conversations, one settings column: each runs at its own entry', async
   assert.match(await run('session-never-seen'), /up to \d+ independent calls/, 'inherits the shared gear')
 })
 
-test('the turn boundary resets the step budget instead of spending it for the session', async () => {
+test('a long progressing turn is never told to stop, and a user budget is per turn', async () => {
   const ctx = fakeContext()
   apply(ctx, ON)
   const noticesOf = out => out.messages.filter(m => m.source?.form === 'notice')
 
-  // The 30-step breaker fires inside one very long turn.
+  // Thirty clean steps with the default policy: no finish line, no stop.
   let noticed = 0
   for (let i = 0; i < 30; i += 1) {
     const { out } = await step(ctx)
     noticed += noticesOf(out).length
   }
-  assert.equal(noticed, 2, 'the finish line and the stop notice each fire exactly once')
-
-  // A new turn starts with a fresh budget, not a spent one.
-  ctx.fire('session/event', { id: 'session-1' }, { type: 'turn/start' })
-  const { out } = await step(ctx)
-  assert.equal(noticesOf(out).length, 0, 'the next turn is not immediately told to stop')
-
-  // And the breaker is re-armed: another 30 steps in this turn speak again.
-  let again = 0
-  for (let i = 0; i < 30; i += 1) {
-    const result = await step(ctx)
-    again += noticesOf(result.out).length
-  }
-  assert.equal(again, 2, 'the budget applies per turn, so the next long turn is caught too')
+  assert.equal(noticed, 0, 'the default policy does not end a working turn')
 })
 
 test('the third lever is wired: the stall guard, the compaction reminder, the peer probe', () => {
@@ -627,6 +614,23 @@ test('a hung shell call is cancelled at the configured ceiling', async () => {
   assert.equal(result.isError, true, 'the model gets a failure instead of a hung turn')
   assert.match(result.content[0].text, /run_in_background/)
   assert.equal(bodySignal.aborted, true)
+})
+
+test('a switched-off mode cancels nothing, even with a ceiling configured', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, enabled: false, gear: 'turbo', toolTimeoutMs: 20 })
+
+  // The old wiring resolved the gear table even while disabled, so a call that
+  // outlived `toolTimeoutMs` was still killed after the user switched the mode
+  // off. The body here takes 60 ms with a 20 ms ceiling: only an installed guard
+  // can turn that into a failure.
+  const exec = { name: 'bash', callId: 'c1', agent, signal: new AbortController().signal }
+  const result = await ctx.fire('tools/execute', exec, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    return { isError: false, value: 'ran', content: [] }
+  })
+  assert.equal(result.value, 'ran')
+  assert.equal(result.isError, false)
 })
 
 test('the guard leaves a tool it cannot stall, and the switched-off gear, alone', async () => {
