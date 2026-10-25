@@ -129,6 +129,23 @@ export const Config = z.object({
       '开局批量 / Opening batch: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。',
     ),
 
+  fanoutWidth: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(12)
+    .default(0)
+    .description(
+      '扇出宽度上限 / Fan-out width cap: 已经证明能并行的读块最多被要求多宽。0 = 内置上限 8（默认）。调高只改“证明过的块能多宽”，不改开局探针宽度（仍是 4），也不改任何写操作或报错回合的形状。',
+    ),
+
+  batchVerify: z
+    .boolean()
+    .default(false)
+    .description(
+      '成组验证 / Batch verification: 一个批次里改了 N 个文件后，调度器提醒一次「把这一批改完，再跑覆盖它们的那一个检查」——检查照跑，只是不为每个文件各跑一遍。改变的是验证的节奏，不是验证的有无。',
+    ),
+
   guidance: z
     .boolean()
     .default(true)

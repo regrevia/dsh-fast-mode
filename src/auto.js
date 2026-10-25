@@ -41,6 +41,8 @@ export const AUTO = 'auto'
 export const AUTO_LIMITS = Object.freeze({
   parallelBase: 4,
   parallelMax: 8,
+  /** Hard ceiling for `fanoutWidth`, so a config cannot ask for an unbounded block. */
+  parallelCapMax: 12,
   /** Widest step is only asked for after this many clean steps. */
   widenAfterSteps: 2,
   stallFloorMs: 120_000,
@@ -100,7 +102,7 @@ export const AUTO_SESSIONS = 200
  */
 export function noteEntry(state, agent, width) {
   const entry = entryOf(state, agent)
-  if (Number.isFinite(width) && width >= 1) entry.pendingWidth = Math.min(width, AUTO_LIMITS.parallelMax)
+  if (Number.isFinite(width) && width >= 1) entry.pendingWidth = Math.min(width, widthCap(entry))
 }
 
 /**
@@ -113,7 +115,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, fanoutWidth?: number, batchVerify?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -128,6 +130,11 @@ export function notePolicy(state, agent, policy) {
   // Opt-in shape gate: when a turn's calls are mostly writes, the scheduler has
   // nothing to batch and every reminder is a round trip the task cannot use.
   entry.shapeGate = policy?.shapeGate === true
+  // Opt-in: group the verification of one edit batch instead of one run per file.
+  entry.batchVerify = policy?.batchVerify === true
+  // 0 keeps the built-in cap; a positive number only widens blocks that the
+  // evidence already called parallel, so nothing new is asked for on a write step.
+  entry.widthCap = Number(policy?.fanoutWidth) || 0
 }
 
 /** A whole step count, or `fallback` when the value is not a usable number. */
@@ -210,6 +217,13 @@ function entryOf(state, agent) {
     openingSent: false,
     /** Opt-in: stay silent on a turn whose calls turned out to be writes. */
     shapeGate: false,
+    /** Opt-in: ask for one covering check per edit batch, not one per file. */
+    batchVerify: false,
+    /** Files changed since the last successful shell check, and whether we asked. */
+    writesSinceCheck: 0,
+    batchVerifySent: false,
+    /** 0 = built-in cap; otherwise the widest block the scheduler may ask for. */
+    widthCap: 0,
     turnCalls: 0,
     turnUnsafe: 0,
   }
@@ -355,6 +369,8 @@ export function noteTool(state, agent, observation) {
     entry.epoch += 1
     entry.checks.clear()
     entry.reuseHint = ''
+    entry.writesSinceCheck += 1
+    entry.batchVerifySent = false
   }
 
   const previous = entry.seen.get(signature)
@@ -370,6 +386,11 @@ export function noteTool(state, agent, observation) {
     entry.seen.set(signature, { digest, chars, errored: false })
     entry.errors = 0
     noteCheck(entry, name, argsKey, signature, digest)
+    // A successful shell call is the only evidence available that a check ran.
+    if (SHELL_CALLS.has(name)) {
+      entry.writesSinceCheck = 0
+      entry.batchVerifySent = false
+    }
   }
 
   if (progress) entry.stepProgress = true
@@ -477,19 +498,19 @@ export function autoSchedule(state, agent) {
   } else if (entry.lastStepDistinct && entry.lastStepCalls >= 2) {
     // The strongest local signal: the last step was already a block of
     // independent reads. Keep it wide, whichever step of the turn this is.
-    parallel = AUTO_LIMITS.parallelMax
+    parallel = widthCap(entry)
   } else if (entry.readOnlyStreak >= 2 && entry.lastStepCalls >= 2) {
     // Two consecutive steps of pure reads that batched cleanly: this session is
     // doing read-heavy work, so keep the block wide — including across the turn
     // boundary, where the old rule fell back to the base width for no reason.
-    parallel = AUTO_LIMITS.parallelMax
+    parallel = widthCap(entry)
   } else if (entry.turnSteps >= 1 && entry.lastStepReadOnly && entry.lastStepCalls >= 3) {
     // The first step already proved the calls can run together; a wider read
     // block is the cheapest speed left on the table, so do not wait for a
     // second step to ask for it.
-    parallel = AUTO_LIMITS.parallelMax
+    parallel = widthCap(entry)
   } else if (entry.turnSteps >= AUTO_LIMITS.widenAfterSteps && entry.lastStepCalls >= 2) {
-    parallel = AUTO_LIMITS.parallelMax
+    parallel = widthCap(entry)
   } else if (entry.turnSteps === 0) {
     // A new request whose history shows no parallel shape stays native: the
     // whole guidance section is dropped, so a shell-heavy or write-bound turn
@@ -516,6 +537,13 @@ export function autoSchedule(state, agent) {
   }
 
   return { parallel, stallBudgetMs, directive: directiveFor(entry, stats), stats }
+}
+
+/** The widest block this session may ask for: the config cap, else the built-in. */
+function widthCap(entry) {
+  const cap = Number(entry.widthCap)
+  if (!Number.isFinite(cap) || cap < AUTO_LIMITS.parallelBase) return AUTO_LIMITS.parallelMax
+  return Math.min(cap, AUTO_LIMITS.parallelCapMax)
 }
 
 /**
@@ -553,6 +581,21 @@ function directiveFor(entry, stats) {
   const since = entry.steps - entry.lastDirectiveStep
   if (since < AUTO_LIMITS.directiveCooldown) return undefined
 
+  if (entry.batchVerify && !entry.batchVerifySent && entry.writesSinceCheck >= 2) {
+    // The steps this saves are the "run the whole suite again" ones that follow
+    // every single edit. The check itself is not skipped, only grouped: the ask
+    // is to finish the batch first, then run the covering check once.
+    entry.batchVerifySent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'batch-verify'
+    return {
+      kind: 'batch-verify',
+      text: `Auto schedule: ${entry.writesSinceCheck} files changed since the last run. Finish the edits of this `
+        + 'batch, then run the one check that covers all of them instead of one run per file. The check still '
+        + 'runs, and it still has to pass before you report.',
+      summary: 'auto: group the verification of this edit batch',
+    }
+  }
   if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= AUTO_LIMITS.disciplineAfterSteps) {
     // Late engagement: the prompt carried no prose rules, so the only cost of a
     // short task was its own work. By this step the task is demonstrably long,

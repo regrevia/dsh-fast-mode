@@ -212,6 +212,10 @@ export function resolveConfig(raw, overrides) {
       ? Math.min(8, Math.max(1, Math.floor(number(config.parallel, gear.parallel, { positive: true }))))
       : 1,
     directive: gear.directive,
+    /** Widest block the scheduler may ask for; 0 = built-in cap. */
+    fanoutWidth: gear.directive
+      ? Math.min(12, Math.max(0, Math.floor(number(config.fanoutWidth, 0))))
+      : 0,
     /** How much visible prose the model is asked to cut. */
     discipline:
       gear.directive && config.outputDiscipline !== false && config.outputDiscipline !== 'late'
@@ -224,6 +228,8 @@ export function resolveConfig(raw, overrides) {
      * which is the default: the scheduler does not end a turn on a counter.
      */
     stepBudget: gear.directive ? Math.max(0, Math.floor(number(config.stepBudget, 0))) : 0,
+    /** One "finish the batch, then run one covering check" reminder per edit batch. */
+    batchVerify: gear.directive && config.batchVerify === true,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** Optional "stop adding scope" reminder at this step; 0 = off (default). */

@@ -73,7 +73,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'benchmarkFile', 'enabled', 'finishLineSteps', 'gear', 'guidance', 'metrics', 'metricsFile',
+    'batchVerify', 'benchmarkFile', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'metrics', 'metricsFile',
     'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'reassertAfterCompaction', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs',
   ])
