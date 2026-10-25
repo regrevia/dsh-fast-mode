@@ -589,6 +589,26 @@ test('the default policy never announces a finish line on its own', () => {
   assert.equal(kinds.has('stop-and-report'), false)
 })
 
+test('a long default-policy turn is never told to stop, not even past two hundred steps', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  const kinds = new Set()
+  for (let step = 1; step <= 200; step += 1) {
+    cleanStep(state, 's1')
+    noteOutputTokens(state, 's1', 800)
+    const directive = autoSchedule(state, 's1').directive
+    if (!directive) continue
+    kinds.add(directive.kind)
+    // A turn the user did not budget must never be handed a stop instruction,
+    // however long it runs: the bug this locks was a mid-task forced stop.
+    assert.doesNotMatch(directive.text, /\bstop\b|report instead/i,
+      `the default policy must never end a turn on a counter (${directive.kind})`)
+  }
+  for (const kind of ['stop-and-report', 'finish-line', 'output-budget']) {
+    assert.equal(kinds.has(kind), false, `${kind} must stay off under the default policy`)
+  }
+})
+
 test('stepBudget: 0 means off, and a missing policy is off too', () => {
   for (const policy of [{ lateDiscipline: false, stepBudget: 0 }, { lateDiscipline: false }, undefined]) {
     const state = createAutoState()
