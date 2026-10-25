@@ -1,0 +1,1 @@
+{"id": "codebase", "entrypoint": "inventory/api.py", "testCmd": "python3 -m unittest test_hidden_codebase", "minSteps": 12, "maxSteps": 40, "seed": "seed", "tests": 18}

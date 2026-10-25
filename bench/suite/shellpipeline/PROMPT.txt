@@ -1,0 +1,83 @@
+# Task: access-log pipeline (pipeline.sh)
+
+Your working directory already contains `seed/access.log` (about 200 lines of
+mixed, partly malformed access-log data). Do not modify it.
+
+Deliver one file, `pipeline.sh`, in the working directory. It must run as
+`bash pipeline.sh` with only `bash` and `python3` (standard library only); no
+network, no packages.
+
+## Input
+
+The log path is resolved in this order:
+
+1. the first argument, when one is given
+2. `access.log` in the current directory, when it exists
+3. `seed/access.log`, when it exists
+
+If none exists: print `log not found` (with the attempted path) to stderr and
+exit `1`. Otherwise exit `0`.
+
+## Well-formed line
+
+```
+IP - - [TIME] "METHOD PATH PROTO" STATUS BYTES DURATION [EXTRA...]
+```
+
+- `IP` and `TIME` are non-empty, no spaces (`TIME` contains no `]`).
+- The quoted request contains no `"` and must split into exactly 3
+  space-separated non-empty tokens: `METHOD PATH PROTO`.
+- `STATUS` is exactly 3 ASCII digits.
+- `BYTES` is `-` or a string of ASCII digits.
+- `DURATION` is a string of ASCII digits (milliseconds).
+- `EXTRA...` is zero or more further space-separated tokens of any content;
+  they are ignored.
+
+Validation order decides the reported reason:
+
+1. shape/prefix mismatch, bad request token count, bad `BYTES` -> `bad_format`
+2. a `STATUS` that is not 3 ASCII digits -> `bad_status`
+3. a `DURATION` that is not ASCII digits -> `bad_duration`
+
+A trailing `\r` is stripped before validation. A blank line is malformed.
+
+## Normalizations
+
+- Path group: drop everything from the first `?`; split the remainder on `/`;
+  replace every segment that is entirely ASCII digits with `:id`; rejoin with
+  `/`. `/users/42?tab=posts` -> `/users/:id`; `/users/7/profile` ->
+  `/users/:id/profile`; `/index.html` stays as is.
+- Status bucket: `200`-`299` -> `2xx`, `300`-`399` -> `3xx`, `400`-`499` ->
+  `4xx`, `500`-`599` -> `5xx`, anything else (e.g. `199`, `600`) -> `other`.
+
+## Outputs
+
+`out/report.tsv`, strictly:
+
+- header line `status_bucket<TAB>path_group<TAB>count<TAB>p95_ms`
+- one line per observed (status bucket, path group) pair, tab-separated
+- rows sorted ASCII by status bucket, then ASCII by path group
+- `count` = number of accepted lines in the pair
+- `p95_ms` = nearest-rank 95th percentile of the integer `DURATION` values in
+  the pair: with `n` values sorted ascending, `rank = ceil(0.95 * n)`
+  (equivalently `(95 * n + 99) // 100`) and `p95 = sorted[rank - 1]`
+- UTF-8, LF line endings, every line (including the last) ends with one `\n`,
+  no trailing blank line
+
+`out/bad_lines.txt`, strictly:
+
+- one line per rejected input line, in input order:
+  `<1-based line number>: <reason>` where reason is one of `bad_format`,
+  `bad_status`, `bad_duration`
+- empty file when nothing was rejected
+- UTF-8, LF endings, final `\n` on every line
+
+Both files must be rewritten from scratch on every run, so running twice over
+the same log produces byte-identical output.
+
+## Finish
+
+When `pipeline.sh` works on the seeded log, reply with exactly this one line and
+nothing else:
+
+pipeline.sh ready

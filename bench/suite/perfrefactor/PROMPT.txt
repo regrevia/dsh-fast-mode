@@ -1,0 +1,62 @@
+The run directory already contains two files: `dedupe.py` (correct but slow) and
+`test_visible.py` (a visible smoke test). Keep `test_visible.py` byte-for-byte unchanged.
+
+Deliverable: rewrite `dedupe.py` in place so it is fast, without changing its public API
+or its observable results. Standard library only; no network; no new dependencies.
+
+## Public API (must stay exactly this)
+
+- `resolve(items, key, *, window=3)` returns a `list`.
+- `key` is a callable that accepts one item and returns a `str`.
+- `STATS = {"calls": 0}` is a module-level dict; `STATS["calls"]` is the cumulative number
+  of `key()` extractions performed by this module. `resolve` must not reset it. Every call
+  to `key` inside the module increments it by exactly 1.
+
+Performance contract: a single `resolve` call must invoke `key()` at most once per item,
+so after `STATS["calls"] = 0`, `resolve(items, key)` leaves `STATS["calls"] <= len(items)`.
+
+## Behaviour to preserve
+
+`resolve` scans `items` left to right. Each kept record is `{item, raw_key}`; the result is
+the list of `item` values of the surviving records, in record order.
+
+Key normalization (`norm`) is ASCII-only and deterministic:
+
+1. take the raw key, strip surrounding whitespace, lowercase it;
+2. replace every character that is not `a`-`z` or `0`-`9` with one space;
+3. split on whitespace runs and join with single spaces, then strip.
+
+Two records are near-duplicates exactly when their `norm` values are equal (so
+`"Hello, World"`, `"  hello__world "` and `"HELLO WORLD"` all normalize to `hello world`).
+
+For each item:
+
+1. compute `raw = key(item)` and `norm(raw)` once;
+2. consider only the last `window` records kept so far (i.e. the window is over kept
+   records, not over input positions), scanning from the most recently kept record
+   backwards; the first record whose `norm` matches is the duplicate candidate;
+3. if there is no candidate, append a new record `{item, raw}`;
+4. if there is a candidate, compare raw-key lengths:
+   - if the new raw key is strictly longer, replace the candidate record's `item` and raw
+     key with the new ones (the record keeps its original position in the output);
+   - otherwise (shorter or equal length) drop the new item; the earlier record wins.
+
+`window=0` disables near-duplicate detection entirely: every item is kept. A window larger
+than the number of kept records simply compares against all of them.
+
+## Errors to preserve
+
+- `window` that is not an `int` (booleans do not count as ints) or is negative raises
+  `ValueError` with message `window must be a non-negative int`.
+- A `key()` result that is not a `str` raises `TypeError` with message `key must return str`.
+- `items=None` is allowed to raise `TypeError` (no custom message is required).
+
+## Finishing
+
+Run `python3 -m unittest test_visible` to confirm the visible test still passes before you
+finish. Do not edit or delete `test_visible.py`. Do not ask questions and do not require
+manual confirmation.
+
+Your final answer must be exactly this one line and nothing else:
+
+dedupe.py fast

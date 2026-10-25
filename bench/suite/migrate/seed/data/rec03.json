@@ -1,0 +1,17 @@
+{
+  "address": {
+    "city": "Milton Keynes",
+    "state": "MK",
+    "street": "Bletchley Park",
+    "zip": "MK3 6EB"
+  },
+  "balance_cents": "250.5",
+  "currency": "GBP",
+  "email": "alan@example.org",
+  "first_name": "Alan",
+  "id": 3,
+  "last_name": "Turing",
+  "tags": [
+    "crypto"
+  ]
+}

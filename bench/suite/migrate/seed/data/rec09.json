@@ -1,0 +1,14 @@
+{
+  "address": {
+    "city": "Poughkeepsie",
+    "state": "NY",
+    "street": "9 Compiler Ct",
+    "zip": "12601"
+  },
+  "balance_cents": "12345.678",
+  "currency": "USD",
+  "first_name": "Frances",
+  "id": 21,
+  "last_name": "Allen",
+  "phone": "+1-555-0199"
+}

@@ -1,0 +1,13 @@
+{
+  "address": {
+    "city": "Rotterdam",
+    "state": "ZH",
+    "street": "3 Algorithm Ln",
+    "zip": "3011"
+  },
+  "balance_cents": "0.004",
+  "currency": "EUR",
+  "first_name": "Edsger",
+  "id": 11,
+  "last_name": "Dijkstra"
+}

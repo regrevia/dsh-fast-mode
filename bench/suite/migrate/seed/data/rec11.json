@@ -1,0 +1,17 @@
+{
+  "address": {
+    "city": "Boston",
+    "state": "MA",
+    "street": "6 Spanning Tree Rd",
+    "zip": "02115"
+  },
+  "balance_cents": "42.005",
+  "currency": "usd",
+  "first_name": "Radia",
+  "id": 30,
+  "last_name": "Perlman",
+  "tags": [
+    "routing",
+    "bridges"
+  ]
+}

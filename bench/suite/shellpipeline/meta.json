@@ -1,0 +1,9 @@
+{
+  "id": "shellpipeline",
+  "entrypoint": "pipeline.sh",
+  "testCmd": "python3 -m unittest test_shellpipeline",
+  "minSteps": 10,
+  "maxSteps": 25,
+  "seed": "seed",
+  "finalMarker": "pipeline.sh ready"
+}

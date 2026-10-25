@@ -1,0 +1,1 @@
+{"id": "codeimpl", "entrypoint": "calclang.py", "testCmd": "python3 -m unittest test_codeimpl", "minSteps": 10, "maxSteps": 25}

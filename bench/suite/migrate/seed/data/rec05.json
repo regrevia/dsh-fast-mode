@@ -1,0 +1,18 @@
+{
+  "address": {
+    "city": "Cambridge",
+    "line2": "Suite 300",
+    "state": "MA",
+    "street": "200 Apollo Way",
+    "zip": "02139"
+  },
+  "balance_cents": "999999999999",
+  "currency": "usd",
+  "email": "mh@example.com",
+  "first_name": "Margaret",
+  "id": 10,
+  "last_name": "Hamilton",
+  "tags": [
+    "apollo"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "migrate",
+  "entrypoint": "migrate.py",
+  "testCmd": "python3 -m unittest test_migrate",
+  "minSteps": 10,
+  "maxSteps": 25,
+  "seed": "seed",
+  "finalMarker": "migrate.py ready"
+}
