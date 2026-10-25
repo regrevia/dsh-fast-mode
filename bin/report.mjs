@@ -70,16 +70,28 @@ function parseSince(text) {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
-/** Read a JSONL sink. A missing file is "no measurements yet", not an error. */
-function readRows(file) {
-  let text
+/** Read one file; a missing file is "nothing here", not an error. */
+function readText(file) {
   try {
-    text = readFileSync(file, 'utf8')
+    return { text: readFileSync(file, 'utf8'), missing: false }
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined
-    if (code === 'ENOENT') return { rows: [], missing: true }
+    if (code === 'ENOENT') return { text: '', missing: true }
     throw error
   }
+}
+
+/**
+ * Read a JSONL sink, including its one rotated generation.
+ *
+ * The writer rotates at `METRICS_ROTATE_BYTES` and keeps `<file>.1`; a report
+ * that ignored it would lose all history the moment rotation ran.
+ */
+function readRows(file) {
+  const current = readText(file)
+  const rotated = readText(`${file}.1`)
+  if (current.missing && rotated.missing) return { rows: [], missing: true }
+  const text = `${rotated.text}${rotated.text ? '\n' : ''}${current.text}`
   const rows = []
   let broken = 0
   for (const line of text.split('\n')) {

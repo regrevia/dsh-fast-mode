@@ -94,11 +94,11 @@ export const Config = z.object({
   stepBudget: z
     .number()
     .step(1)
-    .min(4)
+    .min(0)
     .max(80)
-    .default(30)
+    .default(0)
     .description(
-      '单轮步数预算 / Steps per turn: 到达后调度器提醒一次「停止扩大范围、跑一次验证、直接报告」。长任务的墙钟几乎全是步数 × 每步固定成本（首字延迟 + 输出解码），跑飞的一轮常常 40–80 步。默认 30。',
+      '单轮步数预算 / Steps per turn: 用户自设的硬上限，到达后调度器提醒一次按现状汇报；0 = 不限（默认）。步数只说明成本，不说明任务是否完成——默认不再按步数催停，避免把仍在推进的长任务截断。需要成本上限时自己设。',
     ),
 
   finishLineSteps: z
@@ -106,9 +106,26 @@ export const Config = z.object({
     .step(1)
     .min(0)
     .max(80)
-    .default(10)
+    .default(0)
     .description(
-      '收尾线 / Finish line: 第 N 步提醒一次「别再扩大范围、不重跑已通过的检查，只修还在报的错，然后报告」；0 = 关闭。默认 10：7 家族 14 对 ABBA 里中位 1.86×、输出 −52%、正确性零损失，且第 4 步以内结束的任务完全不受影响。',
+      '收尾线 / Finish line: 第 N 步提醒一次「别再扩大范围、不重跑已通过的检查，只修还在报的错，然后报告」；0 = 关闭，现在默认关闭。这条提醒在“测试通过后又改了代码”的长任务上会压掉必要复验，质量风险大于提速收益，只作为对照实验臂保留。',
+    ),
+
+  outputBudget: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(400000)
+    .default(0)
+    .description(
+      '输出 token 预算 / Output token budget: 本轮累计输出 token（上游 usage 的 outputTokens）达到该值时，调度器提醒一次「收掉当前闭环、跑一次证明它的检查、汇报」；0 = 关闭（默认）。触发的是真实解码量而非步数：三步写出三万 token 的任务很贵，二十步只写两千 token 的任务不贵。属于成本上限，不是完成度证据——默认关闭，避免在仍在推进的任务上提前收尾。',
+    ),
+
+  openBatch: z
+    .boolean()
+    .default(false)
+    .description(
+      '开局批量 / Opening batch: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。',
     ),
 
   guidance: z

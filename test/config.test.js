@@ -74,7 +74,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
     'benchmarkFile', 'enabled', 'finishLineSteps', 'gear', 'guidance', 'metrics', 'metricsFile',
-    'outputDiscipline', 'parallel', 'reassertAfterCompaction', 'sessions', 'shellParallel', 'stallGuard',
+    'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'reassertAfterCompaction', 'sessions', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs',
   ])
 
@@ -151,4 +151,18 @@ test('a gear override survives a volatile gear reference', () => {
   const raw = Config({ enabled: true, gear: 'auto' })
   assert.equal(typeof raw.gear, 'object', 'the switch is a reference at runtime')
   assert.equal(resolveConfig(raw, { gear: 'turbo' }).gear, 'turbo')
+})
+
+test('the metrics file default can be redirected by environment, for benchmarks that need separate journals', () => {
+  const previous = process.env.DSH_FAST_MODE_METRICS_FILE
+  try {
+    process.env.DSH_FAST_MODE_METRICS_FILE = '/tmp/bench-only.jsonl'
+    const redirected = resolveConfig({})
+    assert.equal(redirected.metricsFile, '/tmp/bench-only.jsonl')
+    assert.equal(resolveConfig({ metricsFile: '/tmp/explicit.jsonl' }).metricsFile, '/tmp/explicit.jsonl',
+      'an explicit config value still wins over the environment')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_FAST_MODE_METRICS_FILE
+    else process.env.DSH_FAST_MODE_METRICS_FILE = previous
+  }
 })

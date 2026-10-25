@@ -18,11 +18,37 @@
  *
  * @module dsh-fast-mode/metrics
  */
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /** The measurement format. Bumped when a field changes meaning. */
 export const METRICS_VERSION = 2
+
+/**
+ * The size at which the step journal is rotated to `<file>.1`.
+ *
+ * This is a diagnostic sink, not an archive: one JSON line per step means a
+ * profile that stays installed for months grows it without bound (a real one
+ * reached 7.6 MB in three weeks here). Past this size the current file is
+ * renamed once and a fresh one is started, so the profile holds at most two
+ * generations (~16 MB) and `report` still reads both. Rotation is best-effort:
+ * a failure to rename must never cost the row being written.
+ */
+export const METRICS_ROTATE_BYTES = 8 * 1024 * 1024
+
+/**
+ * Runtime override for the rotation cap.
+ *
+ * Benchmarks read this journal by byte offset (size before minus after a run),
+ * so a rotation in the middle of a measurement window would hide the rows the
+ * run just wrote. A campaign sets this to a large value and rotates manually
+ * between campaigns; users never need it.
+ */
+const rotationCap = () => {
+  const raw = process.env.DSH_FAST_MODE_METRICS_MAX_BYTES
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : METRICS_ROTATE_BYTES
+}
 
 /**
  * The step events this recorder folds. Anything else on the session feed
@@ -134,6 +160,13 @@ export function createRecorder(options = {}) {
   const write = (row) => {
     if (!on) return
     prepare()
+    try {
+      // One `stat` per completed step is far cheaper than an unbounded file, and
+      // a missing file simply means "nothing to rotate yet".
+      if (statSync(file).size >= rotationCap()) renameSync(file, `${file}.1`)
+    } catch {
+      // No file yet, or a directory we cannot write: the append below decides.
+    }
     try {
       appendFileSync(file, `${JSON.stringify(row)}\n`)
     } catch {

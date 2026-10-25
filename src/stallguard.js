@@ -115,10 +115,11 @@ export function stallBudgetFor(config) {
 
 /** @param {number} ms */
 function delay(ms) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    if (timer && typeof timer.unref === 'function') timer.unref()
-  })
+  // Kept referenced on purpose: node:test on Node 20/22 reports "Promise
+  // resolution is still pending but the event loop has already resolved" and
+  // cancels the test when the only live handle is an unref'd timer. The timer
+  // always fires, so this cannot hold a finished turn's process open.
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** Sentinel that cannot collide with a tool result (which is always an object). */
@@ -163,13 +164,25 @@ export function stallFailure(info) {
  * @param {(exec: object) => number} [options.budgetFor] - ceiling for one call.
  * @param {(info: object) => void} [options.onStall] - observation hook.
  * @param {() => number} [options.now] - clock.
- * @param {number} [options.graceMs] - how long to wait for the aborted body to settle.
+ * @param {(budgetMs: number) => number} [options.settleFor] - how long to wait
+ *   for the aborted body to actually settle, given its budget. A cancelled
+ *   dispatch must not return a result while the body is still writing: the host
+ *   hands the caller a settled call, and a body that finishes 400 ms later then
+ *   races the next step.
+ * @param {number} [options.graceMs] - fixed settle window, overriding
+ *   `settleFor` (tests use it).
  */
 export function createStallGuard(options = {}) {
   const budgetFor = typeof options.budgetFor === 'function' ? options.budgetFor : () => 0
   const onStall = typeof options.onStall === 'function' ? options.onStall : () => {}
   const now = typeof options.now === 'function' ? options.now : Date.now
-  const graceMs = Number.isFinite(options.graceMs) ? options.graceMs : 250
+  // The unwind window: five seconds on a real ceiling (90–300 s), scaled down
+  // for a test-sized budget so a unit test does not sleep through the suite.
+  const settleFor = Number.isFinite(options.graceMs)
+    ? () => options.graceMs
+    : typeof options.settleFor === 'function'
+      ? options.settleFor
+      : (budgetMs) => Math.max(250, Math.min(5_000, budgetMs))
 
   /**
    * @param {object} exec - `ToolDispatchExecution`.
@@ -205,7 +218,6 @@ export function createStallGuard(options = {}) {
         timedOut = true
         resolve(STALLED)
       }, budgetMs)
-      if (timer && typeof timer.unref === 'function') timer.unref()
     })
 
     // Start the body exactly once. The race may abandon it, so its rejection is
@@ -217,18 +229,26 @@ export function createStallGuard(options = {}) {
       const settled = await Promise.race([body, expiry])
       if (settled !== STALLED) return settled
 
-      // Abort, then give the body a short window to unwind so the dispatch
-      // chain reaches quiescence before we report the failure.
+      // Abort, then wait for the body to really unwind. Reporting the failure
+      // while the body is still running hands the harness two live executions
+      // for one call: the model sees "cancelled", and the cancelled command
+      // writes or deletes something after the next step has started. The wait is
+      // bounded so a body that ignores its signal cannot hang the turn, and
+      // `quiesced` records whether the wait was enough.
       try {
         controller.abort(new Error(`fast-mode: ${String(exec.name)} exceeded ${budgetMs} ms`))
       } catch {
         // Already aborted by the caller in the same tick.
       }
-      await Promise.race([body.catch(() => undefined), delay(graceMs)])
+      const settledInTime = await Promise.race([
+        body.then(() => true, () => true),
+        delay(settleFor(budgetMs)).then(() => false),
+      ])
+      const quiesced = settledInTime === true
 
       const elapsedMs = Math.max(0, now() - began)
       try {
-        onStall({ name: exec.name, budgetMs, elapsedMs, timedOut })
+        onStall({ name: exec.name, budgetMs, elapsedMs, timedOut, quiesced })
       } catch {
         // Observation is best-effort; it must never change the result.
       }

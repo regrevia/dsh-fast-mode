@@ -98,6 +98,23 @@ export const DEFAULT_GEAR = 'auto'
 export const FALLBACK_GEAR = 'safe'
 
 /** Defaults for the fields that survive resolveConfig. */
+/**
+ * Resolve the metrics journal path.
+ *
+ * The composition value wins; while it is still the built-in default,
+ * `DSH_FAST_MODE_METRICS_FILE` may redirect it. Benchmarks need that hook: the
+ * runner reads the journal by byte offset, so two campaigns running at once
+ * must not share a file. Paths are read once at load, like every other path.
+ *
+ * @param {unknown} configured
+ * @returns {string}
+ */
+export function resolveMetricsFile(configured) {
+  const value = typeof configured === 'string' && configured.length > 0 ? configured : DEFAULTS.metricsFile
+  const override = process.env.DSH_FAST_MODE_METRICS_FILE
+  return value === DEFAULTS.metricsFile && typeof override === 'string' && override.length > 0 ? override : value
+}
+
 export const DEFAULTS = Object.freeze({
   metricsFile: '~/.dsh/fast-mode-metrics.jsonl',
   benchmarkFile: '~/.dsh/fast-mode-bench.json',
@@ -202,11 +219,16 @@ export function resolveConfig(raw, overrides) {
         : 'off',
     /** `outputDiscipline: 'late'` — compress from step 4 on, via the scheduler. */
     lateDiscipline: gear.directive && config.outputDiscipline === 'late',
-    /** Hard stop after this many steps in one turn (scheduler directive). */
-    stepBudget: gear.directive ? Math.floor(number(config.stepBudget, 30, { positive: true })) : 30,
-    /** One "stop adding scope" reminder at this step; 0 = off. */
+    /**
+     * Optional user hard stop after this many steps in one turn. 0 = no stop,
+     * which is the default: the scheduler does not end a turn on a counter.
+     */
+    stepBudget: gear.directive ? Math.max(0, Math.floor(number(config.stepBudget, 0))) : 0,
+    /** One "batch the opening step" reminder per turn, for short tasks. */
+    openBatch: gear.directive && config.openBatch === true,
+    /** Optional "stop adding scope" reminder at this step; 0 = off (default). */
     finishLineSteps: gear.directive
-      ? Math.max(0, Math.floor(number(config.finishLineSteps, 10)))
+      ? Math.max(0, Math.floor(number(config.finishLineSteps, 0)))
       : 0,
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
@@ -232,9 +254,7 @@ export function resolveConfig(raw, overrides) {
     debug: config.debug === true,
     debugFile: typeof config.debugFile === 'string' ? config.debugFile : '',
     metrics: config.metrics !== false,
-    metricsFile: typeof config.metricsFile === 'string' && config.metricsFile.length > 0
-      ? config.metricsFile
-      : DEFAULTS.metricsFile,
+    metricsFile: resolveMetricsFile(config.metricsFile),
     benchmarkFile: typeof config.benchmarkFile === 'string' ? config.benchmarkFile : DEFAULTS.benchmarkFile,
   }
 }
