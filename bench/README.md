@@ -49,7 +49,7 @@ python3 bench/report.py --files bench/results/suite-LOCAL1.jsonl --baseline off
 | tag | 设计 | 单元 | 结果 |
 |---|---|---|---|
 | `V15` | 9 家族 × 6 对，`off`/`def15`/`fl10` 交错 | 54 | `def15` 0.86× 墙钟 / 0.95× 输出；`fl10` 0.78× / 0.79× |
-| `TA3` | 同上，换成 `off`/`fl10`/`open15` | 51 | `fl10` 0.66× / 0.69×；`open15` 0.68× / 0.68×；两臂都因门禁不合格 |
+| `TA3` | 同上，换成 `off`/`fl10`/`open15` | 54 | `fl10` 0.66× / 0.68×；`open15` 0.69× / 0.71×；两臂都因门禁不合格 |
 | `TA4` | 5 家族，`def15` vs `open15` 交错 | 30 | `open15` 1.03× 墙钟 / 0.99× 输出；`shellops` p7 门禁不合格 |
 
 ```bash
