@@ -111,6 +111,7 @@ export const Config = z.object({
       '收尾线 / Finish line: 第 N 步提醒一次「别再扩大范围、不重跑已通过的检查，只修还在报的错，然后报告」；0 = 关闭，现在默认关闭。这条提醒在“测试通过后又改了代码”的长任务上会压掉必要复验，质量风险大于提速收益，只作为对照实验臂保留。',
     ),
 
+  shapeGate: z.boolean().default(false),
   outputBudget: z
     .number()
     .step(1)
