@@ -21,6 +21,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,11 @@ TOKEN_TIMEOUT = 1500
 # parent, and one run read its hidden test there (caught by the canary below).
 # runs now live under the OS temp root and every copy of bench/suite outside the
 # repo is removed, so listing the parent yields nothing but sibling run dirs.
+# That still leaves the repo itself readable, and a W5 run walked from its temp
+# cwd to ~/Desktop/DSH, grepped the fixture text and read both the hidden test
+# and the reference. So a block now preloads every task (prompt, test module,
+# seed path) and then chmods hidden/ and ref/ to 000 for the duration; verify()
+# grades from memory, and the tree is restored on exit or on a signal.
 DEFAULT_RUNS = pathlib.Path(os.environ.get('TMPDIR', '/tmp')) / 'dsh-runs'
 SESSIONS = pathlib.Path.home() / '.dsh' / 'sessions'
 LEAK_MARKERS = ('/hidden/', '/ref/', 'bench/suite/', 'fm-bench/suite', 'MANIFEST.json')
@@ -116,7 +122,36 @@ def load_task(suite, task):
     meta['hidden'] = (d / 'hidden' / f"test_{task}.py").read_text()
     meta['seed'] = d / meta['seed'] if meta.get('seed') else None
     meta['testmod'] = f'test_hidden_{task}'
+    meta['dir'] = d
     return meta
+
+
+def hide_fixtures(metas):
+    """Deny read/traverse on the graders and reference solutions for a block.
+
+    A model that runs as this user can read any path the user can read, so an
+    ordinary `find` or `grep` is enough to reach the fixture. Nothing in the
+    runner needs those two directories once the prompts and test modules are in
+    memory: the seed files are copied before the model starts and grading writes
+    the already-loaded test module into a scratch copy. The directories are set
+    back before the block returns, including on SIGINT/SIGTERM.
+    """
+    dirs = []
+    for meta in metas.values():
+        for name in ('hidden', 'ref'):
+            d = meta['dir'] / name
+            if d.is_dir():
+                dirs.append(d)
+                d.chmod(0o000)
+    return dirs
+
+
+def restore_fixtures(dirs):
+    for d in dirs:
+        try:
+            d.chmod(0o755)
+        except OSError:
+            pass
 
 
 def verify(dest, meta):
@@ -235,6 +270,7 @@ def main():
 
     tasks = [t.strip() for t in a.tasks.split(',') if t.strip()]
     arms = [x.strip() for x in a.arms.split(',') if x.strip()]
+    metas = {t: load_task(suite, t) for t in tasks}
     done = set()
     if out.exists():
         for line in out.read_text().splitlines():
@@ -242,20 +278,31 @@ def main():
                 r = json.loads(line)
                 done.add((r['task'], r['pair'], r['arm']))
 
-    for i in range(1, a.pairs + 1):
-        rotated = tasks[i % len(tasks):] + tasks[:i % len(tasks)] if tasks else tasks
-        for task in rotated:
-            meta = load_task(suite, task)
-            order = arms if i % 2 else list(reversed(arms))
-            for arm in order:
-                if (task, i, arm) in done:
-                    print(f'skip {task} p{i} {arm}', flush=True)
-                    continue
-                row = run_one(cfg, arm, meta, f'suite-{a.tag}-{task}-p{i}-{arm}')
-                row['pair'] = i
-                with out.open('a') as f:
-                    f.write(json.dumps(row, ensure_ascii=False) + '\n')
-                print(json.dumps(row, ensure_ascii=False), flush=True)
+    hidden = hide_fixtures(metas)
+
+    def restore(signum, _frame):
+        restore_fixtures(hidden)
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, restore)
+    try:
+        for i in range(1, a.pairs + 1):
+            rotated = tasks[i % len(tasks):] + tasks[:i % len(tasks)] if tasks else tasks
+            for task in rotated:
+                meta = metas[task]
+                order = arms if i % 2 else list(reversed(arms))
+                for arm in order:
+                    if (task, i, arm) in done:
+                        print(f'skip {task} p{i} {arm}', flush=True)
+                        continue
+                    row = run_one(cfg, arm, meta, f'suite-{a.tag}-{task}-p{i}-{arm}')
+                    row['pair'] = i
+                    with out.open('a') as f:
+                        f.write(json.dumps(row, ensure_ascii=False) + '\n')
+                    print(json.dumps(row, ensure_ascii=False), flush=True)
+    finally:
+        restore_fixtures(hidden)
 
     print(f'\nrows: {out}', flush=True)
 
