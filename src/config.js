@@ -136,6 +136,23 @@ export const Config = z.object({
       '整文件改写提醒 / Prefer hunks: 一次整文件 write（参数 ≥ 2000 字符）之后，提醒一次「改已有文件时只发改动的行（edit hunk），不发整个文件」。落盘内容相同，省的是工具参数的输出 token（约占输出字符 28%）。只发一次，不改完成判定，不改复验。',
     ),
 
+  workspaceMap: z
+    .boolean()
+    .default(false)
+    .description(
+      '工作区清单 / Workspace inventory: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。',
+    ),
+
+  mapEntries: z
+    .number()
+    .step(1)
+    .min(10)
+    .max(200)
+    .default(60)
+    .description(
+      '清单条数上限 / Inventory cap: 工作区清单最多列多少条路径，默认 60。超过上限时注明「前 N 条 / 共 M 条」。',
+    ),
+
   fanoutWidth: z
     .number()
     .step(1)

@@ -1,0 +1,9 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    workspaceMap: true
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false

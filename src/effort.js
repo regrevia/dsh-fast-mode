@@ -216,6 +216,10 @@ export function resolveConfig(raw, overrides) {
     fanoutWidth: gear.directive
       ? Math.min(12, Math.max(0, Math.floor(number(config.fanoutWidth, 0))))
       : 0,
+    /** One workspace inventory per session, before the first tool call. */
+    workspaceMap: config.workspaceMap === true,
+    /** Cap on the inventory listing; the default keeps it under ~1.4 kB. */
+    mapEntries: Math.min(200, Math.max(10, Math.floor(number(config.mapEntries, 60, { positive: true })))),
     /** How much visible prose the model is asked to cut. */
     discipline:
       gear.directive && config.outputDiscipline !== false && config.outputDiscipline !== 'late'

@@ -1,0 +1,10 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    workspaceMap: true
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: true
+    debugFile: /tmp/fast-mode-arm-debug.log

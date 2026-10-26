@@ -73,9 +73,9 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'batchVerify', 'benchmarkFile', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'metrics', 'metricsFile',
+    'batchVerify', 'benchmarkFile', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'mapEntries', 'metrics', 'metricsFile',
     'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
-    'stepBudget', 'toolTimeoutMs',
+    'stepBudget', 'toolTimeoutMs', 'workspaceMap',
   ])
 
   // The switch, the gear and the fan-out are the form. They must be volatile:

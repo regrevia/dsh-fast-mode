@@ -75,6 +75,7 @@ import {
   noteTurn,
 } from './src/auto.js'
 import { buildConflictMessage, buildReassertMessage, createNoticeMessage } from './src/notices.js'
+import { buildWorkspaceMap } from './src/map.js'
 import { classifyEntry } from './src/shape.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
@@ -263,7 +264,7 @@ export function apply(ctx, rawConfig) {
   if (initial.debug) {
     appendDebug(
       initial.debugFile,
-      `apply v${VERSION} entered enabled=${initial.enabled} gear=${initial.gear} parallel=${initial.parallel}`,
+      `apply v${VERSION} entered enabled=${initial.enabled} gear=${initial.gear} parallel=${initial.parallel} map=${String(rawConfig?.workspaceMap)} mapEntries=${String(rawConfig?.mapEntries)}`,
     )
     appendDebug(initial.debugFile, `measure v${VERSION}: ${metrics.enabled ? `file=${metrics.file}` : 'off'}`)
     traceSettings(ctx, initial)
@@ -277,6 +278,8 @@ export function apply(ctx, rawConfig) {
   // The same listener remembers the compactions, so the two things that read the
   // event stream are read in one place and in one order.
   const compacted = new Set()
+  /** `${sid}${cwd}` pairs already given a workspace inventory. */
+  const mapSent = new Set()
   /**
    * @param {{id?: string}} session
    * @param {{type?: string, data?: object}} event
@@ -536,6 +539,29 @@ export function apply(ctx, rawConfig) {
                 + ` parallel=${schedule.parallel} budget=${schedule.stallBudgetMs}ms`
                 + ` directive=${schedule.directive.kind} preferPatch=${schedule.stats.preferPatch} patchHint=${schedule.stats.patchHint} patchHintSent=${schedule.stats.patchHintSent}`,
             )
+          }
+        }
+      }
+      if (cfg.workspaceMap === true) {
+        // One inventory per session, before the model spends a step finding out
+        // what is in the directory (35.7 % of the recorded calls were exactly
+        // that). Bounded, and absent when the map cannot be built.
+        const cwd = payload?.agent?.session?.header?.cwd
+        const key = `${sid}\u0000${typeof cwd === 'string' ? cwd : ''}`
+        // A step-1 call sees the directory as handed over; the fixtures of a
+        // benchmark land after it, so an empty read is retried, not remembered.
+        if (!mapSent.has(key)) {
+          const map = buildWorkspaceMap(cwd, { maxEntries: cfg.mapEntries })
+          if (initial.debug) {
+            appendDebug(
+              initial.debugFile,
+              `map v${VERSION}: cwd=${typeof cwd === 'string' ? cwd : '(none)'}`
+                + ` built=${map ? map.length : 0}`,
+            )
+          }
+          if (map) {
+            mapSent.add(key)
+            notices.push(createNoticeMessage(map, 'auto: workspace inventory'))
           }
         }
       }
