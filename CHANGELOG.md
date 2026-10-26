@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.2
+
+- **新增实验旋钮 `workspaceMap`（默认关闭）与 `mapEntries`（默认 60）**：会话第一次工具调用之前，harness 把工作目录走一遍（深度 2、≤`mapEntries` 条、跳过 `node_modules`/`.git`/`dist`/`build`/`coverage`/`__pycache__`/`.venv`，正文 ≤1.4 kB），把「相对路径 + 字节数」和看得见的测试入口作为一条通知交给模型。它不结束回合、不改完成判定、不动 `reasoningEffort`、不加请求字段；它只是把模型自己会用 `ls`/`find` 换来的同一份清单先给一次。实现 `src/map.js`，接入 `index.js` 的 `agent/pre-step`，配置见 `src/config.js`、`src/effort.js`。
+- **为什么默认关闭（两轮实测，23 个有效单元）**：W10 与 W11 两块把 `def15` 与 `def15 + workspaceMap` 同块对照。合并 23 个单元：**墙钟 0.927×、输出 0.896×、步数 1.099×**，逐格墙钟中位 **0.791×**、13/23 格更快、隐藏测试零红。方向是对的（输出确实少 10 %），但**步数反而多 10 %**，且反向尾部很重——`stategraph` 与 `codeimpl` 的个别格 1.4×–1.77×，两臂 p90 从 369 s 变成 559 s、最慢 510 s 变 714 s。按「长任务不能变慢」的门槛，它不够格进默认，留作旋钮并公开数字。
+- **修掉一个会让新机制静默失效的缺陷**：运行目录在会话创建之后才放 fixture，第一步读工作目录可能读到空目录；旧写法在这种情况下也把「已下发」标掉，于是该会话再也不会拿到清单。现在只有真正构建出清单才记录已下发（`index.js` 的 `mapSent.add` 前判空），MAPDBG4 单格验证：`built=0`、`built=0`、`built=291`，会话里恰好一条 `Auto map:` 通知。
+- **投递审计工具化**：`bench/audit-delivery.py --tag W10 --needle "Auto map: one inventory"` 一条命令按「任务 × 对 × 臂」列出文案命中次数。W10 结果是 `map15` 10/10 命中、`def15` 0/10 —— 对照臂干净、处理臂每格恰好一次，所以那一块的差值不是「提醒没发」的噪声。协议见 `bench/README.md` 第 15–17 条。
+- 数字与逐格表见 `BENCHMARK.md` 的「筛选块 W10」与「复现块 W11」；原始结果 `bench/results/suite-W10.jsonl`、`bench/results/suite-W11.jsonl`，`python3 bench/report.py --files bench/results/suite-W11.jsonl --baseline def15` 可原样复算。
+
 ## 1.5.1
 
 **干净重基线：10 家族 30 个单元，总墙钟 0.72×、逐格中位 0.64×，有效单元 29/29 全绿。默认配置不变。三块独立复现到 0.72× / 0.73× / 0.73×。**

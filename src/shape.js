@@ -41,8 +41,8 @@ const PER_ITEM = [
   /\bone\s+(?:object|entry|row|line|record)\s+(?:keyed|per)\b/i,
   /\bkeyed\s+by\s+(?:file|name|module|path)\b/i,
   /\bone\s+(?:entry|row|object)\s+(?:for|per)\s+each\b/i,
-  /每个文件.{0,12}(?:一项|一条|一个对象|汇总|报告)/,
-  /逐文件.{0,10}(?:汇总|报告|列举)/,
+  /每个文件[^\n]{0,12}(?:一项|一条|一个对象|汇总|报告)/,
+  /逐文件[^\n]{0,10}(?:汇总|报告|列举)/,
 ]
 
 const FANOUT = [
