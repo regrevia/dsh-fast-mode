@@ -233,11 +233,17 @@ def run_one(cfg, arm, meta, tag):
     # Keep only rows that belong to this run's own session ids.
     sids = session_ids(dest) - pre_sids
     mine = [r for r in rows if r.get('sid') in sids] if sids else rows
-    return {'task': meta['id'], 'arm': arm, 'wall': round(wall, 2), 'exit': rc,
-            'steps': len(mine), 'stepsRaw': len(rows), 'sids': len(sids), 'exact': bool(sids),
-            'llm': round(sum(r.get('llmMs') or 0 for r in mine) / 1000, 2),
-            'out': sum(r.get('output') or 0 for r in mine),
-            'leak': leak_scan(dest), **verify(dest, meta)}
+    row = {'task': meta['id'], 'arm': arm, 'wall': round(wall, 2), 'exit': rc,
+           'steps': len(mine), 'stepsRaw': len(rows), 'sids': len(sids), 'exact': bool(sids),
+           'llm': round(sum(r.get('llmMs') or 0 for r in mine) / 1000, 2),
+           'out': sum(r.get('output') or 0 for r in mine),
+           'leak': leak_scan(dest), **verify(dest, meta)}
+    # A run counts only when a session actually ran and grading completed: a
+    # crash at session startup is `exit=1 / 0 steps / 0 output`, which an old
+    # reading either scored as a fast run or as a red gate. It is neither.
+    row['valid'] = (row['exit'] == 0 and row['steps'] >= 1 and row['out'] > 0
+                    and row['hasEntry'] and row['total'] > 0 and not row['leak'])
+    return row
 
 
 def main():

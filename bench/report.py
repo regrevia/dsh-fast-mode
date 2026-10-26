@@ -35,6 +35,14 @@ def load(files, dedupe='last'):
             if not line.strip():
                 continue
             r = json.loads(line)
+            # Rows written before the validity flag existed are judged by the
+            # same rule here, so an old block and a new one mean the same thing.
+            if 'valid' not in r:
+                r['valid'] = (r.get('exit') == 0 and r.get('steps', 0) >= 1
+                              and r.get('out', 0) > 0 and r.get('hasEntry') is True
+                              and r.get('total', 0) > 0 and not r.get('leak'))
+            if r['valid'] is False:
+                continue
             key = (r['task'], r['pair'], r['arm'])
             if dedupe == 'first' and key in kept:
                 continue
