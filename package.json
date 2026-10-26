@@ -51,11 +51,10 @@
     "latency",
     "deepseek"
   ],
-  "dependencies": {
-    "@deepseek-ai/schemastery": "~3.18.5"
-  },
+  "dependencies": {},
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.1"
   },
   "scripts": {
     "test": "node --test",
@@ -83,5 +82,11 @@
   "bin": {
     "dsh-fast-mode-experiment": "./bin/experiment.mjs",
     "dsh-fast-mode-report": "./bin/report.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
   }
 }
