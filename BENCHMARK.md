@@ -1394,3 +1394,11 @@ node bin/experiment.mjs stop                          # end it; later sessions g
 - Experiment E's minimal reproduction: `--gears safe,turbo`, then two concurrent waves of eight sessions on one prompt, and a per-session `ΣstepMs` median grouped by `gear`. The raw rows are in `~/.dsh/fast-mode-metrics.jsonl` (present on this machine); grouping by `sid` recomputes the table without re-running a model.
 - The 0.8.0 raw log is [`docs/bench-raw-2026-10-24.jsonl.gz`](docs/bench-raw-2026-10-24.jsonl.gz) (committed with the repo); under the stated conventions it reproduces every number in Experiments E and F.
 - For multi-repo tasks, do not treat the whole-history ratio table from `dsh-fast-mode-report` as a conclusion; group by task first, then compare medians inside a group.
+
+## 发布前复核块 REL16（2026-10-26，默认 vs `off`，5 家族 × 1 对 = 10 个单元）
+
+- **目的**：发版前用当时的默认（与 1.5.1 行为相同）对 `off` 再做一块同块对照，只回答两件事——隐藏测试有没有退化、总量方向有没有反过来。
+- **质量：两臂 10/10 全绿，逐任务通过数完全相同**（`shellops` 14/14、`ledger` 22/22、`codebase` 18/18、`stategraph` 10/10、`migrate` 14/14），无 leak、无超时、无 `steps=0`。
+- **速度**：墙钟合计 **0.967×**（1543.5 s → 1493.3 s），逐格中位 **0.999×**、3/5 格更快，步数 0.66×。逐格：`ledger` 0.78×、`shellops` 0.98×、`migrate` 1.00×、`stategraph` 1.31×、`codebase` 1.79×。
+- **读法**：单对、n=5，噪声带比 26–28% 的总口径宽，**不用这块替换总量结论**；它只用于回答「发版这一步有没有把质量或方向弄坏」。质量答案是没坏；速度方向在这一块落进噪声（0.97×）。
+- 原始结果 `bench/results/suite-REL16.jsonl`；`python3 bench/report.py --files bench/results/suite-REL16.jsonl --baseline off` 可复算。
