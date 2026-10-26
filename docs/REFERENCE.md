@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.5.4** 的实际行为（相对 1.5.0 多两个默认关闭的实验旋钮 `preferPatch` 与 `workspaceMap`，默认配置下行为与 1.5.0 完全一致），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.5.5** 的实际行为（相对 1.5.0 多两个默认关闭的实验旋钮 `preferPatch` 与 `workspaceMap`，默认配置下行为与 1.5.0 完全一致），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 

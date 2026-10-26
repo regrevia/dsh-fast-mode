@@ -1,6 +1,6 @@
 # Reference: principles, configuration and limits
 
-This manual describes what **dsh-fast-mode 1.5.4** actually does (compared with 1.5.0 it adds two experimental knobs, `preferPatch` and `workspaceMap`, both off by default; with the default config behaviour is identical to 1.5.0), matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
+This manual describes what **dsh-fast-mode 1.5.5** actually does (compared with 1.5.0 it adds two experimental knobs, `preferPatch` and `workspaceMap`, both off by default; with the default config behaviour is identical to 1.5.0), matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
 
 **The one contract: fast mode never changes reasoning effort, the thinking budget, or the model.** The `agent/request` hook does exactly one thing — `await next()`, read the `reasoningEffort` the request already carries for measurement, then return it unchanged. Whatever effort the user picked (the per-session choice in the UI, or the effort pinned by the profile's agent-default-model) is the effort every request uses.
 
