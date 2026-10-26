@@ -1,0 +1,1 @@
+{"task": "codeimpl", "arm": "ppdbg", "wall": 129.36, "exit": 0, "steps": 5, "stepsRaw": 43, "sids": 1, "exact": true, "llm": 127.92, "out": 13530, "leak": false, "hasEntry": true, "passed": 14, "total": 14, "green": true, "valid": true, "pair": 1}
