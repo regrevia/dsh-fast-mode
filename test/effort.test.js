@@ -190,6 +190,7 @@ test('the step knobs reach the policy, and off-gear keeps them out of the way', 
   assert.equal(auto.finishLineSteps, 0, 'no finish-line reminder by default: it retires unverified work')
 
   assert.equal(auto.openBatch, false, 'the opening batch line is opt-in')
+  assert.equal(auto.preferPatch, false, 'the hunk reminder is opt-in')
 
   const tuned = resolveConfig({ enabled: true, gear: 'auto', stepBudget: 12, finishLineSteps: 7, openBatch: true })
   assert.equal(tuned.stepBudget, 12)

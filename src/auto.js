@@ -72,6 +72,8 @@ export const AUTO_LIMITS = Object.freeze({
   directiveCooldown: 3,
   /** Steps into a turn before compression is worth its one message. */
   disciplineAfterSteps: 4,
+  /** A write whose body is at least this long is a whole-file rewrite. */
+  patchHintMinChars: 2000,
 })
 
 /**
@@ -115,7 +117,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, fanoutWidth?: number, batchVerify?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -132,6 +134,8 @@ export function notePolicy(state, agent, policy) {
   entry.shapeGate = policy?.shapeGate === true
   // Opt-in: group the verification of one edit batch instead of one run per file.
   entry.batchVerify = policy?.batchVerify === true
+  // Opt-in: after one large whole-file write, ask for hunks on existing files.
+  entry.preferPatch = policy?.preferPatch === true
   // 0 keeps the built-in cap; a positive number only widens blocks that the
   // evidence already called parallel, so nothing new is asked for on a write step.
   entry.widthCap = Number(policy?.fanoutWidth) || 0
@@ -219,6 +223,10 @@ function entryOf(state, agent) {
     shapeGate: false,
     /** Opt-in: ask for one covering check per edit batch, not one per file. */
     batchVerify: false,
+    /** Opt-in: after a large whole-file write, ask for hunks instead. */
+    preferPatch: false,
+    patchHint: false,
+    patchHintSent: false,
     /** Files changed since the last successful shell check, and whether we asked. */
     writesSinceCheck: 0,
     batchVerifySent: false,
@@ -255,6 +263,7 @@ export function noteTurn(state, agent) {
   entry.finishLineSent = false
   entry.outBudgetSent = false
   entry.openingSent = false
+  entry.patchHintSent = false
   entry.turnOutTokens = 0
   entry.turnCalls = 0
   entry.turnUnsafe = 0
@@ -373,6 +382,17 @@ export function noteTool(state, agent, observation) {
     entry.batchVerifySent = false
   }
 
+  // A whole-file argument is the compressible half of output: the file lands on
+  // disk either way, so the only thing a hunk form changes is how many tokens
+  // had to be decoded to say the same thing. Armed by the observation, spent by
+  // the scheduler once.
+  if (entry.preferPatch && !isError) {
+    const name0 = name.toLowerCase()
+    const writesWholeFile = name0 === 'write' || name0 === 'write_file' || name0 === 'create_file'
+    if (writesWholeFile && Number(obs.argChars) >= AUTO_LIMITS.patchHintMinChars) entry.patchHint = true
+    else if (name0 === 'edit' || name0 === 'apply_patch' || name0 === 'patch') entry.patchHint = false
+  }
+
   const previous = entry.seen.get(signature)
   let progress = false
   if (isError) {
@@ -462,11 +482,17 @@ function quantile(values, fraction) {
 /**
  * The schedule for the next step of one session.
  *
+ * Reading the schedule is not the same as delivering it: the width and the
+ * stall budget are read from several hooks per step, while the directive can be
+ * spent exactly once. Callers that only want the read-only numbers pass
+ * `{ emit: false }` so a peek never consumes a reminder that was never shown.
+ *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
+ * @param {{emit?: boolean}} [options]
  * @returns {{parallel: number, stallBudgetMs: number, directive: {kind: string, text: string, summary: string}|undefined, stats: object}}
  */
-export function autoSchedule(state, agent) {
+export function autoSchedule(state, agent, options = {}) {
   const entry = entryOf(state, agent)
   const p90 = quantile(entry.waits, 0.9)
   const stallBudgetMs = Math.round(
@@ -534,9 +560,15 @@ export function autoSchedule(state, agent) {
     p90WaitMs: p90,
     stallBudgetMs,
     parallel,
+    // Arm state, readable from the debug line: a benchmark arm that cannot be
+    // told apart from the default is otherwise indistinguishable from a bug.
+    preferPatch: entry.preferPatch,
+    patchHint: entry.patchHint,
+    patchHintSent: entry.patchHintSent,
   }
 
-  return { parallel, stallBudgetMs, directive: directiveFor(entry, stats), stats }
+  const directive = options.emit === false ? undefined : directiveFor(entry, stats)
+  return { parallel, stallBudgetMs, directive, stats }
 }
 
 /** The widest block this session may ask for: the config cap, else the built-in. */
@@ -578,6 +610,26 @@ function directiveFor(entry, stats) {
       summary: 'auto: batch the opening step',
     }
   }
+  if (entry.preferPatch && entry.patchHint && !entry.patchHintSent) {
+    // The hint fires on the *next* step, not on the write step itself: at that
+    // point the model has already seen whether the rewrite worked, so the ask is
+    // about form, not about redoing the work. Nothing here limits what gets
+    // written or when the turn may end. It sits above the cooldown because it is
+    // armed by an observed write and fires at most once per turn, so swallowing
+    // it would only make the arm look identical to the default.
+    entry.patchHintSent = true
+    entry.patchHint = false
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'prefer-patch'
+    return {
+      kind: 'prefer-patch',
+      text: 'Auto schedule: that step sent a whole file. When you change a file that already exists, '
+        + 'send only the lines that change (an edit hunk) instead of the whole file: the file ends up '
+        + 'byte-identical, and the unchanged lines cost no output tokens.',
+      summary: 'auto: send hunks for the next edit',
+    }
+  }
+
   const since = entry.steps - entry.lastDirectiveStep
   if (since < AUTO_LIMITS.directiveCooldown) return undefined
 

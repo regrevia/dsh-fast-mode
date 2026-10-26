@@ -232,6 +232,8 @@ export function resolveConfig(raw, overrides) {
     batchVerify: gear.directive && config.batchVerify === true,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
+    /** One "send hunks, not whole files" reminder after a large whole-file write. */
+    preferPatch: gear.directive && config.preferPatch === true,
     /** Optional "stop adding scope" reminder at this step; 0 = off (default). */
     finishLineSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.finishLineSteps, 0)))

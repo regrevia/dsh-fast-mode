@@ -129,6 +129,13 @@ export const Config = z.object({
       '开局批量 / Opening batch: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。',
     ),
 
+  preferPatch: z
+    .boolean()
+    .default(false)
+    .description(
+      '整文件改写提醒 / Prefer hunks: 一次整文件 write（参数 ≥ 2000 字符）之后，提醒一次「改已有文件时只发改动的行（edit hunk），不发整个文件」。落盘内容相同，省的是工具参数的输出 token（约占输出字符 28%）。只发一次，不改完成判定，不改复验。',
+    ),
+
   fanoutWidth: z
     .number()
     .step(1)

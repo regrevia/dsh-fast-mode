@@ -94,7 +94,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.0'
+export const VERSION = '1.5.1'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -534,7 +534,7 @@ export function apply(ctx, rawConfig) {
               `auto v${VERSION}: step=${schedule.stats.steps} turnSteps=${schedule.stats.turnSteps}`
                 + ` noProgress=${schedule.stats.noProgress} errors=${schedule.stats.errors}`
                 + ` parallel=${schedule.parallel} budget=${schedule.stallBudgetMs}ms`
-                + ` directive=${schedule.directive.kind}`,
+                + ` directive=${schedule.directive.kind} preferPatch=${schedule.stats.preferPatch} patchHint=${schedule.stats.patchHint} patchHintSent=${schedule.stats.patchHintSent}`,
             )
           }
         }
@@ -567,7 +567,10 @@ export function apply(ctx, rawConfig) {
             // the sentence the model reads and the number the scheduler enforces
             // are the same number.
             const effective = live.gear === AUTO
-              ? { ...live, parallel: autoSchedule(auto, typeof sid === 'string' ? sid : GLOBAL_AGENT).parallel }
+              ? {
+                ...live,
+                parallel: autoSchedule(auto, typeof sid === 'string' ? sid : GLOBAL_AGENT, { emit: false }).parallel,
+              }
               : live
             return buildGuidance(effective) ?? ''
           } catch {
@@ -624,9 +627,22 @@ export function apply(ctx, rawConfig) {
 
       if (exec) {
         const agent = agentKey(exec.agent)
+        // The size of what the model *sent* is half of decode cost and the half
+        // the harness never sees in usage rows; a whole-file `write` is the one
+        // argument shape the scheduler can ask to be smaller without asking for
+        // less work.
+        let args = exec.arguments && typeof exec.arguments === 'object' ? exec.arguments : {}
+        if (!args.content && typeof exec.arguments === 'string') {
+          // Some hosts hand the hook the unparsed argument JSON. Parsing it is
+          // read-only; a body we cannot parse simply measures 0.
+          try { args = JSON.parse(exec.arguments) } catch { args = {} }
+        }
+        const argBody = args.content ?? args.text ?? args.contents ?? args.new_str ?? args.newString
+        const argChars = typeof argBody === 'string' ? argBody.length : 0
         const observation = {
           name: typeof exec.name === 'string' ? exec.name : 'unknown',
           argsKey: stableKey(exec.arguments),
+          argChars,
           isError: result?.isError === true,
           chars: contentChars(result?.content),
           digest: contentDigest(result?.content),
@@ -666,7 +682,7 @@ export function apply(ctx, rawConfig) {
       return resolved
     }
 
-    const schedule = cfg.gear === AUTO ? autoSchedule(auto, sid) : undefined
+    const schedule = cfg.gear === AUTO ? autoSchedule(auto, sid, { emit: false }) : undefined
     checkParallelCap(cfg, schedule?.parallel)
     metrics.label(sid, { mode: 'on', gear: cfg.gear, effort: label, route })
 
