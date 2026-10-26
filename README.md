@@ -62,7 +62,10 @@
 
 ## 使用
 
-1. **装**：DSH 桌面版 → 插件管理器 → 安装 bundle，目标填 `github:regrevia/dsh-fast-mode`。终端等价：`pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`。
+1. **装**（任选其一）：
+   - **npm**（推荐）：插件管理器 → 安装 bundle，目标填 `dsh-fast-mode`；终端等价 `pnpm add dsh-fast-mode --dir ~/.dsh/profiles/desktop`。包页 <https://www.npmjs.com/package/dsh-fast-mode>。
+   - **GitHub**：目标填 `github:regrevia/dsh-fast-mode`；终端等价 `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`。
+   - **市场索引**：插件 → 发现 → 索引源，添加 `https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/market/index.json`（format 1，已用宿主索引解析器验过）。精选列表 `awesome-dsh-plugin` 的收录 PR 是 [#9650](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9650)，合并后 dshmarket 与站点自动收录，不用手动加源。
 2. **开**：重载页面，点输入框旁的小闪电。没有档位要选。
 3. **生效**：下一条请求生效，不用重启、不用新开会话。
 

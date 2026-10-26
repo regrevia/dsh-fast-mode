@@ -62,7 +62,10 @@ Every raw number, the step buckets, the rejected candidates and the failure mode
 
 ## Install
 
-1. **Install**: DSH desktop → plugin manager → install bundle, target `github:regrevia/dsh-fast-mode`. Terminal equivalent: `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`.
+1. **Install** (any one):
+   - **npm** (recommended): plugin manager → install bundle, target `dsh-fast-mode`; terminal equivalent `pnpm add dsh-fast-mode --dir ~/.dsh/profiles/desktop`. Package page <https://www.npmjs.com/package/dsh-fast-mode>.
+   - **GitHub**: target `github:regrevia/dsh-fast-mode`; terminal equivalent `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`.
+   - **Market index**: Plugins → Discover → index sources, add `https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/market/index.json` (format 1, checked with the host index parser). The curated-list submission is [#9650](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9650); once merged, dshmarket and the site pick it up automatically and no manual source is needed.
 2. **Enable**: reload the page, click the small lightning bolt next to the composer. No mode to pick.
 3. **Takes effect** on the next request — no restart, no new conversation.
 

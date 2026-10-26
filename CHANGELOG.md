@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+- **发布到 npm**：`dsh-fast-mode@1.5.3` 已在 registry 上（`npm i dsh-fast-mode` / 插件管理器目标填 `dsh-fast-mode`），30 个文件、含 `cordis.patch.yml` 与 `client.js`。GitHub 安装方式（`github:regrevia/dsh-fast-mode`）照旧可用。
+- **插件市场**：仓库内新增 `market/index.json`（format 1 单插件索引，已用宿主 `@deepseek-ai/dsh-plugin-market-index` 的解析器验证通过），可作为「插件 → 发现 → 索引源」的自托管源；同时向精选列表 `awesome-dsh-plugin` 提了收录 PR [#9650](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9650)，合并后 dshmarket 与站点自动收录。
+- **对外口径**：总量约快 26–28%（三块独立批次 0.72×/0.73×/0.73×，合计 65 个有效单元）；「典型一格快 36%」已撤回，40% 不支持，见 `README.md` 与 `BENCHMARK.md`。
+
 ## 1.5.2
 
 - **新增实验旋钮 `workspaceMap`（默认关闭）与 `mapEntries`（默认 60）**：会话第一次工具调用之前，harness 把工作目录走一遍（深度 2、≤`mapEntries` 条、跳过 `node_modules`/`.git`/`dist`/`build`/`coverage`/`__pycache__`/`.venv`，正文 ≤1.4 kB），把「相对路径 + 字节数」和看得见的测试入口作为一条通知交给模型。它不结束回合、不改完成判定、不动 `reasoningEffort`、不加请求字段；它只是把模型自己会用 `ls`/`find` 换来的同一份清单先给一次。实现 `src/map.js`，接入 `index.js` 的 `agent/pre-step`，配置见 `src/config.js`、`src/effort.js`。
