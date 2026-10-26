@@ -1,0 +1,1 @@
+{"task": "migrate", "arm": "off", "wall": 695.18, "exit": 0, "steps": 27, "stepsRaw": 581, "sids": 1, "exact": true, "llm": 648.95, "out": 35718, "leak": false, "hasEntry": true, "passed": 14, "total": 14, "green": true, "valid": true, "pair": 1}
