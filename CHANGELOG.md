@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.4
+
+- **市场预检修复**：`peerDependencies["@deepseek-ai/schemastery"]` 从 `^3.18.5` 改为 `>=3.18.5-rc.1 <4.0.0-0`。原来的范围会静默排除预发布的宿主构建，市场预检判为 error；新范围同时覆盖稳定版 3.18.5 与 3.18.5-rc 系列。行为无变化。
+
 ## 1.5.3
 
 - **发布到 npm**：`dsh-fast-mode@1.5.3` 已在 registry 上（`npm i dsh-fast-mode` / 插件管理器目标填 `dsh-fast-mode`），30 个文件、含 `cordis.patch.yml` 与 `client.js`。GitHub 安装方式（`github:regrevia/dsh-fast-mode`）照旧可用。
