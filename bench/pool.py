@@ -28,7 +28,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 RESULTS = HERE / 'results'
 
 # Blocks measured under the current validity rule, with an `off` anchor.
-CLEAN = ('W1', 'W3', 'W5', 'W6', 'W7', 'W8b', 'REL16', 'PPX2', 'PP16B', 'SG2')
+CLEAN = ('W1', 'W3', 'W5', 'W6', 'W7', 'W8b', 'REL16', 'PPX2', 'SG2')
 RETRACTED = ('V15', 'TA3', 'TA4')
 
 
