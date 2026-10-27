@@ -258,6 +258,10 @@ export function resolveConfig(raw, overrides) {
     disciplineAfterSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.disciplineAfterSteps, 0)))
       : 0,
+    /** Step for the single repeat of the compression reminder; 0 = never. */
+    disciplineRepeatAtSteps: gear.directive
+      ? Math.max(0, Math.floor(number(config.disciplineRepeatAtSteps, 0)))
+      : 0,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** One "send hunks, not whole files" reminder after a large whole-file write. */

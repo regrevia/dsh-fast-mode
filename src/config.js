@@ -161,6 +161,16 @@ export const Config = z.object({
       '压缩指令的入场步 / Compression entry step: `outputDiscipline: late` 时，第几步才提醒「剩下的话只写下一步要用的」；0 = 用内置值（4）。这条提醒是本插件唯一被证明有效的机制（回合变少 + 每步输出变短），所以它的入场点值得单独调：太早会在任务还没展开时就把话掐掉，太晚则前几步的散文已经花掉。0 保持旧行为。',
     ),
 
+  disciplineRepeatAtSteps: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(80)
+    .default(0)
+    .description(
+      '压缩指令的重复步 / Compression repeat step: `outputDiscipline: late` 的提醒每回合只发一次，第 4 步之后的长回合（10 步以上）输出会重新变长。给一个正数就按那一步再提醒一次「仍然只写下一步要用的」，仍然每回合最多一次。0 = 不发（默认，行为不变）。',
+    ),
+
   workspaceMap: z
     .boolean()
     .default(false)

@@ -74,6 +74,8 @@ export const AUTO_LIMITS = Object.freeze({
   directiveCooldown: 3,
   /** Steps into a turn before compression is worth its one message. */
   disciplineAfterSteps: 4,
+  /** Off by default: no second compression reminder in a long turn. */
+  disciplineRepeatAtSteps: 0,
   /** A write whose body is at least this long is a whole-file rewrite. */
   patchHintMinChars: 2000,
 })
@@ -131,6 +133,9 @@ export function notePolicy(state, agent, policy) {
   // 0 keeps the built-in entry step; a positive value moves the one reminder that
   // has a measured effect (see BENCHMARK: compress-output) earlier or later.
   entry.disciplineAfterSteps = stepCount(policy?.disciplineAfterSteps, 0, 0)
+  // The reminder above is once per turn; a long turn drifts back to prose after
+  // it, so an explicit step can repeat the same ask exactly once more.
+  entry.disciplineRepeatAtSteps = stepCount(policy?.disciplineRepeatAtSteps, 0, 0)
   // 0 is a value, not "unset": it is how a caller asks for no hard stop at all.
   entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
@@ -229,6 +234,10 @@ function entryOf(state, agent) {
     lateDiscipline: false,
     /** One compression reminder per turn, never more. */
     disciplineSent: false,
+    /** Step for the optional repeat of that reminder; 0 = off. */
+    disciplineRepeatAtSteps: AUTO_LIMITS.disciplineRepeatAtSteps,
+    /** True once the repeat has been sent. */
+    disciplineRepeatSent: false,
     /** Hard stop: the step count that ends the turn with "report now". */
     turnStepBudget: AUTO_LIMITS.turnStepBudget,
     /** Soft stop: one "no more scope" reminder at this step, 0 = off. */
@@ -281,6 +290,7 @@ export function noteTurn(state, agent) {
   entry.stopped = false
   entry.stepProgress = false
   entry.disciplineSent = false
+  entry.disciplineRepeatSent = false
   entry.finishLineSent = false
   entry.outBudgetSent = false
   entry.openingSent = false
@@ -901,6 +911,20 @@ function directiveFor(entry, stats) {
         + 'conclusion. No restating file contents, no narrating what you are about to do, no summary of '
         + 'what a tool returned. Keep the answer complete; cut the commentary.',
       summary: 'auto: compress output for the rest of the turn',
+    }
+  }
+  const repeatAt = entry.disciplineRepeatAtSteps
+  if (entry.lateDiscipline && entry.disciplineSent && !entry.disciplineRepeatSent && repeatAt > 0
+      && stats.turnSteps >= repeatAt) {
+    // Same ask, shorter: by this step the turn has already been told once, so the
+    // reminder only has to re-arm the rule, not teach it.
+    entry.disciplineRepeatSent = true
+    entry.lastDirectiveStep = entry.steps
+    entry.lastDirectiveKind = 'compress-output'
+    return {
+      kind: 'compress-output',
+      text: 'Auto schedule: still long. Keep the remaining steps to the command, the file, the conclusion.',
+      summary: 'auto: compress output again for the rest of the turn',
     }
   }
   const outBudget = entry.outBudget

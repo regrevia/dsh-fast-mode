@@ -619,6 +619,40 @@ test('disciplineAfterSteps moves the compression reminder, and 0 keeps the built
   assert.equal(autoSchedule(fallback, 's1').directive?.kind, 'compress-output')
 })
 
+test('disciplineRepeatAtSteps repeats the same ask once, and 0 never repeats it', () => {
+  // The first reminder is once per turn; a long turn drifts back to prose after
+  // it, so the repeat is the cheapest way to re-arm the rule. It must still be
+  // exactly one extra message: a reminder per step would be the noise it warns about.
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: true, disciplineRepeatAtSteps: 8 })
+  noteTurn(state, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'compress-output', 'first reminder at the entry step')
+  for (let step = AUTO_LIMITS.disciplineAfterSteps; step < 7; step += 1) {
+    cleanStep(state, 's1', 1)
+    assert.equal(autoSchedule(state, 's1').directive, undefined, 'no repeat before its step')
+  }
+  cleanStep(state, 's1', 1)
+  const repeat = autoSchedule(state, 's1')
+  assert.equal(repeat.directive?.kind, 'compress-output', 'repeats at the requested step')
+  assert.match(repeat.directive.text, /still long/)
+  for (let step = 8; step < 14; step += 1) {
+    cleanStep(state, 's1', 1)
+    assert.equal(autoSchedule(state, 's1').directive, undefined, 'only one repeat per turn')
+  }
+
+  // Off by default, and 0 is a value: nothing changes for existing callers.
+  const quiet = createAutoState()
+  notePolicy(quiet, 's1', { lateDiscipline: true, disciplineRepeatAtSteps: 0 })
+  noteTurn(quiet, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(quiet, 's1', 1)
+  assert.equal(autoSchedule(quiet, 's1').directive?.kind, 'compress-output', 'the first reminder still fires')
+  for (let step = AUTO_LIMITS.disciplineAfterSteps; step < 12; step += 1) {
+    cleanStep(quiet, 's1', 1)
+    assert.equal(autoSchedule(quiet, 's1').directive, undefined, 'no second reminder with the repeat off')
+  }
+})
+
 test('batchVerify waits for a second unverified write and asks only once', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, batchVerify: true })
