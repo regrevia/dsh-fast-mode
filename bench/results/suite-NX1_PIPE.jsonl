@@ -1,2 +1,1 @@
-{"task": "shellpipeline", "arm": "off", "wall": 462.74, "exit": 0, "steps": 0, "stepsRaw": 0, "sids": 1, "exact": true, "llm": 0.0, "out": 0, "leak": false, "hasEntry": true, "passed": 15, "total": 15, "green": true, "valid": false, "pair": 1}
 {"task": "shellpipeline", "arm": "def15", "wall": 310.47, "exit": 0, "steps": 19, "stepsRaw": 153, "sids": 1, "exact": true, "llm": 307.71, "out": 16015, "leak": false, "hasEntry": true, "passed": 15, "total": 15, "green": true, "valid": true, "pair": 1}
