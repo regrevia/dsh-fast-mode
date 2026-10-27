@@ -1813,9 +1813,11 @@ python3 bench/suite-run.py --tasks debugfix,ledger,codeimpl --arms off,def15,bud
 
 **为什么是它。** 合并块里唯一被证明有效的机制，是 `outputDiscipline: late` 在第 4 步注入的那一句「剩下的话只写下一步要用的」。它**每回合只发一次**。可是合池的逐格数据显示，回合越长，赢面越小：`debugfix` 1.032×、`perfrefactor` 1.009×、`csvpipe` 0.982×，而 `shellpipeline` 0.699×、`codeimpl` 0.710× —— 长的回合里，第一次提醒之后的那些步又把输出写长了。这不是新机制，同一个机制的第二枪：同一句话，在更晚的一步再说一次，每回合仍然最多一次。
 
-**旋钮。** `disciplineRepeatAtSteps`（默认 `0` = 不发，行为逐字节不变）。`dr12` 臂：`disciplineAfterSteps: 4`（与默认同入场点）+ `disciplineRepeatAtSteps: 12`，所以两臂的唯一差别就是第 12 步的那句话。
+**旋钮。** `disciplineRepeatAtSteps`（默认 `0` = 不发，行为逐字节不变）。`dr8` 臂：`disciplineAfterSteps: 4`（与默认同入场点）+ `disciplineRepeatAtSteps: 8`，所以两臂的唯一差别就是第 8 步的那句话。
 
-**先验证提醒真的下发。** 逐会话搜确切字符串 `still long. Keep`，`dr12` 必须 ≥1、`def15` 必须 0。任一格 0 命中 ⇒ 该格记为「未测到」而不是「更慢」。
+**为什么是第 8 步而不是更晚。** 提醒要到得了才算测到。已测 `migrate` 的 16 个 `def15` 有效会话里步数中位 13、15/16 走到第 8 步，但只有 10/16 走到第 12 步——第 12 步发不出去的会话会变成「看起来没效果」的假空。所以入场点 4 + 重复 8（间隔 4 步，中间隔着冷却期），预期 15/16 命中。
+
+**先验证提醒真的下发。** 逐会话搜确切字符串 `still long. Keep`，`dr8` 必须 ≥1、`def15` 必须 0。任一格 0 命中 ⇒ 该格记为「未测到」而不是「更慢」。
 
 **判据（配对，treatment / baseline < 1 才是快）：**
 
