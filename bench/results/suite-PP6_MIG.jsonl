@@ -1,0 +1,2 @@
+{"task": "migrate", "arm": "def15", "wall": 274.59, "exit": 0, "steps": 16, "stepsRaw": 51, "sids": 1, "exact": true, "llm": 271.74, "out": 26172, "leak": false, "hasEntry": true, "passed": 14, "total": 14, "green": true, "valid": true, "pair": 1}
+{"task": "migrate", "arm": "pp15", "wall": 266.71, "exit": 0, "steps": 8, "stepsRaw": 41, "sids": 1, "exact": true, "llm": 264.17, "out": 27199, "leak": false, "hasEntry": true, "passed": 14, "total": 14, "green": true, "valid": true, "pair": 1}
