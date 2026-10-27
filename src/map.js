@@ -51,7 +51,9 @@ function walk(root, dir, depth, out) {
     if (out.length >= MAX_ENTRIES) return
     if (SKIP.has(entry.name)) continue
     const abs = path.join(dir, entry.name)
-    const rel = path.relative(root, abs)
+    // The map is read by the model, not by this shell: forward slashes keep one
+    // spelling on every platform instead of \\ on Windows.
+    const rel = path.relative(root, abs).split(path.sep).join('/')
     if (entry.isDirectory()) {
       out.push(`${rel}/`)
       if (depth < MAX_DEPTH) walk(root, abs, depth + 1, out)

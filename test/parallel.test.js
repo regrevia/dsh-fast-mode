@@ -58,6 +58,12 @@ test('a single job is refused: that is what the bash tool is for', async () => {
 })
 
 test('independent jobs overlap in real time', async () => {
+  // Windows pays a one-off antivirus scan the first time bash.exe starts in a
+  // process (~3s measured, 80ms afterwards). Warm it so this assertion measures
+  // the pool's overlap rather than the scanner.
+  if (process.platform === 'win32') {
+    await tool.execute({ jobs: [{ command: 'exit 0' }, { command: 'exit 0' }] }, {})
+  }
   const began = Date.now()
   const result = await tool.execute({
     jobs: [

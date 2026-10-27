@@ -166,10 +166,19 @@ export function buildShellParallelTool ({ spawn, logger, pool = DEFAULT_POOL, cl
         }
         let child
         try {
-          child = spawn('bash', ['-lc', job.command], {
+          // `-l` starts a login shell, which on Windows re-reads the whole Git bash
+          // profile for every job: measured ~850ms of pure startup per job there,
+          // enough to blow the parallelism budget the tool exists to prove. The
+          // profile contributes nothing to a job, so only POSIX keeps it.
+          const shellArgs = process.platform === 'win32' ? ['-c', job.command] : ['-lc', job.command]
+          child = spawn('bash', shellArgs, {
             cwd: jobCwd(exec, job),
             env: process.env,
             stdio: ['ignore', 'pipe', 'pipe'],
+            // Windows allocates a console for every spawn unless told not to, and
+            // that allocation is synchronous on the thread that starts the job:
+            // three jobs then take turns instead of overlapping.
+            windowsHide: true,
           })
         } catch (error) {
           finish({ label: job.label, command: job.command, exit: null, timedOut: false, error: String(error?.message ?? error), stdout: { text: '', clipped: false }, stderr: { text: '', clipped: false } })
