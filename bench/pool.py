@@ -62,6 +62,8 @@ def main():
     ap.add_argument('--arm', default='def15')
     ap.add_argument('--blocks', default=','.join(CLEAN))
     ap.add_argument('--json', action='store_true')
+    ap.add_argument('--ci', type=int, default=0,
+                    help='bootstrap resamples for a 95%% CI on the pooled ratio')
     args = ap.parse_args()
     blocks = tuple(b for b in args.blocks.split(',') if b)
 
@@ -74,6 +76,7 @@ def main():
     per_task = defaultdict(lambda: [0.0, 0.0, 0, 0])
     total = [0.0, 0.0, 0, 0, 0]          # arm wall, off wall, arm steps, off steps, n
     ratios = []
+    pairs = []                            # (arm wall, off wall) for bootstrap
     for (tag, task, pair), arms in sorted(cells.items()):
         a, b = arms.get('off'), arms.get(args.arm)
         if not (a and b and valid(a) and valid(b)):
@@ -81,6 +84,7 @@ def main():
         total[0] += b['wall']; total[1] += a['wall']
         total[2] += b['steps']; total[3] += a['steps']; total[4] += 1
         ratios.append(b['wall'] / a['wall'])
+        pairs.append((b['wall'], a['wall']))
         blk = per_block[tag]
         blk[0] += b['wall']; blk[1] += a['wall']; blk[2] += b['out'] / a['out'] if a['out'] else 1
         blk[3] += 1; blk[4] += b['wall'] < a['wall']
@@ -102,6 +106,20 @@ def main():
         'per_task': {k: {'n': v[2], 'wall': round(v[0] / v[1], 4), 'faster': v[3]}
                      for k, v in sorted(per_task.items(), key=lambda kv: kv[1][0] / kv[1][1])},
     }
+    if args.ci > 0 and pairs:
+        import random
+        rnd = random.Random(20261027)
+        tot, med = [], []
+        for _ in range(args.ci):
+            draw = [pairs[rnd.randrange(len(pairs))] for _ in range(len(pairs))]
+            tot.append(sum(x for x, _ in draw) / sum(y for _, y in draw))
+            med.append(statistics.median([x / y for x, y in draw]))
+        tot.sort(); med.sort()
+        lo, hi = int(0.025 * len(tot)), int(0.975 * len(tot)) - 1
+        out['wall_total_ci95'] = [round(tot[lo], 4), round(tot[hi], 4)]
+        out['wall_median_ci95'] = [round(med[lo], 4), round(med[hi], 4)]
+        out['ci_resamples'] = args.ci
+
     if args.json:
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
@@ -110,6 +128,9 @@ def main():
     print(f"pairs={out['pairs']} wall_total={out['wall_total_ratio']}x "
           f"steps_total={out['steps_total_ratio']}x median={out['wall_median_ratio']}x "
           f"faster={out['faster']}/{out['pairs']} dup_keys={out['duplicate_keys']}")
+    if out.get('wall_total_ci95'):
+        print(f"ci95 wall_total={out['wall_total_ci95']} median={out['wall_median_ci95']} "
+              f"({out['ci_resamples']} resamples)")
     print('\nblock            n   wall  faster')
     for k, v in out['per_block'].items():
         print(f'{k:12s} {v["n"]:4d} {v["wall"]:6.3f}  {v["faster"]}/{v["n"]}')
