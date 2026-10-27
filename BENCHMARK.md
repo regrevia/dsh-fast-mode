@@ -100,7 +100,9 @@ W1 出现过唯一一格门禁违规：`ledger` p1 的 `def15` 红在 `test_roun
 
 因此上限这条链重新写一遍，避免读者把 40 % 当待办：要省 40 % 墙钟就得省约 40 % 输出 token（输出占 97 %）；现在合池实测输出 0.806×，已经兑现了「省输出 → 省墙钟」的大部分可用余量；剩下能动的（重复复验 6 %、重复写文件 0.8 %）即使全压掉也只值 2–6 %。**0.67× 在「不动 `reasoningEffort`、不加请求字段」的约束内不可达**，这一条没有变，见下一节「0.67× 在现有约束下的可达性」。
 
-另有两处副产品值得记：`pp16`（`preferPatch`）在 `W8b` 上账面最好（19 对总量 0.70×、中位 0.66×、13/19 更快），但只跑过一块，样本面太窄；`open15` 在 `codebase`/`csvpipe`/`debugfix` 上明显强于 `def15`（中位 0.46/0.47/0.48）却在 `shellops`/`shellpipeline` 上更慢，说明「按形状分流」比「全局换臂」更合理。两者都还没到能进默认的证据量。
+另有两处副产品值得记：`pp16`（`preferPatch`）在 `W8b` 上账面最好（19 对总量 0.70×、中位 0.66×、13/19 更快），但只跑过一块，样本面太窄；`open15` 在 `codebase`/`csvpipe`/`debugfix` 上明显强于 `def15`（中位 0.46/0.47/0.48）却在 `shellops`/`shellpipeline` 上更慢，说明「按形状分流」比「全局换臂」更合理，但它同样只跑过一块。
+
+**`pp16` 的结论已经出来，是否定的（PPX + PPX2，同块对照，n=12）。** 过程值得记：PPX 那一块（4 对，`codeimpl`/`migrate`/`debugfix`/`perfrefactor`）给出 0.426×，看着像强机制；把同样的臂在 PPX2 上复测 8 对得到 **1.193×**（比 `off` 还慢），两坑合起来 **1.035×**、6/12 更快、输出 1.056× —— 也就是说 0.426× 是 4 个格子的运气，不是机制。同一块里 `def15` 是 0.911×（PPX2）和 0.850×（两坑合并），方向一致但幅度远小于 PPX 给人的印象。`preferPatch` 因此保持默认关闭，不因为单块好账面就翻默认。
 
 ## 复现块 W5（2026-10-26）：三臂同块对照，总量复现 0.73×，逐格中位不复现
 
@@ -1441,6 +1443,7 @@ node bin/experiment.mjs stop                          # end it; later sessions g
 - Experiment E's minimal reproduction: `--gears safe,turbo`, then two concurrent waves of eight sessions on one prompt, and a per-session `ΣstepMs` median grouped by `gear`. The raw rows are in `~/.dsh/fast-mode-metrics.jsonl` (present on this machine); grouping by `sid` recomputes the table without re-running a model.
 - The 0.8.0 raw log is [`docs/bench-raw-2026-10-24.jsonl.gz`](docs/bench-raw-2026-10-24.jsonl.gz) (committed with the repo); under the stated conventions it reproduces every number in Experiments E and F.
 - For multi-repo tasks, do not treat the whole-history ratio table from `dsh-fast-mode-report` as a conclusion; group by task first, then compare medians inside a group.
+- 跑 `bench/suite-run.py` 前先确认 `python3` 能用：它在 :176 用 `subprocess.run(['python3','-m','unittest', ...])` 给每个格子判分。2026-10-27 这块机器上 `/usr/bin/python3` 因为 Xcode 许可失效直接失败（`You have not agreed to the Xcode license agreements`，rc=69），当时 PPX2 有 2 个格子因此没落盘。修法：把可用的解释器放前面，例如 `mkdir -p /tmp/fm/bin && ln -sf /Users/apple/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 /tmp/fm/bin/python3 && export PATH=/tmp/fm/bin:$PATH`（该解释器已装 pyyaml，`load_token()` 也要用）。
 
 ## 发布前复核块 REL16（2026-10-26，默认 vs `off`，5 家族 × 1 对 = 10 个单元）
 
