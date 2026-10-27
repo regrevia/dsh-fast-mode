@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-mode",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "description": "DeepSeek Harness fast mode: same thinking effort, fewer round trips. An adaptive parallel tool fan-out, output discipline that never trims the answer, and a cancellable stall guard. Never changes reasoning effort, the model, or the request body. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
   "repository": {
     "type": "git",
@@ -77,7 +77,10 @@
       "immediately": true
     }
   },
-  "author": "regrevia",
+  "author": {
+    "name": "regrevia",
+    "url": "https://github.com/regrevia"
+  },
   "icon": "./icon.png",
   "bin": {
     "dsh-fast-mode-experiment": "./bin/experiment.mjs",
