@@ -1,0 +1,1 @@
+{"task": "debugfix", "arm": "off", "wall": 75.42, "exit": 0, "steps": 9, "stepsRaw": 24, "sids": 1, "exact": true, "llm": 73.25, "out": 4599, "leak": false, "hasEntry": true, "passed": 13, "total": 13, "green": true, "valid": true, "pair": 1}
