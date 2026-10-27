@@ -34,8 +34,8 @@
         "zh": "快速模式"
       },
       "description": {
-        "en": "Per-conversation fast mode for multi-step tasks: batches independent tool calls and drops redundant steps. Pooled over 7 blocks and 120 valid paired runs: about 20% less total wall-clock time (0.798x, median 0.829x); 25-39% on the shapes it fits (codeimpl 0.608x, stategraph 0.708x, migrate 0.748x); hidden tests still passing.",
-        "zh": "单会话开关的快速模式：合并可并行的工具调用、减少冗余步骤。7 块 120 对有效配对的合池结果：整任务总墙钟约快 20%（0.798×，逐格中位 0.829×）；适合的形状快 25–39%（codeimpl 0.608×、stategraph 0.708×、migrate 0.748×）；隐藏测试仍全绿。"
+        "en": "Per-conversation fast mode for multi-step tasks: batches independent tool calls and drops redundant steps. Pooled over 8 blocks and 128 valid paired runs: about 19% less total wall-clock time (0.809x, median 0.813x, 95% interval 0.734-0.894); 15-30% on the shapes it fits (codeimpl median 0.709x, shellpipeline 0.844x); hidden tests still passing.",
+        "zh": "单会话开关的快速模式：合并可并行的工具调用、减少冗余步骤。8 块 128 对有效配对的合池结果：整任务总墙钟约快 19 %（0.809×，逐格中位 0.813×，95% 区间 0.734–0.894）；适合的形状快 15–30%（codeimpl 中位 0.709×、shellpipeline 0.844×）；隐藏测试仍全绿。"
       },
       "icon": "https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/icon.png",
       "author": "regrevia",
