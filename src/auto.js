@@ -128,6 +128,9 @@ export function notePolicy(state, agent, policy) {
   // made of; 0 is the off switch, exactly like stepBudget.
   entry.outBudget = stepCount(policy?.outputBudget, 0, 0)
   entry.outBudgetAfterSteps = stepCount(policy?.outputBudgetAfterSteps, 0, 0)
+  // 0 keeps the built-in entry step; a positive value moves the one reminder that
+  // has a measured effect (see BENCHMARK: compress-output) earlier or later.
+  entry.disciplineAfterSteps = stepCount(policy?.disciplineAfterSteps, 0, 0)
   // 0 is a value, not "unset": it is how a caller asks for no hard stop at all.
   entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
@@ -883,7 +886,8 @@ function directiveFor(entry, stats) {
       summary: 'auto: group the verification of this edit batch',
     }
   }
-  if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= AUTO_LIMITS.disciplineAfterSteps) {
+  const disciplineAt = entry.disciplineAfterSteps || AUTO_LIMITS.disciplineAfterSteps
+  if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= disciplineAt) {
     // Late engagement: the prompt carried no prose rules, so the only cost of a
     // short task was its own work. By this step the task is demonstrably long,
     // and every remaining step re-pays its output tokens in decode time.

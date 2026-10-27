@@ -597,6 +597,52 @@ test('without the late policy the scheduler never emits the compression reminder
   assert.equal(autoSchedule(state, 's1').directive, undefined)
 })
 
+test('disciplineAfterSteps moves the compression reminder, and 0 keeps the built-in step', () => {
+  // The reminder has the only measured effect in this plugin, so its entry step
+  // is a real knob: the same turn must fire earlier when the caller asks for it.
+  const early = createAutoState()
+  notePolicy(early, 's1', { lateDiscipline: true, disciplineAfterSteps: 2 })
+  noteTurn(early, 's1')
+  cleanStep(early, 's1', 1)
+  assert.equal(autoSchedule(early, 's1').directive, undefined, 'still quiet at step 1')
+  cleanStep(early, 's1', 1)
+  assert.equal(autoSchedule(early, 's1').directive?.kind, 'compress-output', 'fires at the requested step')
+
+  // 0 is not "step 0": it is "use the built-in default", so the shipped behaviour
+  // of every existing caller is untouched.
+  const fallback = createAutoState()
+  notePolicy(fallback, 's1', { lateDiscipline: true, disciplineAfterSteps: 0 })
+  noteTurn(fallback, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps - 1; step += 1) cleanStep(fallback, 's1', 1)
+  assert.equal(autoSchedule(fallback, 's1').directive, undefined)
+  cleanStep(fallback, 's1', 1)
+  assert.equal(autoSchedule(fallback, 's1').directive?.kind, 'compress-output')
+})
+
+test('batchVerify waits for a second unverified write and asks only once', () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false, batchVerify: true })
+  noteTurn(state, 's1')
+  // One write is a normal edit, not a batch: the reminder would be noise.
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'src/a.js', chars: 40 })
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'not after the first write')
+
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'src/b.js', chars: 40 })
+  const fired = autoSchedule(state, 's1')
+  assert.equal(fired.directive?.kind, 'batch-verify')
+  assert.match(fired.directive.text, /one check that covers all of them/)
+
+  // A verified batch resets the counter; the same turn does not ask twice.
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'src/c.js', chars: 40 })
+  for (let step = 0; step < AUTO_LIMITS.directiveCooldown + 1; step += 1) cleanStep(state, 's1', 2)
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'write', argsKey: 'src/d.js', chars: 40 })
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'batch-verify', 'a new turn may ask again')
+})
+
 test('the finish line fires once at its step and never again in the same turn', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 30, finishLineSteps: 5 })

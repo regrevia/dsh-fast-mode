@@ -151,6 +151,16 @@ export const Config = z.object({
       '整文件改写提醒 / Prefer hunks: 一次整文件 write（参数 ≥ 2000 字符）之后，提醒一次「改已有文件时只发改动的行（edit hunk），不发整个文件」。落盘内容相同，省的是工具参数的输出 token（约占输出字符 28%）。只发一次，不改完成判定，不改复验。',
     ),
 
+  disciplineAfterSteps: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(40)
+    .default(0)
+    .description(
+      '压缩指令的入场步 / Compression entry step: `outputDiscipline: late` 时，第几步才提醒「剩下的话只写下一步要用的」；0 = 用内置值（4）。这条提醒是本插件唯一被证明有效的机制（回合变少 + 每步输出变短），所以它的入场点值得单独调：太早会在任务还没展开时就把话掐掉，太晚则前几步的散文已经花掉。0 保持旧行为。',
+    ),
+
   workspaceMap: z
     .boolean()
     .default(false)

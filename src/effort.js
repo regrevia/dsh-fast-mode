@@ -254,6 +254,10 @@ export function resolveConfig(raw, overrides) {
     outputBudgetAfterSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.outputBudgetAfterSteps, 0)))
       : 0,
+    /** Step at which the late compression reminder fires; 0 = built-in default. */
+    disciplineAfterSteps: gear.directive
+      ? Math.max(0, Math.floor(number(config.disciplineAfterSteps, 0)))
+      : 0,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** One "send hunks, not whole files" reminder after a large whole-file write. */
