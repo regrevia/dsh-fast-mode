@@ -336,6 +336,25 @@ test('a requirement added in a new turn restarts the finish-line accounting', ()
   assert.equal(autoSchedule(state, 's1').directive?.kind, 'finish-line')
 })
 
+test('outputBudgetAfterSteps holds the budget back until the turn is already long', () => {
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: false, outputBudget: 5000, outputBudgetAfterSteps: 6 })
+  noteTurn(state, 's1')
+  // Expensive from the start, but the turn is still short: the reminder is a
+  // cost cap for work already under way, so it must not collapse a fresh task.
+  noteStep(state, 's1')
+  noteTool(state, 's1', { name: 'read', argsKey: 'a', chars: 1, digest: 'a' })
+  noteOutputTokens(state, 's1', 9000)
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'short turn is protected')
+
+  for (let i = 0; i < 6; i += 1) {
+    noteStep(state, 's1')
+    noteTool(state, 's1', { name: 'read', argsKey: `b-${i}`, chars: i, digest: `b-${i}` })
+  }
+  const line = autoSchedule(state, 's1')
+  assert.equal(line.directive?.kind, 'output-budget', 'once the turn is long the budget speaks')
+})
+
 test('an output token budget fires on real usage, once per turn, not on step count', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, outputBudget: 5000 })

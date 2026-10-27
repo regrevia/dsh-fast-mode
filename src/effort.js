@@ -250,6 +250,10 @@ export function resolveConfig(raw, overrides) {
     scheduler: gear.directive && config.scheduler !== false,
     /** Optional ceiling on decoded output per turn, from upstream usage; 0 = off. */
     outputBudget: gear.directive ? Math.max(0, Math.floor(number(config.outputBudget, 0))) : 0,
+    /** Steps a turn must have run before the output budget may fire; 0 = immediately. */
+    outputBudgetAfterSteps: gear.directive
+      ? Math.max(0, Math.floor(number(config.outputBudgetAfterSteps, 0)))
+      : 0,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** One "send hunks, not whole files" reminder after a large whole-file write. */

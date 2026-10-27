@@ -128,6 +128,15 @@ export const Config = z.object({
       '输出 token 预算 / Output token budget: 本轮累计输出 token（上游 usage 的 outputTokens）达到该值时，调度器提醒一次「收掉当前闭环、跑一次证明它的检查、汇报」；0 = 关闭（默认）。触发的是真实解码量而非步数：三步写出三万 token 的任务很贵，二十步只写两千 token 的任务不贵。属于成本上限，不是完成度证据——默认关闭，避免在仍在推进的任务上提前收尾。',
     ),
 
+  outputBudgetAfterSteps: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(80)
+    .default(0)
+    .description(
+      '输出预算生效步数 / Budget arm delay: 只有本轮已经跑了这么多步之后，`outputBudget` 才允许提醒一次；0 = 立即生效（沿旧行为）。逐家族实测中同一个 8000 token 预算在长任务（ledger）上省 47 % 墙钟，在短任务（codeimpl/debugfix）上因为提前收尾反而慢 12–47 %；这条延迟让预算只对「已经变长」的轮次起作用。',
+    ),
   openBatch: z
     .boolean()
     .default(false)

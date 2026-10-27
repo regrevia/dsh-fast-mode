@@ -119,7 +119,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, outputBudgetAfterSteps?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -127,6 +127,7 @@ export function notePolicy(state, agent, policy) {
   // A token budget counts decode work, which is what the wall clock is actually
   // made of; 0 is the off switch, exactly like stepBudget.
   entry.outBudget = stepCount(policy?.outputBudget, 0, 0)
+  entry.outBudgetAfterSteps = stepCount(policy?.outputBudgetAfterSteps, 0, 0)
   // 0 is a value, not "unset": it is how a caller asks for no hard stop at all.
   entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
@@ -899,7 +900,8 @@ function directiveFor(entry, stats) {
     }
   }
   const outBudget = entry.outBudget
-  if (outBudget > 0 && !entry.outBudgetSent && stats.turnOutTokens >= outBudget) {
+  const budgetArmed = entry.steps >= (entry.outBudgetAfterSteps || 0)
+  if (outBudget > 0 && budgetArmed && !entry.outBudgetSent && stats.turnOutTokens >= outBudget) {
     // Evidence that the turn is expensive, not that it is long: the counter is
     // the provider's own usage. A three-step turn that wrote 30 000 tokens is a
     // cost problem the step counter cannot see, and a twenty-step turn that

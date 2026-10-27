@@ -74,7 +74,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
     'batchVerify', 'benchmarkFile', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'mapEntries', 'metrics', 'metricsFile',
-    'openBatch', 'outputBudget', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
+    'openBatch', 'outputBudget', 'outputBudgetAfterSteps', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs', 'workspaceMap',
   ])
 

@@ -1,0 +1,11 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    outputDiscipline: late
+    outputBudget: 8000
+    outputBudgetAfterSteps: 6
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false
