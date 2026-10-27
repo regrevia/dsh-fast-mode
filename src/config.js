@@ -112,6 +112,12 @@ export const Config = z.object({
     ),
 
   shapeGate: z.boolean().default(false),
+  scheduler: z
+    .boolean()
+    .default(true)
+    .description(
+      '调度器提醒 / Scheduler directives: 关闭时只保留宽度与看门狗预算，一条提醒都不发（输出克制纪律不受影响）。这是一个对照开关，用来把「并行宽度 + 静默调度」和「提醒文案本身」的收益分开量；默认开启。',
+    ),
   outputBudget: z
     .number()
     .step(1)

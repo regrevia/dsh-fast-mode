@@ -18,10 +18,13 @@ import {
 } from '../src/notices.js'
 import { detectPeerPlugins, opsToolsLive, PEER_PLUGINS } from '../src/peers.js'
 import {
+  confirmWindowFor,
   createStallGuard,
   DEFAULT_STALL_BUDGET,
   shouldGuard,
   STALL_BUDGET,
+  STALL_CONFIRM_TOTAL_MS,
+  STALL_CONFIRM_WINDOW_MS,
   stallBudgetFor,
   stallFailure,
 } from '../src/stallguard.js'
@@ -114,11 +117,21 @@ test('a hung call is cancelled at its budget, and the failure says what to chang
   assert.match(result.content[0].text, /script_path/)
   assert.match(result.content[0].text, /Never re-issue the same command unchanged/)
 
+  // This body never settles, so the report must not claim the cancellation was
+  // clean: it names the unconfirmed exit and says how to verify it.
+  assert.match(result.error.message, /exit not confirmed/)
+  assert.match(result.content[0].text, /exit is NOT confirmed/)
+  assert.match(result.content[0].text, /may still be running or finishing/)
+  assert.match(result.content[0].text, /pgrep/)
+  assert.match(result.content[0].text, /Do not edit, move, or delete/)
+
   // The body's own signal was aborted before the failure was reported, so the
   // dispatch chain reaches quiescence instead of leaking a live process.
   assert.equal(bodySignal.aborted, true)
   assert.equal(stalled.timedOut, true)
   assert.equal(stalled.budgetMs, 20)
+  assert.equal(stalled.quiesced, false)
+  assert.equal(stalled.confirmed, false)
   assert.equal(exec.signal, caller.signal)
 })
 
@@ -149,7 +162,40 @@ test('a cancelled call does not report until its body has really stopped', async
   assert.equal(result.isError, true)
   assert.deepEqual(events, ['aborted', 'settled'])
   assert.equal(stalled.quiesced, true, 'the body had settled before the failure was returned')
+  assert.equal(stalled.confirmed, true)
+  assert.match(result.content[0].text, /confirmed gone/)
+  assert.match(result.content[0].text, /may touch the files it wrote/)
+  assert.doesNotMatch(result.content[0].text, /NOT confirmed/)
   assert.equal(exec.signal, caller.signal)
+})
+
+test('a body that settles during the confirmation window still counts as confirmed', async () => {
+  const caller = new AbortController()
+  const exec = { name: 'bash', signal: caller.signal }
+  let stalled
+  const guard = createStallGuard({
+    budgetFor: () => 20,
+    graceMs: 20,
+    onStall: (info) => { stalled = info },
+  })
+
+  // The first window (20 ms) expires, then the body settles 30 ms after the
+  // abort — inside the second window. The failure must wait for it and say so.
+  const result = await guard(exec, () => new Promise((resolve) => {
+    const signal = exec.signal
+    signal.addEventListener('abort', () => {
+      setTimeout(() => resolve({ isError: true, error: { message: 'killed' }, content: [] }), 30)
+    }, { once: true })
+  }))
+
+  assert.equal(result.isError, true)
+  assert.equal(stalled.quiesced, true)
+  assert.equal(stalled.confirmed, true)
+  assert.equal(stalled.settleMs, 20)
+  assert.equal(stalled.confirmMs, 20)
+  assert.ok(stalled.waitedMs >= 20, `the guard waited for the second window (waited ${stalled.waitedMs} ms)`)
+  assert.match(result.content[0].text, /confirmed gone/)
+  assert.doesNotMatch(result.error.message, /not confirmed/)
 })
 
 test('a body that ignores its signal is reported without waiting forever', async () => {
@@ -168,8 +214,74 @@ test('a body that ignores its signal is reported without waiting forever', async
 
   assert.equal(result.isError, true, 'the turn still gets its failure back')
   assert.equal(stalled.quiesced, false, 'the wait was bounded, and the report says so')
+  assert.equal(stalled.confirmed, false)
+  assert.ok(stalled.waitedMs >= 20, 'both windows were actually waited')
+  assert.match(result.content[0].text, /exit is NOT confirmed/)
+  assert.match(result.content[0].text, /may still be running or finishing/)
+  assert.match(result.content[0].text, /pgrep -fl/)
   assert.ok(elapsed < 1_000, `a stuck body must not hang the caller (waited ${elapsed} ms)`)
   assert.equal(exec.signal, caller.signal)
+})
+
+test('a caller abort during the confirmation window returns immediately', async () => {
+  const caller = new AbortController()
+  const exec = { name: 'bash', signal: caller.signal }
+  let stalled
+  const guard = createStallGuard({
+    budgetFor: () => 20,
+    graceMs: 5_000,
+    onStall: (info) => { stalled = info },
+  })
+
+  const began = Date.now()
+  const pending = guard(exec, () => new Promise(() => {}))
+  setTimeout(() => caller.abort(new Error('stop')), 40)
+  const result = await pending
+  const elapsed = Date.now() - began
+
+  assert.equal(result.isError, true)
+  assert.ok(elapsed < 500, `the caller's abort must not be delayed by the grace window (waited ${elapsed} ms)`)
+  assert.equal(stalled.callerAborted, true)
+  assert.equal(stalled.quiesced, false)
+  assert.match(result.content[0].text, /exit is NOT confirmed/)
+  assert.equal(exec.signal, caller.signal)
+})
+
+test('the two windows together keep the total wait at or below the ceiling', () => {
+  // The default settle window is max(250, min(5000, budgetMs)); on any real
+  // budget it is 5 s, so the confirmation window is the full 10 s.
+  const settleFor = (budgetMs) => Math.max(250, Math.min(5_000, budgetMs))
+  assert.equal(STALL_CONFIRM_TOTAL_MS, 15_000)
+  assert.equal(STALL_CONFIRM_WINDOW_MS, 10_000)
+  for (const budgetMs of [20_000, 90_000, 120_000, 300_000, 1_000_000]) {
+    const settleMs = settleFor(budgetMs)
+    const confirmMs = confirmWindowFor(settleMs)
+    assert.equal(confirmMs, 10_000)
+    assert.ok(settleMs + confirmMs <= STALL_CONFIRM_TOTAL_MS, `budget ${budgetMs} stays bounded`)
+  }
+  // A long injected settle window eats into the confirmation window rather than
+  // pushing the total past the ceiling.
+  assert.equal(confirmWindowFor(12_000), 3_000)
+  assert.equal(confirmWindowFor(20_000), 0)
+  assert.equal(confirmWindowFor(Number.NaN), STALL_CONFIRM_WINDOW_MS)
+})
+
+test('the failure text distinguishes a confirmed exit from an unconfirmed one', () => {
+  const confirmed = stallFailure({ name: 'bash', budgetMs: 90_000, confirmed: true })
+  assert.match(confirmed.content[0].text, /confirmed gone/)
+  assert.match(confirmed.content[0].text, /Before retrying, change something/)
+  assert.doesNotMatch(confirmed.content[0].text, /NOT confirmed/)
+  assert.doesNotMatch(confirmed.error.message, /not confirmed/)
+
+  // Unknown means unconfirmed: the builder must never claim a clean exit that
+  // nobody observed.
+  const unknown = stallFailure({ name: 'bash', budgetMs: 90_000 })
+  assert.match(unknown.content[0].text, /exit is NOT confirmed/)
+  assert.match(unknown.content[0].text, /may still be running or finishing/)
+  assert.match(unknown.content[0].text, /Do not edit, move, or delete/)
+  assert.match(unknown.content[0].text, /pgrep/)
+  assert.match(unknown.content[0].text, /ps -o pid,stat,command/)
+  assert.match(unknown.error.message, /exit not confirmed/)
 })
 
 test('a cancellation from the caller is forwarded, not invented', async () => {

@@ -234,6 +234,22 @@ export function resolveConfig(raw, overrides) {
     stepBudget: gear.directive ? Math.max(0, Math.floor(number(config.stepBudget, 0))) : 0,
     /** One "finish the batch, then run one covering check" reminder per edit batch. */
     batchVerify: gear.directive && config.batchVerify === true,
+    /**
+     * Stop asking for parallel work once this turn is clearly write-heavy. The
+     * gate reads the turn's own calls, not the task family, so it needs no
+     * classifier; opt-in because it only ever removes a saving.
+     */
+    shapeGate: gear.directive && config.shapeGate === true,
+    /**
+     * The directive half of the scheduler, switchable on its own. Width and the
+     * watchdog budget are untouched by it, so `scheduler: false` measures
+     * "parallel fan-out and tighter timeouts, but no reminder copy"; without this
+     * knob output-discipline and scheduling cannot be separated, because the
+     * discipline channel is itself gated on `gear.directive`.
+     */
+    scheduler: gear.directive && config.scheduler !== false,
+    /** Optional ceiling on decoded output per turn, from upstream usage; 0 = off. */
+    outputBudget: gear.directive ? Math.max(0, Math.floor(number(config.outputBudget, 0))) : 0,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** One "send hunks, not whole files" reminder after a large whole-file write. */

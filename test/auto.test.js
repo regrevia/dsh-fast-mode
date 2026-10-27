@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -8,6 +11,7 @@ import {
   autoSchedule,
   createAutoState,
   describeSchedule,
+  noteEntry,
   noteOutputTokens,
   notePolicy,
   noteStep,
@@ -26,6 +30,23 @@ function cleanStep(state, agent, n = 2) {
 /** One repeated call: same signature, same content, so no progress. */
 function repeatCall(state, agent, chars = 100) {
   noteTool(state, agent, { name: 'shell', argsKey: 'tail log', chars, digest: `tail:${chars}` })
+}
+
+/** Step boundaries only, enough for the directive cooldown to elapse. */
+function cooldownSteps(state, agent) {
+  for (let i = 0; i < AUTO_LIMITS.directiveCooldown + 1; i += 1) noteStep(state, agent)
+}
+
+/**
+ * Drive one check up to a raised reuse hint: first pass, a quiet step, then a
+ * verbatim second pass. The caller adds the boundary that observes it.
+ */
+function toReuseHint(state, agent, check) {
+  noteStep(state, agent)
+  noteTool(state, agent, check)
+  noteStep(state, agent)
+  noteStep(state, agent)
+  noteTool(state, agent, check)
 }
 
 /**
@@ -402,6 +423,29 @@ test('the shape gate goes silent on a write-dominated turn, and only for that tu
   assert.equal(autoSchedule(state, 's3').directive?.kind, 'finish-line', 'shapeGate is opt-in')
 })
 
+test('scheduler:false keeps the width and drops every reminder', () => {
+  const state = createAutoState()
+  notePolicy(state, 'quiet', { lateDiscipline: true, finishLineSteps: 1, scheduler: false })
+  noteEntry(state, 'quiet', 3)
+  noteTurn(state, 'quiet')
+  for (let i = 0; i < 4; i += 1) cleanStep(state, 'quiet')
+  noteStep(state, 'quiet')
+  const quiet = autoSchedule(state, 'quiet')
+  assert.equal(quiet.directive, undefined, 'the directive channel is off, so nothing is asked')
+  assert.ok(quiet.parallel > 1, 'the fan-out width is not part of that channel')
+  assert.ok(Number.isFinite(quiet.stallBudgetMs), 'and neither is the watchdog budget')
+
+  // The same evidence without the switch does emit, so the silence above is the
+  // switch and not an empty schedule.
+  const loud = createAutoState()
+  notePolicy(loud, 'loud', { lateDiscipline: true, finishLineSteps: 1 })
+  noteEntry(loud, 'loud', 3)
+  noteTurn(loud, 'loud')
+  for (let i = 0; i < 4; i += 1) cleanStep(loud, 'loud')
+  noteStep(loud, 'loud')
+  assert.ok(autoSchedule(loud, 'loud').directive, 'the control arm asks for something')
+})
+
 test('a hard stop exists only when the user asks for a step budget', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, stepBudget: 8, finishLineSteps: 0 })
@@ -627,7 +671,7 @@ test('a verbatim rerun of a passing check is offered for reuse, once per artifac
   const state = createAutoState()
   noteTurn(state, 's1')
   notePolicy(state, 's1', { lateDiscipline: false })
-  const check = { name: 'shell', argsKey: 'python3 -m unittest', chars: 42, digest: 'ok' }
+  const check = { name: 'bash', argsKey: '{"command":"python3 -m unittest"}', chars: 42, digest: 'ok' }
 
   noteStep(state, 's1')
   noteTool(state, 's1', check)
@@ -638,7 +682,9 @@ test('a verbatim rerun of a passing check is offered for reuse, once per artifac
   noteStep(state, 's1')
   const repeat = autoSchedule(state, 's1')
   assert.equal(repeat.directive?.kind, 'reuse-check')
-  assert.match(repeat.directive.text, /already passed on the current files/)
+  assert.match(repeat.directive.text, /already passed verbatim this turn/)
+  assert.match(repeat.directive.text, /no write or unrecognised shell command has run since/)
+  assert.match(repeat.directive.text, /only after the files it covers change/)
 
   for (let i = 0; i < AUTO_LIMITS.directiveCooldown; i += 1) noteStep(state, 's1')
   assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check', 'once per artifact version')
@@ -649,7 +695,7 @@ test('a verbatim rerun of a passing check is offered for reuse, once per artifac
   const runner = createAutoState()
   noteTurn(runner, 's1')
   notePolicy(runner, 's1', { lateDiscipline: false })
-  const npm = { name: 'bash', argsKey: 'npm test', chars: 42, digest: 'ok' }
+  const npm = { name: 'bash', argsKey: '{"command":"npm test"}', chars: 42, digest: 'ok' }
   noteStep(runner, 's1')
   noteTool(runner, 's1', npm)
   noteStep(runner, 's1')
@@ -674,4 +720,153 @@ test('a verbatim rerun of a passing check is offered for reuse, once per artifac
   for (let i = 0; i < AUTO_LIMITS.directiveCooldown + 1; i += 1) noteStep(state, 's1')
   assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
     'a check after a write is not a reusable result')
+})
+
+test('a repeated read or grep is never registered as a reusable check', () => {
+  const read = { name: 'read', argsKey: '{"file_path":"src/auto.js"}', chars: 40, digest: 'same' }
+  const reader = createAutoState()
+  noteTurn(reader, 's1')
+  notePolicy(reader, 's1', { lateDiscipline: false })
+  noteStep(reader, 's1')
+  noteTool(reader, 's1', read)
+  noteStep(reader, 's1')
+  noteStep(reader, 's1')
+  noteTool(reader, 's1', read)
+  noteStep(reader, 's1')
+  assert.notEqual(autoSchedule(reader, 's1').directive?.kind, 'reuse-check',
+    'a read carries no proof about an artifact')
+
+  const grep = { name: 'bash', argsKey: '{"command":"grep -n calc src/auto.js"}', chars: 80, digest: 'hits' }
+  const shell = createAutoState()
+  noteTurn(shell, 's1')
+  notePolicy(shell, 's1', { lateDiscipline: false })
+  noteStep(shell, 's1')
+  noteTool(shell, 's1', grep)
+  noteStep(shell, 's1')
+  noteStep(shell, 's1')
+  noteTool(shell, 's1', grep)
+  noteStep(shell, 's1')
+  assert.notEqual(autoSchedule(shell, 's1').directive?.kind, 'reuse-check',
+    'a read-only shell command is not a check')
+})
+
+test('an unrecognised shell command withdraws a stored pass, and a fresh pass restores reuse', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  notePolicy(state, 's1', { lateDiscipline: false })
+  const check = { name: 'bash', argsKey: '{"command":"npm test"}', chars: 42, digest: 'ok' }
+  toReuseHint(state, 's1', check)
+  // `python3 gen.py` could rewrite anything: the scheduler cannot vouch for it.
+  noteTool(state, 's1', { name: 'bash', argsKey: '{"command":"python3 gen.py"}', chars: 5, digest: 'gen' })
+  noteStep(state, 's1')
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'an unclassified shell command invalidates the pass')
+
+  // Re-running once is not enough to reuse: the new result has to repeat.
+  noteStep(state, 's1')
+  noteTool(state, 's1', check)
+  noteStep(state, 's1')
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'the first pass after an invalidation is fresh evidence, not a cached one')
+  noteTool(state, 's1', check)
+  noteStep(state, 's1')
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'two passes on the same artifact version are reusable again')
+})
+
+test('rewriting an artifact with a script suppresses the reminder for the old pass', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  notePolicy(state, 's1', { lateDiscipline: false })
+  const check = { name: 'bash', argsKey: '{"command":"python3 -m unittest"}', chars: 42, digest: 'ok' }
+  toReuseHint(state, 's1', check)
+  // A script that rewrites the tested file is a write the write-tool detector
+  // never saw; it must still withdraw the pass.
+  noteTool(state, 's1', {
+    name: 'bash',
+    argsKey: '{"command":"python3 rewrite_calc.py"}',
+    chars: 8,
+    digest: 'rewritten',
+  })
+  noteStep(state, 's1')
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'a rewrite outside the write tools invalidates the pass')
+})
+
+test('a read-only command between passes leaves the stored pass reusable', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  notePolicy(state, 's1', { lateDiscipline: false })
+  const check = { name: 'bash', argsKey: '{"command":"node --test test/auto.test.js"}', chars: 42, digest: 'green' }
+  toReuseHint(state, 's1', check)
+  noteTool(state, 's1', { name: 'bash', argsKey: '{"command":"cat src/auto.js"}', chars: 400, digest: 'content' })
+  noteTool(state, 's1', { name: 'bash', argsKey: '{"command":"git diff --stat"}', chars: 90, digest: 'diff' })
+  noteStep(state, 's1')
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'reading the files does not invalidate a pass')
+})
+
+test('a file that changed on disk after the pass withdraws the reminder', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-auto-'))
+  const file = join(dir, 'calc.py')
+  try {
+    const state = createAutoState()
+    noteTurn(state, 's1')
+    notePolicy(state, 's1', { lateDiscipline: false })
+    writeFileSync(file, 'print(1)\n')
+    noteTool(state, 's1', {
+      name: 'write',
+      argsKey: JSON.stringify({ path: file, content: 'print(1)\n' }),
+      chars: 9,
+    })
+    const check = { name: 'bash', argsKey: '{"command":"python3 -m unittest"}', chars: 42, digest: 'ok' }
+    noteStep(state, 's1')
+    noteTool(state, 's1', check)
+    noteStep(state, 's1')
+    noteStep(state, 's1')
+    noteTool(state, 's1', check)
+    // The same tool calls, but the file changed behind them.
+    writeFileSync(file, 'print(1)\nprint(2)\n')
+    noteStep(state, 's1')
+    assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'a file the pass covered changed on disk')
+
+    // After the pass runs again, its fingerprints are re-baselined.
+    noteStep(state, 's1')
+    noteTool(state, 's1', check)
+    noteTool(state, 's1', check)
+    cooldownSteps(state, 's1')
+    assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a failing rerun withdraws the pass it contradicts', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  notePolicy(state, 's1', { lateDiscipline: false })
+  const check = { name: 'bash', argsKey: '{"command":"npm test"}', chars: 42, digest: 'ok' }
+  toReuseHint(state, 's1', check)
+  noteTool(state, 's1', { ...check, isError: true, digest: 'fail' })
+  noteStep(state, 's1')
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'a check that now fails cannot be reused from an earlier pass')
+})
+
+test('a read-only command that can delete is not read-only', () => {
+  const state = createAutoState()
+  noteTurn(state, 's1')
+  notePolicy(state, 's1', { lateDiscipline: false })
+  const check = { name: 'bash', argsKey: '{"command":"npm test"}', chars: 42, digest: 'ok' }
+  toReuseHint(state, 's1', check)
+  noteTool(state, 's1', {
+    name: 'bash',
+    argsKey: '{"command":"find . -name x -delete"}',
+    chars: 4,
+    digest: 'gone',
+  })
+  noteStep(state, 's1')
+  assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+    'a command that deletes files cannot leave a pass valid')
 })

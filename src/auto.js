@@ -34,6 +34,8 @@
  *
  * @module dsh-fast-mode/auto
  */
+
+import { statSync } from 'node:fs'
 /** The gear id the adaptive scheduler runs under. */
 export const AUTO = 'auto'
 
@@ -117,7 +119,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -132,6 +134,9 @@ export function notePolicy(state, agent, policy) {
   // Opt-in shape gate: when a turn's calls are mostly writes, the scheduler has
   // nothing to batch and every reminder is a round trip the task cannot use.
   entry.shapeGate = policy?.shapeGate === true
+  // Only `false` silences the directive channel; an absent field keeps the
+  // default, so every existing caller keeps its behaviour.
+  entry.scheduler = policy?.scheduler !== false
   // Opt-in: group the verification of one edit batch instead of one run per file.
   entry.batchVerify = policy?.batchVerify === true
   // Opt-in: after one large whole-file write, ask for hunks on existing files.
@@ -195,6 +200,16 @@ function entryOf(state, agent) {
     epoch: 0,
     /** @type {Map<string, {epoch: number, digest: string}>} */
     checks: new Map(),
+    /**
+     * Stat fingerprints of files this session wrote, captured when the write was
+     * observed and refreshed whenever a check passes. A stored pass is only
+     * offered for reuse while these still match on disk, which is the one piece
+     * of evidence the epoch counter cannot see: a write from outside the tool
+     * call stream.
+     *
+     * @type {Map<string, {mtimeMs: number, size: number}>}
+     */
+    writes: new Map(),
     /** Signature of a check that just repeated with a still-valid stored pass. */
     reuseHint: '',
     /** Epoch in which the reuse reminder last fired, so it fires once per epoch. */
@@ -221,6 +236,8 @@ function entryOf(state, agent) {
     openingSent: false,
     /** Opt-in: stay silent on a turn whose calls turned out to be writes. */
     shapeGate: false,
+    /** The directive channel of the scheduler; off = width and budget only. */
+    scheduler: true,
     /** Opt-in: ask for one covering check per edit batch, not one per file. */
     batchVerify: false,
     /** Opt-in: after a large whole-file write, ask for hunks instead. */
@@ -367,20 +384,21 @@ export function noteTool(state, agent, observation) {
     if (entry.waits.length > AUTO_LIMITS.waitWindow) entry.waits.shift()
   }
 
-  // A mutation invalidates every stored check at once; the epoch is the only
-  // bookkeeping the reuse reminder needs. A verbatim *repeated* check is the
-  // exception: `npm test` is a shell call that looks like a writer, and without
-  // this branch it would bump its own epoch on every run, so the one command
-  // the reuse reminder exists for could never trigger it.
-  const priorCheck = entry.checks.get(signature)
-  const repeatedCheck = priorCheck !== undefined && priorCheck.epoch === entry.epoch
-  if (isMutation(name, argsKey) && !(SHELL_CALLS.has(name) && repeatedCheck)) {
+  // A write, or a shell command the classifier cannot vouch for, invalidates
+  // every stored check at once; the epoch is the only bookkeeping the reuse
+  // reminder needs. A verification run is *not* a mutation even though its
+  // command often names a build tool (`npm test`, `make test`): bumping the
+  // epoch on the check itself is what used to make the one command this
+  // reminder targets unable to produce it.
+  const shellKind = SHELL_CALLS.has(name) ? classifyShell(argsKey) : undefined
+  if (MUTATING_CALLS.has(name) || shellKind === 'unknown') {
     entry.epoch += 1
     entry.checks.clear()
     entry.reuseHint = ''
     entry.writesSinceCheck += 1
     entry.batchVerifySent = false
   }
+  if (MUTATING_CALLS.has(name)) recordWritePaths(entry, argsKey)
 
   // A whole-file argument is the compressible half of output: the file lands on
   // disk either way, so the only thing a hunk form changes is how many tokens
@@ -399,15 +417,19 @@ export function noteTool(state, agent, observation) {
     entry.errors += 1
     if (previous) previous.errored = true
     else entry.seen.set(signature, { digest, chars, errored: true })
+    // A check that now fails is evidence against the stored pass: the artifact
+    // it covered is not proven current any more, even if nothing wrote since.
+    if (shellKind === 'verify') withdrawCheck(entry, signature)
   } else {
     if (!previous) progress = true
     else if (previous.errored) progress = true
     else if (previous.digest !== digest) progress = true
     entry.seen.set(signature, { digest, chars, errored: false })
     entry.errors = 0
-    noteCheck(entry, name, argsKey, signature, digest)
-    // A successful shell call is the only evidence available that a check ran.
-    if (SHELL_CALLS.has(name)) {
+    noteCheck(entry, argsKey, signature, digest, shellKind)
+    // Only a verification run is evidence that the current files were checked;
+    // a read-only shell command says nothing about the edits still unverified.
+    if (shellKind === 'verify') {
       entry.writesSinceCheck = 0
       entry.batchVerifySent = false
     }
@@ -423,42 +445,249 @@ export function noteTool(state, agent, observation) {
   }
 }
 
-/** Calls whose whole purpose is to wait, so a repeat carries no reuse meaning. */
-const WAITING_CALLS = Object.freeze(new Set([
-  'ask_user_question', 'wait_agent', 'job_output', 'job_list', 'task_board_run',
-  'workflow', 'subagent', 'subagent_fork',
-]))
+/**
+ * Tokens that write. The argument string is all the scheduler has, so a false
+ * positive only costs one invalidation, while a false negative would let a stale
+ * pass look valid. This list is therefore a *disqualifier*, never a classifier:
+ * the command shapes that may be reused are the strict allowlists below.
+ */
+const MUTATOR = /(?:>>?|\btee\b|\bcp\b|\bmv\b|\brm\b|\bmkdir\b|\btouch\b|\bchmod\b|\bln\b|\bpatch\b|\bdd\b|\bpip3?\b|\bsed\s+-i\b|\s-delete\b|\s-exec\b|\bgit\s+(?:clone|init|add|commit|checkout|switch|apply|reset|stash|merge|rebase|rm)\b)/
+
+/** First tokens of commands that only read. Anything else is not read-only. */
+const READONLY_COMMAND = /^(?:cat|ls|grep|rg|head|tail|wc|find|pwd|echo|stat|file|diff|du|df|which|sort|uniq|cut|tr|jq|git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)|node\s+--version|npm\s+(?:ls|list|view|--version)|python3?\s+--version|go\s+(?:version|list)|cargo\s+(?:--version|metadata))\b/
+
+/** Command shapes that are a verification run and nothing else. */
+const VERIFY_COMMAND = /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|verify|lint|typecheck|ci)\b|(?:npx\s+)?(?:jest|vitest|mocha|tsc|eslint|ruff|mypy|pytest|py\.test)\b|python3?\s+-m\s+(?:unittest|pytest|mypy|ruff|compileall)\b|python3?\s+pytest\b|node\s+--test\b|(?:go|cargo)\s+test\b|make\s+(?:test|check|verify|lint)\b|tox\b|ctest\b)/
+
+/** Argument fields a shell call keeps its command in. */
+const COMMAND_FIELDS = ['command', 'cmd', 'script', 'shell']
+
+/** Argument fields a write call keeps its target paths in. */
+const PATH_FIELDS = ['path', 'file_path', 'filePath', 'target', 'file', 'filename']
+
+/** How many written files stay tracked for the fingerprint recheck. */
+const WRITE_WINDOW = 64
+
+const MUTATING_CALLS = Object.freeze(new Set(['write', 'write_file', 'create_file', 'edit', 'multi_edit', 'apply_patch', 'patch']))
+const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_code', 'exec']))
+
+/** @param {string} key @returns {unknown} */
+function parseArgs(key) {
+  try {
+    return JSON.parse(key)
+  } catch {
+    return undefined
+  }
+}
+
+/** @param {unknown} value @returns {string} */
+function commandText(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.filter(part => typeof part === 'string').join(' ')
+  return ''
+}
 
 /**
- * Shell commands that write. The argument string is all the scheduler has, so
- * this is a conservative read: anything that looks like a redirection or one of
- * the common mutators bumps the epoch, and a false positive only costs one
- * unnecessary reminder — a false negative would let a stale check look valid.
+ * The command text of a shell call.
+ *
+ * `argsKey` is normally the canonical JSON of the call arguments. A key that was
+ * truncated before the command field, or one that is not JSON at all, degrades
+ * to a scan of the escaped text and finally to `''`, which the classifier reads
+ * as unknown — the conservative direction.
+ *
+ * @param {string} argsKey
+ * @returns {string}
  */
-const MUTATOR = /(?:>>?|\btee\b|\bcp\b|\bmv\b|\brm\b|\bmkdir\b|\btouch\b|\bchmod\b|\bln\b|\bpatch\b|\bdd\b|\bpip3?\b|\bnpm\b|\bpnpm\b|\byarn\b|\bmake\b|\bsed\s+-i\b|\bgit\s+(?:clone|init|add|commit|checkout|switch|apply|reset|stash|merge|rebase|rm)\b)/
+function commandOf(argsKey) {
+  const key = typeof argsKey === 'string' ? argsKey : ''
+  if (key.length === 0 || key === '<unserialisable>') return ''
+  const parsed = parseArgs(key)
+  if (typeof parsed === 'string') return parsed
+  if (parsed && typeof parsed === 'object') {
+    for (const field of COMMAND_FIELDS) {
+      const value = commandText(parsed[field])
+      if (value.length > 0) return value
+    }
+    return ''
+  }
+  const match = /"(?:command|cmd|script)"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(key)
+  if (match) {
+    const value = parseArgs(match[1])
+    if (typeof value === 'string' && value.length > 0) return value
+  }
+  // Not JSON: callers without a canonical key still pass the command itself.
+  return key.startsWith('{') || key.startsWith('[') ? '' : key
+}
 
-/** @param {string} name @param {string} argsKey */
-function isMutation(name, argsKey) {
-  if (MUTATING_CALLS.has(name)) return true
-  if (SHELL_CALLS.has(name)) return MUTATOR.test(argsKey)
+/**
+ * Split a command line into the segments that run on their own, so `cat a && rm
+ * b` cannot pass as a read.
+ *
+ * @param {string} command
+ * @returns {string[]}
+ */
+function commandSegments(command) {
+  return command
+    .split(/\r?\n|&&|\|\||;|\|/)
+    .map(segment => segment.trim())
+    .filter(segment => segment.length > 0)
+}
+
+/** @param {string} segment @returns {'readonly'|'verify'|'unknown'} */
+function segmentKind(segment) {
+  // A redirection can create or truncate a file, so the segment is not a pure
+  // read or a pure check.
+  if (/[<>]/.test(segment)) return 'unknown'
+  if (VERIFY_COMMAND.test(segment)) return 'verify'
+  if (MUTATOR.test(segment)) return 'unknown'
+  if (READONLY_COMMAND.test(segment)) return 'readonly'
+  return 'unknown'
+}
+
+/**
+ * Classify a successful shell call by what its command can do to the files:
+ * `readonly` (no effect), `verify` (a check, which may build but does not edit
+ * the artifacts it covers), or `unknown`, which is treated exactly like a write.
+ *
+ * @param {string} argsKey
+ * @returns {'readonly'|'verify'|'unknown'}
+ */
+function classifyShell(argsKey) {
+  const command = commandOf(argsKey)
+  if (command.length === 0) return 'unknown'
+  const kinds = commandSegments(command).map(segmentKind)
+  if (kinds.length === 0) return 'unknown'
+  if (kinds.some(kind => kind === 'unknown')) return 'unknown'
+  return kinds.includes('verify') ? 'verify' : 'readonly'
+}
+
+/**
+ * Files a write call names.
+ *
+ * Best effort: the canonical key bounds its length, so a large whole-file write
+ * can lose its path before the cut. Such a write still bumps the epoch; the
+ * fingerprints only add the ability to notice a later change that arrived
+ * outside the tool call stream.
+ *
+ * @param {string} argsKey
+ * @returns {string[]}
+ */
+function writePathsOf(argsKey) {
+  const key = typeof argsKey === 'string' ? argsKey : ''
+  if (key.length === 0) return []
+  const paths = []
+  const parsed = parseArgs(key)
+  if (typeof parsed === 'string') paths.push(parsed)
+  else if (parsed && typeof parsed === 'object') {
+    for (const field of PATH_FIELDS) {
+      const value = parsed[field]
+      if (typeof value === 'string') paths.push(value)
+      else if (Array.isArray(value)) paths.push(...value.filter(part => typeof part === 'string'))
+    }
+  } else {
+    const field = /"(?:path|file_path|filePath|target|file|filename)"\s*:\s*("(?:[^"\\]|\\.)*")/g
+    let match = field.exec(key)
+    while (match) {
+      const value = parseArgs(match[1])
+      if (typeof value === 'string') paths.push(value)
+      match = field.exec(key)
+    }
+    if (paths.length === 0 && !key.startsWith('{') && !key.startsWith('[')) paths.push(key)
+  }
+  return paths.filter(path => path.length > 0 && path.length <= 4096)
+}
+
+/**
+ * A stat fingerprint, or `undefined` when the path is not visible from this
+ * process. Only visible targets are tracked; the epoch remains the evidence for
+ * everything else.
+ *
+ * @param {string} path
+ * @returns {{mtimeMs: number, size: number} | undefined}
+ */
+function fingerprintOf(path) {
+  try {
+    const stat = statSync(path)
+    if (!stat.isFile()) return undefined
+    return { mtimeMs: stat.mtimeMs, size: stat.size }
+  } catch {
+    return undefined
+  }
+}
+
+/** @param {Map<string, {mtimeMs: number, size: number}>} writes @param {string} path */
+function trackPath(writes, path) {
+  const print = fingerprintOf(path)
+  if (!print) return
+  writes.delete(path)
+  writes.set(path, print)
+  while (writes.size > WRITE_WINDOW) {
+    const oldest = writes.keys().next().value
+    if (oldest === undefined) break
+    writes.delete(oldest)
+  }
+}
+
+/** @param {object} entry @param {string} argsKey */
+function recordWritePaths(entry, argsKey) {
+  for (const path of writePathsOf(argsKey)) trackPath(entry.writes, path)
+}
+
+/**
+ * Re-baseline the tracked files at the moment a check passes, so the finger-
+ * prints describe the artifact that pass proved rather than the write that
+ * preceded it.
+ *
+ * @param {object} entry
+ */
+function refreshWritePaths(entry) {
+  for (const path of [...entry.writes.keys()]) trackPath(entry.writes, path)
+}
+
+/**
+ * True when a file this session wrote no longer matches the fingerprint of the
+ * pass being offered for reuse. A stat that fails counts as changed: a pass is
+ * never offered on evidence that could not be re-read.
+ *
+ * @param {Map<string, {mtimeMs: number, size: number}>} writes
+ * @returns {boolean}
+ */
+function artifactsChanged(writes) {
+  for (const [path, print] of writes) {
+    const now = fingerprintOf(path)
+    if (!now || now.mtimeMs !== print.mtimeMs || now.size !== print.size) return true
+  }
   return false
 }
 
-const MUTATING_CALLS = Object.freeze(new Set(['write', 'edit', 'apply_patch', 'patch']))
-const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_code', 'exec']))
-
 /**
- * Store a successful call as a reusable result, and raise the hint when it is a
- * verbatim repeat of one that is still valid for the current epoch.
+ * Drop a stored pass that a failing run just contradicted.
  *
  * @param {object} entry
- * @param {string} name
+ * @param {string} signature
+ */
+function withdrawCheck(entry, signature) {
+  entry.checks.delete(signature)
+  if (entry.reuseHint === signature) entry.reuseHint = ''
+}
+
+/**
+ * Store a passing verification as a reusable result, and raise the hint when it
+ * is a verbatim repeat of one that is still valid for the current epoch.
+ *
+ * Only a recognised verification run is stored. A repeated read or grep is not
+ * a check: offering to "reuse" its output would be a claim about an artifact
+ * that nothing verified.
+ *
+ * @param {object} entry
  * @param {string} argsKey
  * @param {string} signature
  * @param {string} digest
+ * @param {'readonly'|'verify'|'unknown'|undefined} shellKind
  */
-function noteCheck(entry, name, argsKey, signature, digest) {
-  if (argsKey.length === 0 || WAITING_CALLS.has(name)) return
+function noteCheck(entry, argsKey, signature, digest, shellKind) {
+  if (shellKind !== 'verify' || argsKey.length === 0) return
+  refreshWritePaths(entry)
   const stored = entry.checks.get(signature)
   if (stored && stored.epoch === entry.epoch && stored.digest === digest && entry.reuseHint === '') {
     entry.reuseHint = signature
@@ -586,6 +815,11 @@ function widthCap(entry) {
  * @returns {{kind: string, text: string, summary: string}|undefined}
  */
 function directiveFor(entry, stats) {
+  // The scheduler's directive half is a separate channel from its width and its
+  // watchdog budget: switching it off keeps every time saving the scheduler
+  // makes and removes only the copy, which is exactly the arm a clean ablation
+  // needs to tell "fewer round trips" apart from "fewer words per step".
+  if (!entry.scheduler) return undefined
   // Shape gate: a turn that has already spent most of its calls on writes is
   // not a turn the scheduler can accelerate — there is nothing to batch, and
   // every reminder costs a round trip the work cannot reuse. Silence is the
@@ -717,19 +951,29 @@ function directiveFor(entry, stats) {
   }
   if (entry.reuseHint !== '' && entry.reuseSentEpoch !== entry.epoch) {
     // The narrowest, most defensible kind of saving: the same check, verbatim,
-    // already passed on this exact artifact version. Anything that wrote since
-    // then bumped the epoch and this branch is unreachable, which is what makes
-    // the reminder safe for a task that edits code after a green test.
-    entry.reuseHint = ''
-    entry.reuseSentEpoch = entry.epoch
-    entry.lastDirectiveStep = entry.steps
-    entry.lastDirectiveKind = 'reuse-check'
-    return {
-      kind: 'reuse-check',
-      text: 'Auto schedule: that check already passed on the current files and nothing relevant changed '
-        + 'since. Use the result you already have and spend this step on the remaining work; run it again only '
-        + 'after the files it covers change.',
-      summary: 'auto: reuse a passing check',
+    // already passed and neither a write nor an unrecognised shell command ran
+    // since. Both of those bump the epoch, so reaching this branch already means
+    // the tool call stream saw nothing that could have changed the result. The
+    // files it wrote are re-read here because that stream cannot see a change
+    // that arrived some other way; a stale fingerprint withdraws the pass.
+    if (artifactsChanged(entry.writes)) {
+      entry.epoch += 1
+      entry.checks.clear()
+      entry.reuseHint = ''
+      entry.writesSinceCheck += 1
+      entry.batchVerifySent = false
+    } else {
+      entry.reuseHint = ''
+      entry.reuseSentEpoch = entry.epoch
+      entry.lastDirectiveStep = entry.steps
+      entry.lastDirectiveKind = 'reuse-check'
+      return {
+        kind: 'reuse-check',
+        text: 'Auto schedule: that exact check already passed verbatim this turn, and no write or '
+          + 'unrecognised shell command has run since. Use the result you already have and spend this step on '
+          + 'the remaining work; run the check again only after the files it covers change.',
+        summary: 'auto: reuse a passing check',
+      }
     }
   }
   if (stats.noProgress >= AUTO_LIMITS.noProgressWarn) {

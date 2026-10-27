@@ -97,7 +97,7 @@
 
 ### 四、卡顿看门狗：单次调用的天花板
 
-它挂在 `tools/execute` 这个 waterfall 上，遵守文档允许的唯一改法：只替换 `exec.signal`，让调用体与一个计时器赛跑，超时就 abort 并把失败结果交还给模型；取消后还会等被取消的调用体真的落地（预算够大时最多 5 秒，预算小时按预算缩放，下限 250 ms），并把 `quiesced` 记进观测——它说明这次取消是干净收尾，还是工具在宽限内没停住。无论结果如何，调用方原来的 signal 都会在 `finally` 里恢复。
+它挂在 `tools/execute` 这个 waterfall 上，遵守文档允许的唯一改法：只替换 `exec.signal`，让调用体与一个计时器赛跑，超时就 abort 并把失败结果交还给模型；取消后它会分两段等被取消的调用体真的落地（先等宽限，预算够大时最多 5 秒、预算小时按预算缩放且下限 250 ms，再等一段**退出确认**，两段合计上限 15 秒），并把 `quiesced` / `confirmed` / `waitedMs` 记进观测。`confirmed: false` 意味着**没看到进程真的退出**：此时失败文案不会说「已取消」，而是说命令可能仍在运行、先别动它可能写的文件、用 `pgrep -fl` / `ps -o pid,stat,command -p` 确认后再重试。无论结果如何，调用方原来的 signal 都会在 `finally` 里恢复。
 
 它只作用于 **shell / 脚本类**工具（名字匹配 `bash|shell|sh|zsh|exec|pwsh|powershell|cmd|script|monitor|terminal`）。问用户、等后台任务、等子代理这类"本来就要等"的工具被显式豁免：`ask_user_question`、`wait_agent`、`job_output`、`job_list`、`task_board_run`、`workflow`、`subagent`、`subagent_fork`、`run_code`。
 

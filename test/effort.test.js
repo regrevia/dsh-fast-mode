@@ -192,6 +192,47 @@ test('the step knobs reach the policy, and off-gear keeps them out of the way', 
   assert.equal(auto.openBatch, false, 'the opening batch line is opt-in')
   assert.equal(auto.preferPatch, false, 'the hunk reminder is opt-in')
 
+  // Every mechanism the scheduler consults must survive the config resolution:
+  // a field declared in the schema but dropped here reads as "on" in the config
+  // file while the hook only ever sees `undefined`. `shapeGate` and
+  // `outputBudget` were dropped exactly that way until 1.5.10.
+  const mechanisms = resolveConfig({
+    enabled: true,
+    gear: 'auto',
+    shapeGate: true,
+    outputBudget: 8000,
+    fanoutWidth: 4,
+    batchVerify: true,
+    lateDiscipline: true,
+    outputDiscipline: 'late',
+    stepBudget: 12,
+    finishLineSteps: 7,
+    preferPatch: true,
+  })
+  for (const key of ['shapeGate', 'outputBudget', 'lateDiscipline', 'stepBudget', 'finishLineSteps',
+    'openBatch', 'fanoutWidth', 'batchVerify', 'preferPatch']) {
+    assert.ok(Object.hasOwn(mechanisms, key), `${key} is declared in the schema, so resolveConfig must carry it`)
+  }
+  assert.equal(mechanisms.shapeGate, true, 'the shape gate must reach the policy object')
+  assert.equal(mechanisms.outputBudget, 8000, 'the output budget must reach the policy object')
+  assert.equal(mechanisms.fanoutWidth, 4, 'the width cap must reach the policy object')
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto' }).outputBudget, 0,
+    'a zero budget means the reminder never fires')
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto', outputBudget: -5 }).outputBudget, 0,
+    'a negative budget is not a budget')
+  assert.equal(resolveConfig({ enabled: true, gear: 'off', shapeGate: true }).shapeGate, false,
+    'an off gear builds no policy at all')
+
+  // The scheduler's copy channel is separable from its width: the ablation needs
+  // an arm with fan-out and watchdog budget but zero reminders.
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto' }).scheduler, true,
+    'the directive channel is on by default')
+  const silent = resolveConfig({ enabled: true, gear: 'auto', scheduler: false })
+  assert.equal(silent.scheduler, false)
+  assert.ok(silent.parallel > 1, 'silencing the copy must not silence the fan-out')
+  assert.equal(resolveConfig({ enabled: true, gear: 'off', scheduler: false }).scheduler, false,
+    'an off gear has no scheduler to silence')
+
   const tuned = resolveConfig({ enabled: true, gear: 'auto', stepBudget: 12, finishLineSteps: 7, openBatch: true })
   assert.equal(tuned.stepBudget, 12)
   assert.equal(tuned.openBatch, true, 'the opening line rides the scheduler like the other two')

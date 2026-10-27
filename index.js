@@ -95,7 +95,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.9'
+export const VERSION = '1.5.10'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -436,13 +436,14 @@ export function apply(ctx, rawConfig) {
     onStall: (info) => {
       stalls += 1
       ctx.logger?.warn?.(
-        '%s stall guard cancelled %s after %d ms (budget %d ms, settled=%s)',
-        TAG, info.name, info.elapsedMs, info.budgetMs, String(info.quiesced),
+        '%s stall guard cancelled %s after %d ms (budget %d ms, settled=%s confirmed=%s waited=%d ms)',
+        TAG, info.name, info.elapsedMs, info.budgetMs, String(info.quiesced), String(info.confirmed),
+        Number.isFinite(info.waitedMs) ? info.waitedMs : 0,
       )
       if (initial.debug) {
         appendDebug(
           initial.debugFile,
-          `stall v${VERSION}: ${info.name} cancelled at ${info.elapsedMs}ms budget=${info.budgetMs}ms settled=${info.quiesced} total=${stalls}`,
+          `stall v${VERSION}: ${info.name} cancelled at ${info.elapsedMs}ms budget=${info.budgetMs}ms settled=${info.quiesced} confirmed=${info.confirmed} waited=${info.waitedMs}ms total=${stalls}`,
         )
       }
     },
