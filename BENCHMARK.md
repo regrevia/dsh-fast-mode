@@ -1523,6 +1523,8 @@ node bin/experiment.mjs stop                          # end it; later sessions g
 | 再加 `shellpipeline`+`shellops` | 50/132 | 0.8763× |
 | 再加 `migrate`+`codebase` | 76/132 | 0.8414× |
 | **全开（当前默认）** | 132/132 | **0.8247×** |
+
+三个独立估计量一致，不是尾部样本撑出来的：逐对中位 **0.8128×**（CI95 0.7095–0.8830）、几何均值 **0.8232×**（CI95 0.7530–0.8971）、总输出 token 比 **0.8221×**；132 对里 89 对更快，符号检验 p = 0.0001（`python3 bench/pool.py --ci 2000` 一行可复算）。
 | 全开但 `debugfix`/`perfrefactor` 关 | 103/132 | 0.8235× |
 
 读法两条，都是负结果，但有用：
