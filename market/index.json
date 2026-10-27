@@ -34,8 +34,8 @@
         "zh": "快速模式"
       },
       "description": {
-        "en": "Per-conversation fast mode for multi-step tasks: batches independent tool calls and drops redundant steps. Pooled over 9 blocks and 132 valid pairs (10 task families): total wall clock about 18% faster (0.825x, per-cell median 0.813x, 95% CI 0.747-0.914). On shapes it fits: codeimpl 0.663x (13/15 pairs faster), shellpipeline 0.749x; debugfix 1.032x and perfrefactor 1.009x are where it does not pay for itself.",
-        "zh": "单会话开关的快速模式：合并可并行的工具调用、减少冗余步骤。9 块 132 对有效配对的合池结果：整任务总墙钟约快 18 %（0.825×，逐格中位 0.813×，95% 区间 0.747–0.914）；适合的形状快 15–25 %（codeimpl 0.663×、15 对里 13 对更快；shellpipeline 0.749×）；debugfix 1.032×、perfrefactor 1.009× 则收不回提醒成本。"
+        "en": "Per-conversation fast mode for multi-step tasks: batches independent tool calls and drops redundant steps. Pooled over 12 blocks and 138 valid pairs (10 task families): total wall clock about 18% faster (0.823x, per-cell median 0.799x, 95% CI 0.742-0.913, 93/138 pairs faster). On shapes it fits: codeimpl 0.704x (14/17), shellpipeline 0.699x; debugfix 1.032x and perfrefactor 1.009x are where it does not pay for itself.",
+        "zh": "单会话开关的快速模式：合并可并行的工具调用、减少冗余步骤。12 块 138 对有效配对的合池结果：整任务总墙钟约快 18 %（0.823×，逐格中位 0.799×，95% 区间 0.742–0.913，138 对里 93 对更快）；适合的 codeimpl 0.704×（14/17 对更快）、shellpipeline 0.699×；debugfix 1.032×、perfrefactor 1.009× 是它收不回成本的地方。"
       },
       "icon": "https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/icon.png",
       "author": "regrevia",
@@ -69,6 +69,26 @@
         {
           "version": "1.5.10",
           "publishTimestamp": 1793104804,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.1"
+          }
+        },
+        {
+          "version": "1.5.11",
+          "publishTimestamp": 1793161200,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.1"
+          }
+        },
+        {
+          "version": "1.5.12",
+          "publishTimestamp": 1793184000,
           "source": {
             "type": "npm"
           },
