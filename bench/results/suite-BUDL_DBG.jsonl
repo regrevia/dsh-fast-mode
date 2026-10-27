@@ -1,0 +1,3 @@
+{"task": "debugfix", "arm": "def15", "wall": 37.39, "exit": 0, "steps": 6, "stepsRaw": 16, "sids": 1, "exact": true, "llm": 35.54, "out": 2526, "leak": false, "hasEntry": true, "passed": 13, "total": 13, "green": true, "valid": true, "pair": 1}
+{"task": "debugfix", "arm": "budlate", "wall": 50.16, "exit": 0, "steps": 5, "stepsRaw": 11, "sids": 1, "exact": true, "llm": 48.41, "out": 4300, "leak": false, "hasEntry": true, "passed": 13, "total": 13, "green": true, "valid": true, "pair": 1}
+{"task": "debugfix", "arm": "budlate", "wall": 78.54, "exit": 0, "steps": 4, "stepsRaw": 27, "sids": 1, "exact": true, "llm": 76.95, "out": 5769, "leak": false, "hasEntry": true, "passed": 13, "total": 13, "green": true, "valid": true, "pair": 2}
