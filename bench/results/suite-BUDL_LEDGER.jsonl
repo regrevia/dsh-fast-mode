@@ -1,0 +1,2 @@
+{"task": "ledger", "arm": "def15", "wall": 717.05, "exit": 0, "steps": 10, "stepsRaw": 198, "sids": 1, "exact": true, "llm": 715.07, "out": 39761, "leak": false, "hasEntry": true, "passed": 22, "total": 22, "green": true, "valid": true, "pair": 1}
+{"task": "ledger", "arm": "budlate", "wall": 658.35, "exit": 0, "steps": 10, "stepsRaw": 206, "sids": 1, "exact": true, "llm": 656.39, "out": 35793, "leak": false, "hasEntry": true, "passed": 22, "total": 22, "green": true, "valid": true, "pair": 1}
