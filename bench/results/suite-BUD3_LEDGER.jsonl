@@ -1,0 +1,3 @@
+{"task": "ledger", "arm": "off", "wall": 452.62, "exit": 0, "steps": 13, "stepsRaw": 86, "sids": 1, "exact": true, "llm": 450.22, "out": 31059, "leak": false, "hasEntry": true, "passed": 22, "total": 22, "green": true, "valid": true, "pair": 1}
+{"task": "ledger", "arm": "def15", "wall": 829.85, "exit": 0, "steps": 18, "stepsRaw": 239, "sids": 1, "exact": true, "llm": 827.23, "out": 51442, "leak": false, "hasEntry": true, "passed": 22, "total": 22, "green": true, "valid": true, "pair": 1}
+{"task": "ledger", "arm": "bud8", "wall": 440.85, "exit": 0, "steps": 5, "stepsRaw": 94, "sids": 1, "exact": true, "llm": 438.11, "out": 23143, "leak": false, "hasEntry": true, "passed": 22, "total": 22, "green": true, "valid": true, "pair": 1}
