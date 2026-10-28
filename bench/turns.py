@@ -33,6 +33,11 @@ import time
 
 SESS = os.path.expanduser('~/.dsh/sessions')
 NEEDLE = 'this turn is long enough that prose'
+# The other notice the plugin can deliver, the one that restates the rules after a
+# compaction. It is *supposed* to repeat, once per compaction whose rules were
+# evicted; the audit question is only whether it ever fires with no compaction to
+# point at, which would mean a stale flag.
+REASSERT = 'the context was just compacted'
 # A delivered directive is a message part; the model quoting it back inside its
 # own prose is an echo, so assistant-authored text never counts as delivery.
 PLUGIN_ROLES = {'user/message', 'agent/inbox/spliced', 'system/message'}
@@ -70,10 +75,11 @@ def scan(path):
     started = 0
     turns = []
     cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': [],
-           'reminderSteps': []}
+           'reminderSteps': [], 'reasserts': 0}
     for line in p.stdout.decode('utf-8', 'replace').splitlines():
         if ('turn/start' not in line and 'step/start' not in line
-                and 'Auto schedule' not in line and 'compaction/start' not in line):
+                and 'Auto schedule' not in line and 'compaction/start' not in line
+                and 'context was just compacted' not in line):
             continue
         try:
             o = json.loads(line)
@@ -87,11 +93,13 @@ def scan(path):
             if cur['steps'] or cur['reminders']:
                 turns.append(cur)
             cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': [],
-           'reminderSteps': []}
+                   'reminderSteps': [], 'reasserts': 0}
         elif kind == 'step/start':
             cur['steps'] += 1
         elif kind == 'compaction/start':
             cur['compactions'].append(o.get('seq'))
+        elif kind in PLUGIN_ROLES and REASSERT in text_of(data):
+            cur['reasserts'] += 1
         elif kind in PLUGIN_ROLES and NEEDLE in text_of(data):
             cur['reminders'] += 1
             cur['reminderSeqs'].append(o.get('seq'))
@@ -121,6 +129,7 @@ def main():
     later_qualifying = later_reminded = 0
     per_session_turns = collections.Counter()
     entry_steps = collections.Counter()
+    reasserted = reassert_orphan = 0
     offenders = []
     cutoff = (time.time() - a.since_hours * 3600) * 1000 if a.since_hours else 0
     skipped_old = 0
@@ -151,6 +160,12 @@ def main():
                     later_reminded += 1 if t['reminders'] else 0
             if t['reminders']:
                 entry_steps[t['reminderSteps'][0]] += 1
+            if t['reasserts']:
+                reasserted += 1
+                # One reassert belongs to a compaction from the previous turn: the
+                # flag is set, the turn ends, the next step of the next turn speaks.
+                if t['reasserts'] > len(t['compactions']) + 1:
+                    reassert_orphan += 1
             if t['reminders'] > 1:
                 doubled += 1
                 seqs = t['reminderSeqs']
@@ -178,6 +193,8 @@ def main():
         'doubled': doubled,
         'doubled_with_compaction_between': doubled_compacted,
         'entry_steps': dict(sorted(entry_steps.items())),
+        'turns_with_compaction_reassert': reasserted,
+        'reasserts_without_compaction': reassert_orphan,
         'later_qualifying_turns': later_qualifying,
         'later_reminded': later_reminded,
         'skipped_old': skipped_old,
@@ -195,6 +212,8 @@ def main():
           f"(with a compaction between: {doubled_compacted})")
     if entry_steps:
         print(f"first reminder landed at step: {dict(sorted(entry_steps.items()))}")
+    print(f"compaction re-assert: {reasserted} turns carried one, "
+          f"{reassert_orphan} had more of them than compactions to point at")
     if a.explain_doubles and offenders:
         print('doubled turns:')
         for o in offenders[:20]:
