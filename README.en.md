@@ -27,6 +27,7 @@
 Across 10 task families and 30 complete units (hidden tests 60/60 green):
 
 - **Default (whole pool, no block picking)**: 12 clean blocks, 10 task families, 138 valid pairs, added as whole tasks — **0.823x** total time (about 18 % saved), 0.818x output tokens, 0.806x steps, 93 of 138 pairs faster (recompute with `python3 bench/pool.py`). The earlier 0.72-0.74x came from three hand-picked blocks and has been withdrawn; why is in BENCHMARK.md.
+- **Re-checked on the shipped build (1.5.19, default vs fully off)**: `migrate` 5 usable pairs at 0.688x (5/5 faster), `debugfix` 7 pairs at 0.770x (4/7 faster; three reverse cells pull the geometric mean down while the wins are much larger), 12 pairs pooled **0.735x**, per-cell median 0.708x, 9/12 faster (`bench/block_score.py` recomputes). 1.5.19 ships fewer hints, so this run confirms the release did not eat the gain; n per block is small, so the headline stays the 138-pair pool above.
 - **Moving the "write it once" reminder from step 4 to step 2**: `debugfix` 0.535x, `ledger` 0.506x, `migrate` 0.751x; 13 pairs pooled **0.625x** with output tokens **0.614x**. At step 3, `migrate` alone reaches **0.509x** with output tokens **0.528x**.
 - **Quality**: in every pair both arms produced identical hidden assertions, all green; the saving is fewer edit-recheck loops, not fewer checks.
 - **Where it does not pay**: 1-5 step repairs and data reshaping (`perfrefactor` 1.18x, `csvpipe` 1.12x), so try it once per task shape.
