@@ -48,6 +48,8 @@ The constants live in `AUTO_LIMITS` in `src/auto.js`:
 | `outputBudget` | 0 | Optional output-token budget: at that many cumulative `outputTokens` (upstream usage) in a turn, one reminder to close the current loop and run the check that proves it; 0 = off, which is the default |
 | `finishLineSteps` | 0 | Optional soft finish line; 0 = off, which is the default. `10` is the retired 1.4.4 default and is kept only as an ablation arm |
 | `disciplineAfterSteps` | 4 | Step at which the late output discipline starts |
+| `disciplineRepeatAtSteps` | 0 | Step at which the same compression reminder fires a second time; 0 = never (still at most twice per turn). Unproven, off by default |
+| `disciplineEarlyCalls` | 0 | With a positive N, the `disciplineAfterSteps` early entry applies only to a turn that already made at least N tool calls before the current step, otherwise it falls back to the built-in 4; 0 = unconditional, i.e. the 1.5.12 behaviour |
 | `waitWindow` | 32 | Recent calls that feed the p90 |
 | `directiveCooldown` | 3 | Minimum steps between two scheduler directives |
 

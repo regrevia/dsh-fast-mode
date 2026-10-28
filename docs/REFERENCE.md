@@ -48,6 +48,8 @@
 | `finishLineSteps` | 0 | 可选软收尾线；0 = 关闭，这是默认。`10` 是 1.4.4 的退役默认值，现在只作消融臂 |
 | `outputBudget` | 0 | 可选输出 token 预算：本轮累计 `outputTokens`（上游 usage）到线提醒一次「收掉当前闭环、跑一次证明它的检查、汇报」；0 = 关闭，这是默认 |
 | `disciplineAfterSteps` | 4 | 迟到输出纪律从第几步起生效 |
+| `disciplineRepeatAtSteps` | 0 | 同一句压缩提醒在第几步再发一次；0 = 不发（每回合仍然最多两次）。未证实，默认关 |
+| `disciplineEarlyCalls` | 0 | 给正数 N 时，`disciplineAfterSteps` 的提前只对「进入当前步之前本回合已发出 ≥ N 次调用」的回合生效，否则回落到内建 4；0 = 无条件（1.5.12 行为） |
 | `waitWindow` | 32 | 参与 p90 的最近调用数 |
 | `directiveCooldown` | 3 | 两条调度指令之间的最小步距 |
 
