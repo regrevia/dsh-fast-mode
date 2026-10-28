@@ -306,9 +306,30 @@ export function resolveConfig(raw, overrides) {
 }
 
 /**
+ * 32-bit FNV-1a of a string, as 8 hex characters.
+ *
+ * Used only to make a bounded argument key distinguishable again: two calls
+ * whose serialised arguments differ past the truncation point must not collapse
+ * into one identity, or the scheduler could tell the model it already ran a
+ * call whose tail it actually changed.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function digest8(text) {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+/**
  * A stable key for a call's arguments, so a repeated identical call is
  * detectable. Key order is normalised; values are bounded so a huge payload
- * cannot make this expensive.
+ * cannot make this expensive — but a truncated key also carries a digest of the
+ * whole serialised text, so two long calls that share a prefix stay distinct.
  *
  * @param {unknown} args
  * @returns {string}
@@ -326,7 +347,7 @@ export function stableKey(args) {
   }
   try {
     const text = walk(args, 0)
-    return text.length > 400 ? `${text.slice(0, 400)}…` : text
+    return text.length > 400 ? `${text.slice(0, 390)}…${digest8(text)}` : text
   } catch {
     return '<unserialisable>'
   }

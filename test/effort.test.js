@@ -146,6 +146,12 @@ test('stableKey is order-independent, bounded, and cycle-safe', () => {
   assert.equal(stableKey({ a: 1, b: 2 }), stableKey({ b: 2, a: 1 }))
   assert.notEqual(stableKey({ a: 1 }), stableKey({ a: 2 }))
   assert.ok(stableKey({ text: 'x'.repeat(5000) }).length <= 401)
+  // A truncated key still identifies the whole payload: two long calls with the
+  // same prefix but a different tail must not share an identity.
+  const tailA = stableKey({ text: `${'x'.repeat(5000)}A` })
+  const tailB = stableKey({ text: `${'x'.repeat(5000)}B` })
+  assert.notEqual(tailA, tailB, 'different tails past the cut stay distinct')
+  assert.ok(tailA.length <= 401)
   const cyclic = { name: 'a' }
   cyclic.self = cyclic
   assert.equal(typeof stableKey(cyclic), 'string')
