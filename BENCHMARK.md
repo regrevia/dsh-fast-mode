@@ -1979,7 +1979,7 @@ python3 bench/suite-run.py --tasks debugfix,ledger,codeimpl --arms off,def15,bud
 
 **两处与预注册的偏差，记在这里不掩盖：**
 
-1. **判据 5 的「下发条件」原本没被脚本执行，现已补上并判 FAIL。** 预注册写的是「`D2G_IMPL` 8/8 仍在**第 4 步**收到，`D2G_DBG`/`D2G_MIG` 在第 2 步收到」。实际逐会话扫描：`def15` 8/8/6/7 全在第 4 步，`d2g` 在 `IMPL` 是**第 3 步**、在 `DBG`/`MIG` 是第 2 步。`bench/d2gscore.py` 现在自己调 `bench/d2gsign.py` 断言每个臂的命步（这两个脚本原先只在 `~/.local/fm/`，1.5.18 起随 `bench/` 一起进仓，`python3 bench/d2gscore.py` 可复现本节全部数字）（`5 delivery <block> <arm> step N`），输出里 `D2G_IMPL d2g step 4` 一行是 **FAIL**（实际 `[3]`）。`IMPL` 按设计应在 `disciplineEarlyCalls: 2` 下退化成第 4 步，实际提前到了第 3 步 —— 这解释了它为什么没像预期那样完全退化（0.889× 而不是 ≈1.00×），也说明判据 5 的「按条件命中」这一半同样没通过。原先 gate 5 只校验 `hasSessionIds`/`green`，缺口已修（见上）；判据 5 因此是「质量过、下发步位不过」，结论仍是 HOLD。
+1. **判据 5 的「下发条件」原本没被脚本执行，现已补上并判 FAIL。** 预注册写的是「`D2G_IMPL` 8/8 仍在**第 4 步**收到，`D2G_DBG`/`D2G_MIG` 在第 2 步收到」。实际逐会话扫描：`def15` 8/8/6/7 全在第 4 步，`d2g` 在 `IMPL` 是**第 3 步**、在 `DBG`/`MIG` 是第 2 步。`bench/d2gscore.py` 现在自己调 `bench/d2gsign.py` 断言每个臂的命步（这两个脚本原先只在 `~/.local/fm/`，1.5.19 起随 `bench/` 一起进仓，`python3 bench/d2gscore.py` 可复现本节全部数字）（`5 delivery <block> <arm> step N`），输出里 `D2G_IMPL d2g step 4` 一行是 **FAIL**（实际 `[3]`）。`IMPL` 按设计应在 `disciplineEarlyCalls: 2` 下退化成第 4 步，实际提前到了第 3 步 —— 这解释了它为什么没像预期那样完全退化（0.889× 而不是 ≈1.00×），也说明判据 5 的「按条件命中」这一半同样没通过。原先 gate 5 只校验 `hasSessionIds`/`green`，缺口已修（见上）；判据 5 因此是「质量过、下发步位不过」，结论仍是 HOLD。
 2. **`delivery audit` 探针不可用。** 报告按固定句式找完成通报，命中 0/16、2/14、0/12。这个探针在本套 fixture 上恒为 0，不能当「任务没交付」的证据；质量结论只引用 `hasSessionIds`/`green`（21 对全部 1/1）与判据 5 的 0 坏格。
 
 ### 预注册前提检查：提醒之后输出会不会「重新变长」
