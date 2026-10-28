@@ -1,6 +1,6 @@
 # Changelog
 
-## 未发版（在跑 `D2G` 判据，未 bump 版本）
+## 1.5.14（`D2G` 判据仍在跑，未据此改默认）
 
 - **闪电右键面板（新）**：只有两行，都是共享设置、下一个回合生效 —— 「更少中间输出」（写 `outputDiscipline`，`late` ↔ `false`，默认开）与「步数上限」（写 `stepBudget`，循环 `0 / 15 / 30`，默认 `0` 不限）。面板只读取值、只挑一个已测过的安全上限，没有暴露 `disciplineAfterSteps`、`shapeGate`、`finishLineSteps`、`shellParallel` 这些未证实或已淘汰的旋钮。步数上限的写入不带 `sessions` 字段，避免动到按会话的开关状态；`client.js` 的 `write()` 因此加了 `{ touchSession: false }` 路径。文案按界面规则压到标签/值/后果三件，`ui-copy-lint` 与 HEAD 同为 21 error / 2 warning（全部是文件级 React props 误报），`zh-lint` 0 error。
 - **新旋钮 `disciplineEarlyCalls`（默认 `0`，行为不变）**：与 `disciplineAfterSteps` 配合，给一个正数 N 时，提前的压缩提醒只对「进入当前步之前本回合已发出 ≥ N 次工具调用」的回合生效，否则回落到内置第 4 步。计数扣掉当前步自己的调用（`turnCalls - stepCalls`），一步不能先付钱再买票。依据是 `D2_IMPL` 的失败与三家族的信号分离（见下条）；`0` 走的是 1.5.12 的逐字节相同路径。判据块 `D2G_IMPL` / `D2G_DBG` / `D2G_MIG`（21 对）正在跑，**本版不对它的效果作任何声明**。
