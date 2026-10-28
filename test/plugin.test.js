@@ -686,6 +686,41 @@ test('a compacted session is reminded on its next step, in its own conversation 
   assert.equal(again.out, again.decision, 'one reminder per compaction, not one per step')
 })
 
+test('a turn re-entered by compaction is not told to stop narrating twice', async () => {
+  // The harness re-enters a turn it compacted mid-flight: `turn/start` arrives
+  // again with the same turn number and is not written to the transcript. Before
+  // the fix that wiped the per-turn latch and delivered the compression reminder
+  // a second time four steps later, in the same turn.
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', outputDiscipline: 'late' })
+  const session = { id: 'session-1' }
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  const turnStart = turn => ctx.handlers.get('session/event')(session, { type: 'turn/start', turn })
+  const runStep = async () => {
+    ctx.handlers.get('session/event')(session, { type: 'step/start', turn: 0, step: 1 })
+    return step(ctx, { claimed })
+  }
+  const proseAsks = out =>
+    out.messages.filter(m => m.source?.form === 'notice' && /prose is now the cost/.test(m.content[0]?.text ?? '')).length
+
+  turnStart(1)
+  let seen = 0
+  for (let i = 0; i < 4; i += 1) seen += proseAsks((await runStep()).out)
+  assert.equal(seen, 1, 'the reminder is delivered once at its entry step')
+
+  // Compaction re-enters turn 1: same number, no end of turn. Nothing is re-armed.
+  turnStart(1)
+  for (let i = 0; i < 6; i += 1) {
+    assert.equal(proseAsks((await runStep()).out), 0, 'the resumed turn is not told twice')
+  }
+
+  // Turn 2 is a real new turn: the reminder is available again.
+  turnStart(2)
+  seen = 0
+  for (let i = 0; i < 4; i += 1) seen += proseAsks((await runStep()).out)
+  assert.equal(seen, 1, 'a new turn gets its own reminder')
+})
+
 test('a failed compaction schedules no reminder', async () => {
   const ctx = fakeContext()
   apply(ctx, ON)
