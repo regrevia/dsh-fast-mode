@@ -97,7 +97,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.19'
+export const VERSION = '1.5.20'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -667,7 +667,7 @@ export function apply(ctx, rawConfig) {
         // The dedupe key is sorted and truncated, so it is not evidence about
         // which files a call touched. Hand the scheduler the real targets, plus
         // the session directory a relative target resolves against.
-        const targets = toolTargets(args)
+        const targets = toolTargets(args, typeof exec.name === 'string' ? exec.name : '')
         const observation = {
           name: typeof exec.name === 'string' ? exec.name : 'unknown',
           argsKey: stableKey(exec.arguments),

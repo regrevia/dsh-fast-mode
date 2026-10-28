@@ -519,11 +519,41 @@ const COMMAND_FIELDS = ['command', 'cmd', 'script', 'shell']
 /** Argument fields a write call keeps its target paths in. */
 const PATH_FIELDS = ['path', 'file_path', 'filePath', 'target', 'file', 'filename']
 
+/** Patch-shaped arguments: the targets live in the diff text, not in a path field. */
+const PATCH_CALLS = Object.freeze(new Set(['apply_patch', 'patch', 'apply_diff', 'edit_patch']))
+const PATCH_TEXT_FIELDS = ['patch', 'patch_text', 'diff', 'input']
+const PATCH_HEADER = /^[ \t]*(?:\*\*\* (?:Update File:|Add File:|Move to:)[ \t]*|[+]{3}[ \t]+b\/)(.+?)[ \t]*$/gm
+
 /** How many written files stay tracked for the fingerprint recheck. */
 const WRITE_WINDOW = 64
 
 const MUTATING_CALLS = Object.freeze(new Set(['write', 'write_file', 'create_file', 'edit', 'multi_edit', 'apply_patch', 'patch']))
 const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_code', 'exec']))
+
+/**
+ * Files a patch names, read from its headers: `*** Update File:` / `*** Add File:` /
+ * `*** Move to:` (the agent patch dialect) and `+++ b/<path>` (unified diff).
+ *
+ * Without this a patch-based edit names no path, the write cannot be fingerprinted,
+ * and the session permanently stops offering reuse evidence — the common edit path
+ * would pay the whole cost of a feature it never uses.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function patchTargets(text) {
+  if (typeof text !== 'string' || text.length === 0) return []
+  const paths = []
+  PATCH_HEADER.lastIndex = 0
+  let match = PATCH_HEADER.exec(text)
+  while (match) {
+    // A unified-diff `+++ b/` line may carry a trailing tab-separated timestamp.
+    const raw = match[1].split('\t')[0].trim()
+    if (raw.length > 0 && raw !== '/dev/null') paths.push(raw)
+    match = PATCH_HEADER.exec(text)
+  }
+  return paths
+}
 
 /**
  * What a tool call actually names: the files a mutation targets, the command text
@@ -536,9 +566,10 @@ const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_cod
  * `noteTool` so the reuse evidence covers the real artifact.
  *
  * @param {unknown} args
+ * @param {string} [name] - tool name; only patch-shaped tools are scanned for diff headers
  * @returns {{paths: string[], command: string}}
  */
-export function toolTargets(args) {
+export function toolTargets(args, name) {
   const paths = []
   const commands = []
   if (typeof args === 'string') {
@@ -553,6 +584,12 @@ export function toolTargets(args) {
       const value = args[field]
       if (typeof value === 'string') commands.push(value)
       else if (Array.isArray(value)) commands.push(...value.filter(part => typeof part === 'string'))
+    }
+    if (PATCH_CALLS.has(typeof name === 'string' ? name : '')) {
+      for (const field of PATCH_TEXT_FIELDS) {
+        const value = args[field]
+        if (typeof value === 'string') paths.push(...patchTargets(value))
+      }
     }
   }
   return {

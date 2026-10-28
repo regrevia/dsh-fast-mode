@@ -17,6 +17,7 @@ import {
   noteStep,
   noteTool,
   noteTurn,
+  toolTargets,
 } from '../src/auto.js'
 
 /** One clean multi-call step: two distinct calls, both new. */
@@ -1091,6 +1092,68 @@ test('an unresolvable write target disables reuse for the rest of the session', 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a patch that names its files keeps the pass reusable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-auto-'))
+  try {
+    const state = createAutoState()
+    noteTurn(state, 's1')
+    notePolicy(state, 's1', { lateDiscipline: false })
+    writeFileSync(join(dir, 'calc.py'), 'print(1)\n')
+    noteTool(state, 's1', {
+      name: 'write',
+      argsKey: '{"path":"calc.py"}',
+      paths: ['calc.py'],
+      cwd: dir,
+      chars: 9,
+    })
+    // The target lives in the patch body. Reading the headers is what keeps the
+    // session's reuse evidence alive on the common edit path.
+    const patch = '*** Begin Patch\n*** Update File: calc.py\n@@ -1 +1 @@\n-print(1)\n+print(2)\n*** End Patch\n'
+    const targets = toolTargets({ patch }, 'apply_patch')
+    assert.deepEqual(targets.paths, ['calc.py'])
+    noteTool(state, 's1', {
+      name: 'apply_patch',
+      argsKey: '*** Begin Patch',
+      paths: targets.paths,
+      cwd: dir,
+      chars: 180,
+    })
+    const check = {
+      name: 'bash',
+      argsKey: '{"command":"python3 -m unittest"}',
+      command: 'python3 -m unittest',
+      chars: 42,
+      digest: 'ok',
+    }
+    toReuseHint(state, 's1', check)
+    cooldownSteps(state, 's1')
+    assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'a patch header resolves the target, so the pass stays verifiable')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('patch targets come from the body, not from unrelated path fields', () => {
+  const patch = [
+    '*** Update File: src/a.js',
+    '*** Add File: src/b.js',
+    '*** Move to: src/c.js',
+    '*** Delete File: src/gone.js',
+    '+++ b/src/uni.js\t2024-01-01',
+  ].join('\n')
+  assert.deepEqual(toolTargets({ patch }, 'apply_patch').paths, [
+    'src/a.js',
+    'src/b.js',
+    'src/c.js',
+    'src/uni.js',
+  ])
+  // Only patch-shaped tools are scanned: a whole-file write may legitimately
+  // contain diff-looking text, and its own path field is the truth.
+  assert.deepEqual(toolTargets({ path: 'x.js', content: '@@ +++ b/evil' }, 'write').paths, ['x.js'])
+  assert.deepEqual(toolTargets({ path: 'x.js', patch }, 'write').paths, ['x.js'])
 })
 
 test('a failing rerun withdraws the pass it contradicts', () => {
