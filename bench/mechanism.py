@@ -53,11 +53,14 @@ def collect_all():
 
 def stats_for(run):
     text = textshare.read_transcript(run[4])
-    prose, args, msgs, calls, multi, textonly = textshare.tally(text)
+    c = textshare.counts(text)
+    prose, args, msgs, calls, multi, textonly = (c['prose'], c['args'], c['messages'],
+                                                 c['calls'], c['multi'], c['textonly'])
     if not msgs:
         return None
     return {'prose': prose, 'args': args, 'messages': msgs, 'calls': calls,
-            'multi': multi, 'textonly': textonly,
+            'multi': multi, 'textonly': textonly, 'reasoning': c['reasoning'],
+            'emitted': prose + args + c['reasoning'],
             'callsPerMsg': calls / msgs,
             'multiShare': multi / msgs,
             'textOnlyShare': textonly / msgs,
@@ -107,7 +110,8 @@ def main():
         print('no matched groups with transcripts; nothing to compute', file=sys.stderr)
         return 1
 
-    keys = ['messages', 'calls', 'callsPerMsg', 'multiShare', 'textOnlyShare', 'proseShare']
+    keys = ['messages', 'calls', 'callsPerMsg', 'multiShare', 'textOnlyShare', 'proseShare',
+            'prose', 'args', 'reasoning', 'emitted']
     med = {x: {k: st.median([c[x][k] for c in cells]) for k in keys} for x in arms}
     summary = {'arms': arms, 'tag': a.tag or '*', 'groups': len(cells)}
     for k in keys:
@@ -118,10 +122,15 @@ def main():
         print(json.dumps(summary, indent=2))
         return 0
     print(f"matched groups: {len(cells)}  (arm A = {arms[0]}, arm B = {arms[1]})")
-    print(f"{'metric':14} {arms[0]:>10} {arms[1]:>10} {'B/A':>7}")
+    print(f"{'metric':16} {arms[0]:>12} {arms[1]:>12} {'B/A':>7}")
+    def fmt(v):
+        """Shares are small floats, counts are characters; keep both readable."""
+        return f'{v:.3f}' if isinstance(v, float) and abs(v) < 100 else f'{v:,.0f}'
+
     for k in keys:
         b, r = med[arms[1]][k], summary[k]['medianRatio']
-        print(f"{k:14} {med[arms[0]][k]:10.3f} {b:10.3f} {(r if r is not None else float('nan')):7.3f}")
+        print(f"{k:16} {fmt(med[arms[0]][k]):>12} {fmt(b):>12} "
+              f"{(r if r is not None else float('nan')):7.3f}")
     return 0
 
 

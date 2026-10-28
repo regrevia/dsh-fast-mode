@@ -62,8 +62,23 @@ def read_transcript(d):
 
 
 def tally(text):
-    """(prose chars, tool-arg chars, messages, tool calls, multi-call messages)."""
-    prose = args = msgs = calls = multi = textonly = 0
+    """(prose chars, tool-arg chars, messages, tool calls, multi-call messages).
+
+    The docstring on `counts` lists what each number is; this wrapper keeps the
+    historical tuple shape for callers that only need those six.
+    """
+    c = counts(text)
+    return c['prose'], c['args'], c['messages'], c['calls'], c['multi'], c['textonly']
+
+
+def counts(text):
+    """Every per-run count, including the reasoning text the model emitted.
+
+    `reasoning` is the part type the transcript uses for a route's thinking
+    tokens. It is not billed as output prose, but it is decoded the same way and
+    dominates emitted characters, which is why the mechanism report compares it.
+    """
+    prose = args = msgs = calls = multi = textonly = reasoning = 0
     for line in text.splitlines():
         try:
             o = json.loads(line)
@@ -78,6 +93,8 @@ def tally(text):
                 continue
             if part.get('type') == 'text':
                 prose += len(part.get('text') or '')
+            elif part.get('type') == 'reasoning':
+                reasoning += len(part.get('text') or '')
             elif part.get('type') == 'tool-call':
                 calls += 1
                 this += 1
@@ -86,7 +103,8 @@ def tally(text):
             multi += 1
         elif this == 0:
             textonly += 1
-    return prose, args, msgs, calls, multi, textonly
+    return {'prose': prose, 'args': args, 'messages': msgs, 'calls': calls, 'multi': multi,
+            'textonly': textonly, 'reasoning': reasoning}
 
 
 def main():
@@ -100,11 +118,13 @@ def main():
     rows = collect(a.arm, a.tag, a.limit)
     per = []
     for d, name in rows:
-        prose, args, msgs, calls, multi, textonly = tally(read_transcript(d))
-        if msgs:
-            per.append({'run': name, 'prose': prose, 'args': args, 'messages': msgs,
-                        'calls': calls, 'multi': multi, 'textonly': textonly,
-                        'share': prose / (prose + args) if prose + args else 0})
+        c = counts(read_transcript(d))
+        if c['messages']:
+            per.append({'run': name, 'prose': c['prose'], 'args': c['args'],
+                        'reasoning': c['reasoning'], 'messages': c['messages'],
+                        'calls': c['calls'], 'multi': c['multi'], 'textonly': c['textonly'],
+                        'share': c['prose'] / (c['prose'] + c['args'])
+                        if c['prose'] + c['args'] else 0})
     if not per:
         print(f'no transcripts for arm={a.arm} tag={a.tag or "*"}; nothing to compute')
         return 1
@@ -123,6 +143,7 @@ def main():
         'textOnlyShare': (sum(r['textonly'] for r in per) /
                           max(sum(r['messages'] for r in per), 1)),
         'proseChars': prose, 'toolArgChars': args, 'totalChars': total,
+        'reasoningChars': sum(r['reasoning'] for r in per),
         'share': prose / total if total else None,
         'medianShare': st.median(shares), 'p10': shares[int(0.1 * (len(shares) - 1))],
         'p90': shares[int(0.9 * (len(shares) - 1))],
@@ -139,6 +160,8 @@ def main():
     print(f"  sessions {summary['sessions']}  messages {summary['messages']}  "
           f"tool calls {summary['calls']}")
     print(f"  prose {prose:,} chars  tool args {args:,} chars  total {total:,} chars")
+    if summary['reasoningChars']:
+        print(f"  reasoning {summary['reasoningChars']:,} chars")
     print(f"  prose share {100 * summary['share']:.2f} %  "
           f"(median {100 * summary['medianShare']:.2f} %, "
           f"p10 {100 * summary['p10']:.2f} %, p90 {100 * summary['p90']:.2f} %)")
