@@ -2,6 +2,7 @@
 
 ## 未发版（在跑 `D2G` 判据，未 bump 版本）
 
+- **闪电右键面板（新）**：只有两行，都是共享设置、下一个回合生效 —— 「更少中间输出」（写 `outputDiscipline`，`late` ↔ `false`，默认开）与「步数上限」（写 `stepBudget`，循环 `0 / 15 / 30`，默认 `0` 不限）。面板只读取值、只挑一个已测过的安全上限，没有暴露 `disciplineAfterSteps`、`shapeGate`、`finishLineSteps`、`shellParallel` 这些未证实或已淘汰的旋钮。步数上限的写入不带 `sessions` 字段，避免动到按会话的开关状态；`client.js` 的 `write()` 因此加了 `{ touchSession: false }` 路径。文案按界面规则压到标签/值/后果三件，`ui-copy-lint` 与 HEAD 同为 21 error / 2 warning（全部是文件级 React props 误报），`zh-lint` 0 error。
 - **新旋钮 `disciplineEarlyCalls`（默认 `0`，行为不变）**：与 `disciplineAfterSteps` 配合，给一个正数 N 时，提前的压缩提醒只对「进入当前步之前本回合已发出 ≥ N 次工具调用」的回合生效，否则回落到内置第 4 步。计数扣掉当前步自己的调用（`turnCalls - stepCalls`），一步不能先付钱再买票。依据是 `D2_IMPL` 的失败与三家族的信号分离（见下条）；`0` 走的是 1.5.12 的逐字节相同路径。判据块 `D2G_IMPL` / `D2G_DBG` / `D2G_MIG`（21 对）正在跑，**本版不对它的效果作任何声明**。
 - **`disciplineAfterSteps: 2` 的预注册判据块 `D2_IMPL` 判为 HOLD，默认维持 4**：`codeimpl` 8 对（16 行）几何 **1.073×**、中位 **1.129×**、3/8 更快、步数几何 **1.232×**（提前反而多走步）、范围 0.374–2.688×，第 2 条判据三项全挂。同一时点在 `debugfix` 是 0.535×、`migrate` 是 0.751× —— 方向按家族翻转。`codeimpl` p4 的调用序列：`def15` 5 步 4 次（`write` → python 校验 → `ls && py_compile` → `rm -rf`），`d2` 8 步 7 次（多出 `pwd && ls`、两次同样的 python 校验、`ls && find`）：在本来就最短的直线上，提前提醒**加**了探索与重复校验。合并 21 对的 0.768× / 0.787× 好看，但不能压过判据 2，不引用为发版理由。
 - **提前提醒的分离信号（免费、第 2 步之前可读）**：基线 `def15` 第 1 步工具调用数 —— `debugfix` 7/7 是 2、`migrate` 6/6 是 2、`codeimpl` 8/8 是 1。单文件实现任务第 1 步只发 1 次调用，多文件/调试任务发 2 次，所以「调用密度」就是「这个回合会不会走远」的机械代理。

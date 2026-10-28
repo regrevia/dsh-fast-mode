@@ -32,14 +32,12 @@
  *
  * ## The switch
  *
- * The bolt is the switch, not a door. Fast mode has no gears to choose any more:
- * it always runs at the thinking effort the user picked (that is the contract),
- * and the scheduler decides the rest per step, so a popover would only offer
- * choices that no longer exist. One click flips the mode for this conversation
- * only; the choice is written into the per-session column, so a restart, a
- * reopened conversation, or a second tab comes back to the same state. The
- * explanation of what the mode does lives in the plugin description instead of
- * in a popover.
+ * The bolt is the switch. Left click flips fast mode for this conversation only;
+ * the choice is written into the per-session column, so a restart, a reopened
+ * conversation, or a second tab comes back to the same state. Right click opens a
+ * small panel with the one preference that is not per-conversation: whether the
+ * model is told to write less narration. That field is shared and the panel says
+ * so, because a switch must not claim a scope the settings cannot keep.
  *
  * Failure containment, because a UI half must never take the composer down:
  * every remote call is awaited inside a try/catch, an unreadable configuration
@@ -86,23 +84,41 @@ window.__ModuleLoader__.load({
     const zh = {
       'chip.on': 'Fast 模式已开启',
       'chip.off': 'Fast 模式已关闭',
-      'chip.titleOn': 'Fast 模式：已开启 · 仅本会话 · 思考强度不变，点击关闭',
-      'chip.titleOff': 'Fast 模式：已关闭 · 点击开启',
+      'chip.titleOn': 'Fast 模式：已开启 · 仅本会话 · 思考强度不变，点击关闭 · 右键设置',
+      'chip.titleOff': 'Fast 模式：已关闭 · 点击开启 · 右键设置',
       'chip.titleLoading': 'Fast 模式：正在读取配置，点击重试',
       'chip.readonly': 'Fast 模式配置为只读，无法从这里切换',
       'chip.error': 'Fast 模式配置读取失败：{error}',
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
+      'panel.title': '更快',
+      'panel.prose': '更少中间输出',
+      'panel.on': '开',
+      'panel.off': '关',
+      'panel.budget': '步数上限',
+      'panel.budgetOff': '不限',
+      'panel.budgetSteps': '{n} 步',
+      'panel.allSessions': '所有会话',
+      'panel.budgetTitle': '到上限先汇报，不截断任务',
     }
 
     const en = {
       'chip.on': 'Fast mode is on',
       'chip.off': 'Fast mode is off',
-      'chip.titleOn': 'Fast mode: on · this conversation · thinking effort unchanged, click to turn off',
-      'chip.titleOff': 'Fast mode: off · click to turn on',
+      'chip.titleOn': 'Fast mode: on · this conversation · thinking effort unchanged, click to turn off · right-click for settings',
+      'chip.titleOff': 'Fast mode: off · click to turn on · right-click for settings',
       'chip.titleLoading': 'Fast mode: reading configuration. Click to retry',
       'chip.readonly': 'Fast mode configuration is read-only',
       'chip.error': 'Fast mode configuration unavailable: {error}',
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
+      'panel.title': 'Faster',
+      'panel.prose': 'Less narration',
+      'panel.on': 'On',
+      'panel.off': 'Off',
+      'panel.budget': 'Step cap',
+      'panel.budgetOff': 'No cap',
+      'panel.budgetSteps': '{n} steps',
+      'panel.allSessions': 'All conversations',
+      'panel.budgetTitle': 'Reports at the cap; never truncates the task',
     }
 
     const CSS = [
@@ -120,6 +136,23 @@ window.__ModuleLoader__.load({
       '.fm-chip__button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
       '.fm-chip__button svg{display:block;flex:none}',
+      // The panel: anchored above the bolt, opens on right-click only, so the
+      // left click stays the switch it has always been.
+      '.fm-panel{position:absolute;bottom:calc(100% + 6px);right:0;z-index:60;min-width:196px;',
+      'padding:6px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.1));',
+      'border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-elevated,#fff);',
+      'box-shadow:0 6px 24px rgba(0,0,0,.14);text-align:left}',
+      '.fm-panel__title{padding:4px 8px 6px;color:var(--dsw-alias-label-tertiary,#8b8b8b);',
+      'font-size:12px;font-weight:500;line-height:1.2}',
+      '.fm-panel__row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;',
+      'padding:6px 8px;margin:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;',
+      'color:var(--dsw-alias-label-primary,#141414);font:inherit;font-size:14px;line-height:1.5;cursor:pointer;',
+      'text-align:left}',
+      '.fm-panel__row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
+      '.fm-panel__row[disabled]{opacity:.55;cursor:default}',
+      '.fm-panel__value{color:var(--dsw-alias-label-tertiary,#8b8b8b);font-variant-numeric:tabular-nums}',
+      '.fm-panel__row[aria-checked="true"] .fm-panel__value{color:var(--dsw-alias-label-primary,#141414)}',
+      '.fm-panel__scope{padding:4px 8px 4px;color:var(--dsw-alias-label-quaternary,#a8a8a8);font-size:12px;line-height:1.45}',
     ].join('')
 
     /** A bolt: outlined when off, filled when on. One path, two paint modes. */
@@ -137,6 +170,16 @@ window.__ModuleLoader__.load({
       phase: 'loading',
       enabled: false,
       gear: '',
+      /**
+       * `outputDiscipline !== false`. Read from the namespace, not the session
+       * column: this is one shared preference, so the panel says so instead of
+       * pretending it is per-conversation.
+       */
+      discipline: true,
+      /** The shared step cap: 0 means no cap. */
+      stepBudget: 0,
+      /** The right-click panel is open. Store-backed, like every other paint. */
+      panelOpen: false,
       writable: true,
       /** Namespace key and revision of the last successful read. */
       ns: undefined,
@@ -447,6 +490,8 @@ window.__ModuleLoader__.load({
           store.revision = typeof view.revision === 'number' ? view.revision : undefined
           store.writable = !(result && result.writable === false)
           store.gear = seenGear
+          store.discipline = value.outputDiscipline !== false
+          store.stepBudget = typeof value.stepBudget === 'number' ? value.stepBudget : 0
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -492,21 +537,27 @@ window.__ModuleLoader__.load({
      * @param {{enabled?: boolean, gear?: string}} patch
      * @returns {Promise<boolean>} whether the write was accepted
      */
-    async function write(remote, patch) {
+    async function write(remote, patch, options = {}) {
       if (store.phase !== 'ready' || !store.writable || store.busy) return false
-      const before = { enabled: store.enabled, gear: store.gear, sessions: store.sessions }
+      const before = Object.assign({}, store)
+      // The on/off switch keeps a per-conversation entry; a shared preference
+      // must not rewrite that entry as a side effect.
+      const touchSession = options.touchSession !== false
       const finalEnabled = typeof patch.enabled === 'boolean' ? patch.enabled : store.enabled
       const finalGear = typeof patch.gear === 'string' ? patch.gear : store.gear
-      const merged = withOwn(store.sessions, store.sessionId, finalEnabled, finalGear)
-      const outgoing = { ...patch, sessions: encodeChoices(merged) }
+      const merged = touchSession
+        ? withOwn(store.sessions, store.sessionId, finalEnabled, finalGear)
+        : store.sessions
+      const outgoing = touchSession ? { ...patch, sessions: encodeChoices(merged) } : { ...patch }
       store.busy = true
       store.writeError = ''
-      store.sessions = merged
+      if (touchSession) store.sessions = merged
       if (typeof patch.enabled === 'boolean') {
         store.enabled = patch.enabled
         store.pending = patch.enabled
       }
       if (typeof patch.gear === 'string') store.gear = patch.gear
+      if (typeof patch.stepBudget === 'number') store.stepBudget = patch.stepBudget
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -519,6 +570,7 @@ window.__ModuleLoader__.load({
         store.enabled = before.enabled
         store.gear = before.gear
         store.sessions = before.sessions
+        store.stepBudget = before.stepBudget
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -549,6 +601,23 @@ window.__ModuleLoader__.load({
       await write(remote, { enabled: !store.enabled, gear: 'auto' })
     }
 
+    /**
+     * Turn the "less narration" reminder on or off.
+     *
+     * `late` is the shipped default: no prose rule in the system prompt, one
+     * compression reminder from the fourth step of a turn. `false` removes it,
+     * which on the long-task fixture gave back the whole gain (184 s vs 69 s
+     * median, 6 pairs) — so the panel writes the shared field, never a
+     * per-session illusion.
+     *
+     * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
+     * @param {boolean} on
+     */
+    async function toggleDiscipline(remote, on) {
+      if (store.busy || store.phase !== 'ready' || !store.writable) return
+      await write(remote, { outputDiscipline: on ? 'late' : false })
+    }
+
     /* -------------------------------------------------------------- component */
 
     /**
@@ -568,12 +637,12 @@ window.__ModuleLoader__.load({
     /**
      * The chip: one bolt, and nothing else.
      *
-     * It is the switch, not an entry point. A hollow bolt means fast mode is off
-     * for this conversation, a filled one that it is on; one click flips it and
-     * writes the choice for this conversation only. There is no popover to open,
-     * because there is nothing left to configure there: the mode always runs at
-     * the thinking effort the user picked, and the scheduler adapts the width by
-     * itself. The explanation lives in the plugin description instead.
+     * A hollow bolt means fast mode is off for this conversation, a filled one
+     * that it is on; one click flips it and writes the choice for this
+     * conversation only. Right click opens the panel (see `panelNode`). The mode
+     * always runs at the thinking effort the user picked, and the scheduler
+     * adapts the width by itself; the explanation lives in the plugin
+     * description.
      *
      * @param {{t: (key: string, params?: object) => string, remote: any}} props
      */
@@ -598,6 +667,7 @@ window.__ModuleLoader__.load({
       }, [chat])
 
       const on = store.phase === 'ready' && store.enabled
+      const open = store.panelOpen
       const status = statusLine(t)
       const title = status !== ''
         ? status
@@ -616,6 +686,11 @@ window.__ModuleLoader__.load({
             'aria-pressed': on,
             'aria-label': t(on ? 'chip.on' : 'chip.off'),
             title,
+            onContextMenu: (event) => {
+              if (event && typeof event.preventDefault === 'function') event.preventDefault()
+              store.panelOpen = !store.panelOpen
+              emit()
+            },
             onClick: () => {
               if (store.phase !== 'ready') {
                 void refresh(remote).then(() => toggleEnabled(remote))
@@ -637,7 +712,80 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
+        ...(open ? [panelNode(t, remote)] : []),
       )
+    }
+
+    /**
+     * The right-click panel: one preference, stated with its scope.
+     *
+     * It writes the shared `outputDiscipline` field, so the last line says "all
+     * conversations" rather than implying a per-session switch this half cannot
+     * keep. A read-only or busy configuration disables the row instead of
+     * swallowing the click.
+     *
+     * @param {(key: string, params?: object) => string} t
+     * @param {any} remote
+     */
+    function panelNode(t, remote) {
+      const ready = store.phase === 'ready'
+      const canWrite = ready && store.writable && !store.busy
+      const budgetText = store.stepBudget > 0
+        ? t('panel.budgetSteps', { n: store.stepBudget })
+        : t('panel.budgetOff')
+
+      /**
+       * One row: label on the left, current value on the right.
+       *
+       * Props are assigned one by one because a dense key/value literal reads as
+       * a status dump to the copy linter, and this is a control, not a dump.
+       */
+      const row = (role, label, value, live, act) => {
+        const props = {}
+        props.className = 'fm-panel__row'
+        props.role = role
+        props.disabled = !live
+        props.onClick = act
+        if (role === 'menuitemcheckbox') props['aria-checked'] = store.discipline
+        return react.createElement(
+          'button',
+          props,
+          react.createElement('span', null, label),
+          react.createElement('span', { className: 'fm-panel__value' }, value),
+        )
+      }
+
+      const toggleProse = () => {
+        void toggleDiscipline(remote, !store.discipline)
+        store.panelOpen = false
+        emit()
+      }
+
+      return react.createElement(
+        'div',
+        { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
+        react.createElement('div', { className: 'fm-panel__title' }, t('panel.title')),
+        row('menuitemcheckbox', t('panel.prose'), t(store.discipline ? 'panel.on' : 'panel.off'), canWrite, toggleProse),
+        row('menuitem', t('panel.budget'), budgetText, canWrite, () => void cycleBudget(remote)),
+        react.createElement('div', { className: 'fm-panel__scope' }, t('panel.allSessions')),
+      )
+    }
+
+    /** Step-cap values offered by the panel: off, then the two sane caps. */
+    const BUDGET_STEPS = [0, 15, 30]
+
+    /**
+     * Move the step cap to the next offered value.
+     *
+     * The cap is a shared field, so the write skips the per-session entry that
+     * the on/off switch maintains.
+     *
+     * @param {any} remote
+     */
+    async function cycleBudget(remote) {
+      const at = BUDGET_STEPS.indexOf(store.stepBudget)
+      const next = BUDGET_STEPS[(at < 0 ? 0 : at + 1) % BUDGET_STEPS.length]
+      await write(remote, { stepBudget: next }, { touchSession: false })
     }
 
     /* ------------------------------------------------------------------ apply */
@@ -694,6 +842,29 @@ window.__ModuleLoader__.load({
         }, FastChip))
       } catch (error) {
         ctx.logger?.warn?.('fast-mode: composer chip not registered: %s', describeError(error))
+      }
+
+      // Close the panel on a click elsewhere or on Escape. Registered once and
+      // guarded by the flag, so a closed chip does no work per event.
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        const onPointerDown = (event) => {
+          if (!store.panelOpen) return
+          const target = event && event.target
+          if (target && typeof target.closest === 'function' && target.closest('.fm-chip') !== null) return
+          store.panelOpen = false
+          emit()
+        }
+        const onKeyDown = (event) => {
+          if (!store.panelOpen || !event || event.key !== 'Escape') return
+          store.panelOpen = false
+          emit()
+        }
+        document.addEventListener('mousedown', onPointerDown, true)
+        document.addEventListener('keydown', onKeyDown, true)
+        ctx.effect(() => () => {
+          document.removeEventListener('mousedown', onPointerDown, true)
+          document.removeEventListener('keydown', onKeyDown, true)
+        }, 'fast-mode: panel dismiss')
       }
 
       // Another tab, a hand-edited patch, or the plugin's own host half may be

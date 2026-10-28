@@ -87,7 +87,12 @@ Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a d
 
 ## The switch
 
-The bolt is the switch: one click writes on/off, per conversation, restored on reload. No panel, no dropdown, no multiplier estimate.
+The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for two shared settings:
+
+- **Less narration** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
+- **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
+
+Both apply from the next request. No dropdown, no multiplier estimate.
 
 The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded execution), but their widths are static while this width comes from the conversation's own call evidence; do not install all three. Context-compaction plugins coexist.
 

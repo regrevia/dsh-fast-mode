@@ -455,3 +455,97 @@ test('the conversation id is honoured whether it arrives injected or as a standa
   const column = columnOf(remote.calls[0])
   assert.deepEqual(Object.keys(column), ['session-standard'], 'the standard prop is enough on its own')
 })
+
+/* ------------------------------------------------------- right-click panel */
+
+/** Right click the bolt: opens (or closes) the settings panel. */
+function rightClick(render) {
+  boltOf(render()).props.onContextMenu({ preventDefault() {} })
+  return sleep(10)
+}
+
+/** The panel is the chip's second child; absent means closed. */
+function panelOf(tree) {
+  return tree.children[1]
+}
+
+/** The one preference row inside the panel. */
+function rowOf(panel) {
+  return panel.children[1]
+}
+
+/** The step-cap row: the second control in the panel. */
+function budgetRowOf(panel) {
+  return panel.children[2]
+}
+
+test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote)
+
+  assert.equal(panelOf(render()), undefined, 'a closed chip renders one control')
+
+  await rightClick(render)
+  const panel = panelOf(render())
+  assert.ok(panel, 'right click opens the panel')
+  assert.equal(panel.props.role, 'menu')
+  assert.equal(remote.calls.length, 0, 'opening a panel is not a write')
+
+  await rightClick(render)
+  assert.equal(panelOf(render()), undefined, 'a second right click closes it')
+})
+
+test('the panel switch turns the narration reminder off and on through the shared field', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote)
+
+  await rightClick(render)
+  assert.equal(rowOf(panelOf(render())).props['aria-checked'], true, 'the shipped default is on')
+  await rowOf(panelOf(render())).props.onClick()
+  await sleep(30)
+
+  assert.equal(remote.calls.length, 1)
+  const patch = remote.calls[0].patch
+  assert.equal(patch.outputDiscipline, false, 'off is a real value, not a missing field')
+  assert.equal('enabled' in patch, false, 'the switch must not flip the mode as a side effect')
+  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
+  assert.equal(remote.state.value.outputDiscipline, false)
+
+  await rightClick(render)
+  assert.equal(rowOf(panelOf(render())).props['aria-checked'], false, 'the panel paints the host value')
+  await rowOf(panelOf(render())).props.onClick()
+  await sleep(30)
+  assert.equal(remote.calls[1].patch.outputDiscipline, 'late', 'back to the shipped default')
+})
+
+test('a read-only configuration disables the panel row instead of swallowing the click', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' }, { writable: false })
+  const { render } = await mount(remote)
+
+  await rightClick(render)
+  assert.equal(rowOf(panelOf(render())).props.disabled, true)
+  await rowOf(panelOf(render())).props.onClick()
+  await sleep(20)
+  assert.equal(remote.calls.length, 0)
+})
+
+test('the step cap cycles through 0, 15 and 30 without touching the switch or the session entry', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote)
+
+  await rightClick(render)
+  assert.equal(budgetRowOf(panelOf(render())).props.disabled, false, 'the cap row is live')
+  const valueOf = () => budgetRowOf(panelOf(render())).children[1].children[0]
+
+  assert.equal(valueOf(), 'panel.budgetOff', 'no cap is the shipped default')
+
+  for (const want of [15, 30, 0]) {
+    await budgetRowOf(panelOf(render())).props.onClick()
+    await sleep(40)
+    const call = remote.calls[remote.calls.length - 1]
+    assert.equal(call.patch.stepBudget, want, 'three caps, then back off')
+    assert.equal('sessions' in call.patch, false, 'a shared cap must not rewrite the per-conversation entry')
+    assert.equal('enabled' in call.patch, false, 'the cap is not the mode switch')
+    assert.ok(panelOf(render()), 'the panel stays open while cycling a cap')
+  }
+})
