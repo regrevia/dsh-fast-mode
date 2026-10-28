@@ -61,7 +61,7 @@ test('undeclared composition keys survive the schema', () => {
   assert.equal(value.debug, true)
 })
 
-test('the form fields are exactly the four live knobs, and all four are volatile', () => {
+test('the declared fields are exactly these, and the seven form fields are volatile', () => {
   // `settings` projects a Config through `volatileForm`, which keeps only
   // nodes carrying `meta.volatile`; a non-volatile field is silently dropped
   // from the form and its write is refused with "is not volatile".
@@ -73,7 +73,7 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'batchVerify', 'benchmarkFile', 'disciplineAfterSteps', 'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'mapEntries', 'metrics', 'metricsFile',
+    'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps', 'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'mapEntries', 'metrics', 'metricsFile',
     'openBatch', 'outputBudget', 'outputBudgetAfterSteps', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs', 'workspaceMap',
   ])
@@ -89,10 +89,28 @@ test('the form fields are exactly the four live knobs, and all four are volatile
   // into: the description says so, and the chip is the only writer.
   assert.equal(visit(root.dict.sessions).meta.volatile, true, 'sessions must be volatile to be writeable')
 
-  // Measurement paths are composition knobs, like `debugFile`: they are read at
-  // load and deliberately stay out of the form. Changing where the file goes is
-  // an edit in cordis.patch.yml, not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'outputDiscipline', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
+  // The panel's three rows read the *shared* defaults. `describe()` projects only
+  // volatile nodes, so a non-volatile declaration here is a row the client half
+  // can never paint: it would show `late` / 0 / off no matter what
+  // cordis.patch.yml says. test/client.test.js runs the host's own projection to
+  // pin that read.
+  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap']) {
+    assert.equal(visit(root.dict[key]).meta.volatile, true, `${key} carries a panel row, so it must be in the form`)
+  }
+
+  // Volatile means "editable without a remount", not "different default": the
+  // shipped defaults are still the measured ones.
+  const defaults = parse({})
+  assert.deepEqual(
+    [defaults.outputDiscipline, defaults.stepBudget, defaults.workspaceMap],
+    ['late', 0, false],
+    'the three panel fields kept their shipped defaults',
+  )
+
+  // Everything else is a composition knob, like `debugFile`: read at load and
+  // deliberately out of the form. Changing it is an edit in cordis.patch.yml,
+  // not something to click mid-task.
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drop rows that fail the validity rule from result files, so the cell is retried.
 
-A row that fails `pool.valid` (exit != 0, steps < 1, out <= 0, not exact, or a leak)
+A row that fails `pool.valid` (exit != 0, steps < 1, out <= 0, no session ids, or a leak)
 can never be pooled. Leaving it in place is worse than having no row at all: the
 resume logic in `suite-run.py` skips any cell that already has a row, so an invalid
 row silently freezes that cell as "measured" forever. This tool rewrites the file

@@ -6,7 +6,7 @@ question — does arm B beat arm A when the *only* difference between them is on
 flag? Those blocks have no `off` row, so pool.py cannot read them.
 
 A pair counts only when both cells are valid by the bench rule
-(`exit == 0 and steps >= 1 and out > 0 and exact and not leak`). The ratio is
+(`exit == 0 and steps >= 1 and out > 0 and hasSessionIds and not leak`). The ratio is
 always treatment / baseline, so < 1 means the treatment was faster.
 
     python3 bench/ab.py BV8_IMPL --base def15 --treat bvl15

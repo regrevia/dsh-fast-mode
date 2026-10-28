@@ -18,6 +18,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
+import z from '@deepseek-ai/schemastery'
+import { Config } from '../src/config.js'
+import { resolveConfig } from '../src/effort.js'
+import { configOverridesFor } from '../src/state.js'
 
 
 const SOURCE = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
@@ -517,7 +521,7 @@ test('the panel switch turns narration down for this conversation only', async (
 
   assert.equal(remote.calls.length, 1)
   const patch = remote.calls[0].patch
-  assert.deepEqual(Object.keys(patch), ['sessions'], 'a non-volatile shared field would be refused by the host')
+  assert.deepEqual(Object.keys(patch), ['sessions'], 'a shared default would change every conversation, not this one')
   assert.equal('outputDiscipline' in patch, false)
   assert.equal('enabled' in patch, false, 'the switch must not flip the mode as a side effect')
   assert.equal(columnOf(remote.calls[0])['session-alpha'].discipline, false, 'off is a real value, not a missing field')
@@ -558,7 +562,7 @@ test('the step cap cycles through 0, 15 and 30 inside one conversation', async (
     const call = remote.calls[remote.calls.length - 1]
     assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the cap rides the per-conversation column')
     assert.equal(columnOf(call)['session-alpha'].stepBudget, want, 'three caps, then back off')
-    assert.equal('stepBudget' in call.patch, false, 'a non-volatile shared cap would be refused')
+    assert.equal('stepBudget' in call.patch, false, 'the cap is per conversation, not the shared default')
     assert.equal('enabled' in call.patch, false, 'the cap is not the mode switch')
     assert.ok(panelOf(render()), 'the panel stays open while cycling a cap')
   }
@@ -580,7 +584,7 @@ test('the file list is off by default and toggles for this conversation only', a
   const call = remote.calls[remote.calls.length - 1]
   assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the file list is a per-conversation choice now')
   assert.equal(columnOf(call)['session-alpha'].map, true)
-  assert.equal('workspaceMap' in call.patch, false, 'the shared field is not volatile, so the host would refuse it')
+  assert.equal('workspaceMap' in call.patch, false, 'the shared default is for new conversations; this row is a choice')
   assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
 
   await rightClick(render)
@@ -589,4 +593,223 @@ test('the file list is off by default and toggles for this conversation only', a
   await sleep(40)
   assert.equal(columnOf(remote.calls[remote.calls.length - 1])['session-alpha'].map, false, 'toggle back off')
   assert.equal(remote.state.value.workspaceMap, undefined, 'the shared default never moved')
+})
+
+
+/* ------------------------------------------ the shipped Settings, transcribed
+ *
+ * The real `settings` service projects a plugin Config through two functions in
+ * `dsh-settings/lib/types/schema.js` — `volatileForm()` keeps only nodes marked
+ * `.volatile()`, `projectForm()` keeps only declared fields — and its `write()`
+ * (same package, `lib/types/index.js`) refuses any key `isVolatilePath()` calls
+ * dead. Those files ship inside the app bundle and are not importable from here,
+ * so what follows is a transcription of the projection and of the write gate.
+ *
+ * Why it has to exist: the `fakeRemote` above merges a patch into a flat object,
+ * a shape the shipped service never produces. A panel that only reads correctly
+ * against that fake proves nothing about the app the user runs — and three rows
+ * silently pinned to `late` / 0 / off is exactly the failure that fake hides.
+ * `test('a non-volatile row is invisible to describe(), which is why these three
+ * had to move')` keeps the transcription honest by running it on the old schema.
+ */
+
+/** `volatileForm()`: the sub-schema the form may read and write live. */
+function liveForm(schema) {
+  if (schema.meta.volatile) {
+    // The host re-parses this node through `plainSchema()` to strip the
+    // volatile flag and redact secrets. Neither touches `type`/`dict`, which is
+    // all the projection reads, and this plugin declares no secret.
+    return schema
+  }
+  if (schema.type !== 'object') return undefined
+  const dict = Object.fromEntries(Object.entries(schema.dict ?? {}).flatMap(([key, child]) => {
+    const field = liveForm(child)
+    return field === undefined ? [] : [[key, field]]
+  }))
+  return Object.keys(dict).length === 0 ? undefined : new z({ type: 'object', dict })
+}
+
+/** `projectForm()`: drop keys the form does not declare, recurse into objects. */
+function projectFields(schema, value) {
+  if (schema.type !== 'object' || value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(schema.dict ?? {}).flatMap(([key, child]) => {
+    const field = value[key]
+    return field === undefined ? [] : [[key, projectFields(child, field)]]
+  }))
+}
+
+/** `isVolatilePath()`: can the service write this path without a remount? */
+function writablePath(schema, path) {
+  if (schema.meta.volatile) return true
+  const [key, ...rest] = path
+  const child = key === undefined ? undefined : schema.dict?.[key]
+  return child !== undefined && writablePath(child, rest)
+}
+
+/** `plainConfig()`: the plugin config the Loader hands over, with refs unwrapped. */
+function plainValue(value) {
+  if (value !== null && typeof value === 'object' && typeof value.get === 'function'
+    && Object.getOwnPropertySymbols(value).some(symbol => String(symbol).includes('cosmokit.volatile'))) {
+    return plainValue(value.get())
+  }
+  if (Array.isArray(value)) return value.map(plainValue)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, plainValue(child)]))
+  }
+  return value
+}
+
+/** The form the shipped settings service would build from this plugin's Config. */
+const LIVE_FORM = liveForm(Config)
+
+/**
+ * The write gate from `SettingsForms.write()`, reduced to what the panel can
+ * meet: validate the merged form value, then persist it as the profile row while
+ * leaving keys outside the form alone. The real service also runs the Loader's
+ * `internal/config` waterfall and writes YAML — neither can refuse a volatile
+ * field, so they are out of scope here.
+ *
+ * @param {object} raw the persisted profile row (not the resolved config)
+ * @param {object} patch the outgoing `settings/update` patch
+ * @param {any} [form] the form to validate against; the shipped one by default
+ */
+function hostAccept(raw, patch, form = LIVE_FORM) {
+  const current = projectFields(form, raw)
+  const next = { ...current, ...patch }
+  for (const key of Object.keys(next)) {
+    if (!writablePath(form, [key])) throw new Error(`Config field "${key}" is not volatile`)
+  }
+  // `strip(raw, form)`: non-volatile keys of the row survive, then re-merging
+  // `next` restores the volatile values that were projected out of `current`.
+  const untouched = Object.fromEntries(Object.entries(raw).filter(([key]) => form.dict?.[key] === undefined))
+  return { ...untouched, ...next }
+}
+
+/**
+ * A `settings` service with the shipped semantics: one inherited layer (a
+ * hand-written `cordis.patch.yml`), one profile row, `describe()` projecting the
+ * form out of the resolved config, `update()` checking revision and volatility.
+ *
+ * @param {{inherited?: object, stored?: object, form?: any}} [layers]
+ */
+function hostRemote(layers = {}) {
+  const form = layers.form ?? LIVE_FORM
+  const state = { inherited: layers.inherited ?? {}, stored: layers.stored ?? {}, revision: 1 }
+  const calls = []
+  const descriptor = () => {
+    const resolved = plainValue(Config({ ...state.inherited, ...state.stored }))
+    return {
+      ns: 'fast-mode',
+      autoGenerate: true,
+      applies: 'live',
+      secrets: [],
+      schema: form.toJSON(),
+      value: projectFields(form, resolved),
+      revision: state.revision,
+    }
+  }
+  return {
+    calls,
+    state,
+    settings: {
+      async describe() {
+        return { ok: true, value: { writable: true, hasDocument: true, namespaces: [descriptor()] } }
+      },
+      async update(ns, patch, revision) {
+        calls.push({ ns, patch, revision })
+        if (revision !== state.revision) throw new Error(`settings are at revision ${state.revision}, write carried ${revision}`)
+        state.stored = hostAccept(state.stored, patch, form)
+        state.revision += 1
+        return { ok: true, value: descriptor() }
+      },
+    },
+  }
+}
+
+/** What the channel half computes for one conversation from these layers. */
+function runtimeFor(state, sessionId) {
+  const effective = { ...state.inherited, ...state.stored }
+  return resolveConfig(Config(effective), configOverridesFor(effective.sessions, sessionId))
+}
+
+test('the panel paints the shared defaults the shipped host resolves, not the built-ins', async () => {
+  // A hand-written cordis.patch.yml: no narration, 15 steps, list the files.
+  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, stepBudget: 15, workspaceMap: true }
+  const remote = hostRemote({ inherited: shared })
+  const { render } = await mount(remote, 'session-alpha')
+
+  const namespaces = (await remote.settings.describe()).value.namespaces
+  assert.deepEqual(
+    Object.keys(namespaces[0].value).sort(),
+    ['enabled', 'gear', 'outputDiscipline', 'sessions', 'stepBudget', 'workspaceMap'],
+    'describe() carries the three shared defaults because they are volatile',
+  )
+
+  await rightClick(render)
+  const panel = panelOf(render())
+  assert.equal(rowOf(panel).props['aria-checked'], false, 'the shared "no narration" is painted')
+  assert.equal(budgetRowOf(panel).children[1].children[0], 'panel.budgetSteps {"n":15}', 'the shared cap is painted')
+  assert.equal(mapRowOf(panel).props['aria-checked'], true, 'the shared inventory switch is painted')
+
+  const runtime = runtimeFor(remote.state, 'session-alpha')
+  assert.equal(runtime.stepBudget, 15, 'the row shows the number the channel half uses')
+  assert.equal(runtime.workspaceMap, true, 'and the same inventory default')
+  assert.equal(runtime.discipline, 'off', 'and the same narration default')
+})
+
+test('a non-volatile row is invisible to describe(), which is why these three had to move', async () => {
+  // The schema as it shipped before this fix: same three declarations, no
+  // `.volatile()`. Running the host's own projection on it reproduces the bug —
+  // the panel paints built-in defaults over a patch document that says otherwise.
+  const json = structuredClone(Config.toJSON())
+  const root = json.refs[String(json.uid)]
+  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap']) delete json.refs[String(root.dict[key])].meta.volatile
+  const old = new z(json)
+  const oldForm = liveForm(old)
+
+  assert.equal(oldForm.dict.outputDiscipline, undefined, 'no form node means no row the client can read')
+  assert.equal(writablePath(oldForm, ['stepBudget']), false)
+  assert.throws(() => hostAccept({}, { outputDiscipline: false }, oldForm), /Config field "outputDiscipline" is not volatile/)
+
+  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, stepBudget: 15, workspaceMap: true }
+  const remote = hostRemote({ inherited: shared, form: oldForm })
+  const { render } = await mount(remote, 'session-alpha')
+  await rightClick(render)
+  const panel = panelOf(render())
+  assert.equal(rowOf(panel).props['aria-checked'], true, 'the built-in "late" instead of the shared "false"')
+  assert.equal(budgetRowOf(panel).children[1].children[0], 'panel.budgetOff', 'the built-in cap instead of the shared 15')
+  assert.equal(mapRowOf(panel).props['aria-checked'], false, 'the built-in off instead of the shared true')
+})
+
+test('all three panel writes pass the host gate and read back as the channel value', async () => {
+  const remote = hostRemote({ inherited: { enabled: true, gear: 'auto' } })
+  const { render } = await mount(remote, 'session-alpha')
+  const sid = 'session-alpha'
+
+  await rightClick(render)
+  await rowOf(panelOf(render())).props.onClick()
+  await sleep(40)
+  assert.equal(remote.calls.length, 1)
+  assert.deepEqual(Object.keys(remote.calls[0].patch), ['sessions'], 'only the per-conversation column moves')
+  assert.equal(remote.state.stored.outputDiscipline, undefined, 'and the shared default stays where it was')
+  assert.equal(columnOf(remote.calls[0])[sid].discipline, false)
+  assert.equal(runtimeFor(remote.state, sid).discipline, 'off', 'the choice is what the channel half reads')
+  await rightClick(render)
+  assert.equal(rowOf(panelOf(render())).props['aria-checked'], false, 'and it reads back through describe()')
+
+  await budgetRowOf(panelOf(render())).props.onClick()
+  await sleep(40)
+  const cap = columnOf(remote.calls[remote.calls.length - 1])[sid].stepBudget
+  assert.equal(cap, 15)
+  assert.equal(runtimeFor(remote.state, sid).stepBudget, 15, 'the cap the host accepted is the cap in force')
+  assert.equal(remote.state.stored.stepBudget, undefined, 'the shared cap never moved')
+  assert.equal(budgetRowOf(panelOf(render())).children[1].children[0], 'panel.budgetSteps {"n":15}', 'and it reads back')
+
+  await mapRowOf(panelOf(render())).props.onClick()
+  await sleep(40)
+  assert.equal(columnOf(remote.calls[remote.calls.length - 1])[sid].map, true)
+  assert.equal(runtimeFor(remote.state, sid).workspaceMap, true, 'the inventory switch the host accepted is in force')
+  assert.equal(remote.state.stored.workspaceMap, undefined, 'the shared default never moved')
+  await rightClick(render)
+  assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'and it reads back through describe()')
 })

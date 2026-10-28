@@ -208,13 +208,17 @@ test('the step knobs reach the policy, and off-gear keeps them out of the way', 
     stepBudget: 12,
     finishLineSteps: 7,
     preferPatch: true,
+    compactRereadHint: true,
   })
   for (const key of ['shapeGate', 'outputBudget', 'lateDiscipline', 'stepBudget', 'finishLineSteps',
-    'openBatch', 'fanoutWidth', 'batchVerify', 'preferPatch']) {
+    'openBatch', 'fanoutWidth', 'batchVerify', 'preferPatch', 'rereadHint']) {
     assert.ok(Object.hasOwn(mechanisms, key), `${key} is declared in the schema, so resolveConfig must carry it`)
   }
   assert.equal(mechanisms.shapeGate, true, 'the shape gate must reach the policy object')
   assert.equal(mechanisms.outputBudget, 8000, 'the output budget must reach the policy object')
+  assert.equal(mechanisms.rereadHint, true, 'the no-re-read sentence reaches the scheduler only when asked for')
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto' }).rereadHint, false,
+    'and it is off by default, so 1.5.17 directive text is unchanged')
   assert.equal(mechanisms.fanoutWidth, 4, 'the width cap must reach the policy object')
   assert.equal(resolveConfig({ enabled: true, gear: 'auto' }).outputBudget, 0,
     'a zero budget means the reminder never fires')

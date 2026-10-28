@@ -34,6 +34,8 @@
  * @module dsh-fast-mode/stallguard
  */
 
+import { EXIT_STATES } from './exit.js'
+
 /**
  * Per-gear ceiling on one guarded tool call, in milliseconds.
  *
@@ -178,7 +180,12 @@ export function stallFailure(info) {
   const seconds = Math.max(1, Math.round(budgetMs / 1000))
   // Unknown means unconfirmed: never claim a cancellation was clean without
   // having observed the body settle.
-  const confirmed = info?.confirmed === true
+  const state = info?.state === EXIT_STATES.exited || info?.confirmed === true
+    ? EXIT_STATES.exited
+    : info?.state === EXIT_STATES.cancelRequested
+      ? EXIT_STATES.cancelRequested
+      : EXIT_STATES.unconfirmed
+  const confirmed = state === EXIT_STATES.exited
   const changeSomething = [
     '- a server, watcher, tail, or REPL belongs in the background (`run_in_background: true`), not in the foreground;',
     '- a long or quoted/multi-line command belongs in a file — write it, then call the shell with `script_path`;',
@@ -194,7 +201,9 @@ export function stallFailure(info) {
       ].join('\n')
     : [
         `fast-mode stall guard: \`${name}\` was still running after ${seconds}s and was cancelled.`,
-        'Its exit is NOT confirmed: the process may still be running or finishing, and it may still write files.',
+        state === EXIT_STATES.cancelRequested
+          ? 'Cancellation was requested and the turn stopped waiting: its exit is NOT confirmed.'
+          : 'Its exit is NOT confirmed: the process may still be running or finishing, and it may still write files.',
         'Do not edit, move, or delete anything it may have touched until it is gone.',
         'Confirm it exited first, e.g. `pgrep -fl <pattern>` or `ps -o pid,stat,command -p <pid>`, then check the files it was writing.',
         'Once it is gone, retry with a change:',
@@ -293,6 +302,14 @@ export function createStallGuard(options = {}) {
     const body = next()
     body.catch(() => {})
 
+    // Declared out here, not inside the `try`: the `finally` must always be able
+    // to remove this listener. A binding scoped to the try block is invisible to
+    // the finally, so every timeout path left the listener on the parent signal
+    // for the rest of the turn (and the throw was swallowed by the cleanup's own
+    // catch).
+    let onCallerAbort
+    let callerAbort
+
     try {
       const settled = await Promise.race([body, expiry])
       if (settled !== STALLED) return settled
@@ -324,8 +341,7 @@ export function createStallGuard(options = {}) {
       // A caller abort during either window ends the wait immediately: the host
       // is already unwinding the turn, so extra confirmation would only delay it.
       let abortedByCaller = caller.aborted === true
-      let onCallerAbort
-      const callerAbort = new Promise((resolve) => {
+      callerAbort = new Promise((resolve) => {
         if (abortedByCaller) {
           resolve(CALLER_ABORTED)
           return
@@ -365,6 +381,16 @@ export function createStallGuard(options = {}) {
       if (outcome === STILL_RUNNING) outcome = await waitWindow(confirmMs)
       const quiesced = outcome === SETTLED
       const confirmed = quiesced
+      // The three-state model, stated as fact only for the part that is known:
+      // a signal was sent (`cancel-requested`); an exit was then observed
+      // (`exited`) or the windows ran out (`unconfirmed`). A caller abort ends
+      // the wait early, so it keeps the honest middle value instead of
+      // pretending the body died.
+      const state = quiesced
+        ? EXIT_STATES.exited
+        : abortedByCaller
+          ? EXIT_STATES.cancelRequested
+          : EXIT_STATES.unconfirmed
       const waitedMs = Math.max(0, now() - waitedFrom)
 
       const elapsedMs = Math.max(0, now() - began)
@@ -379,12 +405,13 @@ export function createStallGuard(options = {}) {
           timedOut,
           quiesced,
           confirmed,
+          state,
           callerAborted: abortedByCaller,
         })
       } catch {
         // Observation is best-effort; it must never change the result.
       }
-      return stallFailure({ name: exec.name, budgetMs, elapsedMs, confirmed })
+      return stallFailure({ name: exec.name, budgetMs, elapsedMs, confirmed, state })
     } finally {
       if (timer !== undefined) clearTimeout(timer)
       try {

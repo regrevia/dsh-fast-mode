@@ -10,12 +10,26 @@
  *   why the on/off switch and the gear selector exist there without a line of
  *   client code.
  *
- * The four form fields (`enabled`, `gear`, `parallel`, `sessions`) are `.volatile()`: that
- * is what makes them appear in the generated form *and* what lets an edit reach
- * a running fiber instead of forcing a remount. A non-volatile declaration is
- * invisible in the form — `describe()` drops it and `update()` refuses the path
- * with "is not volatile". The measurement paths below are deliberately *not*
- * volatile: they are read once at load, like `debugFile`.
+ * The seven form fields (`enabled`, `gear`, `parallel`, `sessions`,
+ * `outputDiscipline`, `stepBudget`, `workspaceMap`) are `.volatile()`: that is
+ * what makes them appear in the generated form *and* what lets an edit reach a
+ * running fiber instead of forcing a remount. A non-volatile declaration is
+ * invisible in the form — `describe()` projects through `volatileForm()`, which
+ * keeps only volatile nodes, and `update()` refuses the path with "is not
+ * volatile".
+ *
+ * The panel's three rows are volatile for exactly that reason: the client half
+ * has one channel to read state from, `describe()`, so a non-volatile field is a
+ * row it can write into `sessions` but never paint — it would keep showing the
+ * built-in default (`late` / 0 / off) while a hand-written `cordis.patch.yml`
+ * said something else. Reading the effective config from the plugin half instead
+ * was rejected: it needs a new remote method and a new config field to carry
+ * values `describe()` already projects, and the client still could not read them.
+ *
+ * Volatile does not mean "not saved": the host strips volatile keys from the raw
+ * layer and merges the projected form back on top, so an explicit value in the
+ * patch layer survives a write. It only means an edit needs no remount. The knobs
+ * below stay non-volatile: they are read once at load, like `debugFile`.
  *
  * Only the fields that belong on a settings page are declared. Every other
  * knob (`metrics`, `metricsFile`, `benchmarkFile`, `debug`, `debugFile`,
@@ -80,6 +94,7 @@ export const Config = z.object({
   outputDiscipline: z
     .union([z.boolean(), z.const('late')])
     .default('late')
+    .volatile()
     .description(
       '输出纪律 / Output discipline（面板「少写过程」，也是没有自己条目的会话的默认值）: 让模型少写过程、只在结论处落笔。`late`（默认）不往系统提示里放文风规则，第 4 步之后由调度器提醒一次——短任务零成本，长任务实测 6 对：墙钟中位 2.68×、步数 10.5→7.5、输出 token −52%、正确性 12/12 不变。`true` 全程生效；`false` 关闭。',
     ),
@@ -97,6 +112,7 @@ export const Config = z.object({
     .min(0)
     .max(80)
     .default(0)
+    .volatile()
     .description(
       '单轮步数预算 / Steps per turn（面板「最多几步」，0 显示为「不限」）: 用户自设的硬上限，到达后调度器提醒一次按现状汇报；0 = 不限（默认）。步数只说明成本，不说明任务是否完成——默认不再按步数催停，避免把仍在推进的长任务截断。需要成本上限时自己设。',
     ),
@@ -181,9 +197,17 @@ export const Config = z.object({
       '压缩指令的重复步 / Compression repeat step: `outputDiscipline: late` 的提醒每回合只发一次，第 4 步之后的长回合（10 步以上）输出会重新变长。给一个正数就按那一步再提醒一次「仍然只写下一步要用的」，仍然每回合最多一次。0 = 不发（默认，行为不变）。',
     ),
 
+  compactRereadHint: z
+    .boolean()
+    .default(false)
+    .description(
+      '别重读刚写过的文件 / No re-read after edit: `outputDiscipline: late` 的第 4 步提醒里追加一句「本回合已经写过的文件，按最后一次编辑和检查输出来判断，不要为了确认整份重读」。依据是迁移类任务的长尾：一个回合 12–20 次读文件调用里有一部分是刚写完又整份读回来，省下的是工具参数与回显的输出 token。只在压缩提醒里多一句话，不新增消息、不改调度；默认关闭以保持 1.5.17 行为。',
+    ),
+
   workspaceMap: z
     .boolean()
     .default(false)
+    .volatile()
     .description(
       '工作区清单 / Workspace inventory（面板「先列文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。',
     ),

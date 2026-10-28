@@ -27,7 +27,7 @@ bench/
 6. **重跑覆盖。** 同一单元出现多行时取最后一行（`--dedupe last`，默认）；想复盘重跑前的块用 `--dedupe first`。
 7. **断点续跑。** 结果追加写入 `results/suite-<tag>.jsonl`，已存在的 `(task, pair, arm)` 会跳过，所以 app 重启、机器休眠都不会毁掉一整块。
 8. **运行目录要离 fixture 远。** run 目录默认放 `$TMPDIR/dsh-runs/`（macOS 上是 `/var/folders/.../T/`）。这条协议修补过两次：先是 run 目录在仓库内（`bench/.runs/`，fixture 只隔两层 `../../suite/<task>/hidden`，探索型运行读到过答案）；后来 run 目录搬到 `/tmp`，但 `/tmp` 里留着上一轮的 fixture 镜像 `/tmp/fm-bench/suite/`，一次 `migrate` 运行列了 `/tmp` 就找到它，读了 `hidden/test_migrate.py` 和 `ref/migrate.py`（`W1` 里被 canary 抓到，那一行已作废）。现在：任何 `bench/suite` 的外部副本都不许留在临时目录，run 根在 OS 临时根下。每次运行结束会扫自己的会话记录，命中 `/hidden/`、`/ref/`、`bench/suite/`、`fm-bench/suite`、`MANIFEST.json` 就在行里记 `leak: true`，这类行必须丢弃重跑。`report.py` 默认会删掉它们并打印 `leak: dropped`。
-9. **步数与 token 只算本会话。** `~/.dsh/fast-mode-metrics.jsonl` 是全机共享的；旧实现按字节窗口切分，会把同一时刻别的会话（例如正在交互的会话）的行算进来，`steps` 因此虚高（实测一次约 12 步的运行被记成 156 步）。现在按 run 目录对应的 session id 过滤：`steps` 是精确值，`stepsRaw` 保留旧窗口值，`exact` 说明是否命中 session id。墙钟由 runner 直接计时，不受影响。
+9. **步数与 token 只算本会话。** `~/.dsh/fast-mode-metrics.jsonl` 是全机共享的；旧实现按字节窗口切分，会把同一时刻别的会话（例如正在交互的会话）的行算进来，`steps` 因此虚高（实测一次约 12 步的运行被记成 156 步）。现在按 run 目录对应的 session id 过滤：`steps` 是精确值，`stepsRaw` 保留旧窗口值，`hasSessionIds` 说明是否命中 session id（历史行用旧名 `exact`，读取时回退）。墙钟由 runner 直接计时，不受影响。
 
 10. **判分在产物目录的副本里做。** 任务可能把自己的工作目录改成只读（`shellops` 家族真的会 `chmod -R a-w`），旧写法直接把隐藏测试写进产物目录，于是 `EACCES` 让整块批次中断（`W3` 在 31/60 行处崩过一次）。现在 `verify()` 先 `copytree` 到临时目录、跑完删掉，隐藏测试与测试产生的文件都不会落进被统计的产物里。
 11. **一块对应一个 fixture 摘要。** `bench/MANIFEST.json` 的 `aggregate` 是整套 fixture 的 sha256，跑批器开跑前校验，对不上就 `fixture drift` 拒绝运行。改过题面/隐藏测试后必须先重生成摘要，新旧摘要的批次不要混在一起报数。`W3` 是 `2699cd64…`，`W4` 起是 `2d7546f8…`（`ledger` 题面补明系数按 Decimal 解析）。
@@ -89,3 +89,61 @@ python3 bench/report.py --files bench/results/suite-W3.jsonl --baseline off
 - **门禁只覆盖隐藏测试**：解释质量、代码风格、可维护性不在断言里。
 - **家族是合成的**：10 个家族覆盖写文件、读文件、状态机、shell 运维、调试和性能重构，但不等于你的真实仓库。
 - **总和比与单格中位必须一起看。** `W1` 里 `def15` 总和 0.65×、单格中位 0.98×：加速集中在少数「基线自己绕远」的格子上。只报总和会把少数长尾当成人人受益；只报中位会抹掉真实存在的大幅加速。两个都写，并给出格数。
+
+## 臂配置与提醒投递核对
+
+两条命令回答「这一臂到底被允许发什么提醒、实际发没发」：
+
+```bash
+node bench/arm-config.mjs bench/arms/disc-only.yml        # 臂 -> resolveConfig 解析结果
+node bench/verify-arm-reminders.mjs --mechanisms          # 每个开关能开/能关，10 项
+node bench/verify-arm-reminders.mjs --arms                # 臂 x 场景的提醒矩阵，8 项
+```
+
+两者都不发请求、不花钱：`arm-config.mjs` 直接 import `src/effort.js` 的 `resolveConfig`，`verify-arm-reminders.mjs` 直接 import `src/auto.js` 的 `createAutoState/noteTurn/noteEntry/noteStep/notePolicy/noteOutputTokens/autoSchedule/noteTool`，在本地按 `index.js` 的调用顺序驱动一遍，记录每次 `autoSchedule` 返回的 `directive`。不依赖 `yaml` 包（仓库 runtime 依赖为空，臂 YAML 由 `arm-config.mjs` 自带的小解析器读）。
+
+### 每个机制对应哪个开关
+
+| 机制（提醒 `kind`） | 打开 | 关掉 |
+|---|---|---|
+| 并行/引导（`guidance`，非提醒） | `guidance: true`、`parallel > 1` | `guidance: false`，`parallel: 1` |
+| 输出压缩提醒（`compress-output`） | `outputDiscipline: 'late'`（或 `true`）+ `disciplineAfterSteps` / `disciplineEarlyCalls` | `outputDiscipline: false`（解析成 `discipline: 'off'`），或 `scheduler: false` |
+| 二次提醒（同 `compress-output`，第二次） | `disciplineRepeatAtSteps: N > 0` | `disciplineRepeatAtSteps: 0` |
+| 提前提醒的额外条件 | `disciplineEarlyCalls: k > 0` | `disciplineEarlyCalls: 0` |
+| 复用校验提醒（`reuse-check`） | 无独立开关，开了 scheduler 就可能发 | 只有 `scheduler: false` |
+| 卡住换法提醒（`change-approach`） | 无独立开关，开了 scheduler 就可能发 | 只有 `scheduler: false`；`stallGuard`/`toolTimeoutMs` 只影响停顿判定，不是提醒开关 |
+| 批量校验（`batch-verify`） | `batchVerify: true` | `batchVerify: false` |
+| 先补丁后整写（`prefer-patch`） | `preferPatch: true` | `preferPatch: false` |
+| 一次开放多文件（`open-batch`） | `openBatch: true` | `openBatch: false` |
+| 收尾提示（`finish-line`） | `finishLineSteps: N > 0` | `finishLineSteps: 0` |
+| 输出预算（`output-budget`） | `outputBudget: N > 0` | `outputBudget: 0` |
+| 整轮步数预算（`stop-and-report`） | `stepBudget: N > 0` | `stepBudget: 0` |
+| 工作区地图（非提醒，注入 prompt） | `workspaceMap: true` | `workspaceMap: false` |
+
+**由此得到的结论**：想测「只有输出纪律」就必须至少关掉 `guidance`/`parallel`/`openBatch`/`preferPatch`/`batchVerify`/`finishLineSteps`/`stepBudget`/`outputBudget`/`shapeGate`，并把提醒本身设成 `outputDiscipline: 'late'`；`reuse-check` 与 `change-approach` 没有开关，只能整块关 scheduler，所以「输出纪律单独」在真实跑批里只能靠 transcript 里的固定文案（`prose is now the cost` / `still long. Keep`）筛出来，不能靠臂差。
+
+### 旧 `disc-only.yml` 为什么是空转
+
+旧臂设了 `outputDiscipline: 'late'` 却又写了 `scheduler: false`。`'late'` 这种「到第 N 步才发」的提醒**只由 scheduler 投递**（`src/auto.js` 的 `directiveFor` 第一行就是 `if (!entry.scheduler) return undefined`），所以那一臂一次提醒都没发，「只测输出纪律」这个假设从未被测到。现在的 `disc-only.yml` 保留 scheduler、只关其余机制，`verify-arm-reminders.mjs --arms` 用它跑长读场景会拿到 `compress-output@step4`，跑卡住场景会拿到 `compress-output@step4, change-approach@step8`。
+
+## 每行 result 现在带提醒证据
+
+`bench/suite-run.py` 写给 `bench/results/suite-<tag>.jsonl` 的每一行多三个字段：
+
+- `armConfig`：该臂经 `resolveConfig` 解析后的提醒相关子集（`POLICY_KEYS`），行自身就能说明「这一臂被允许发什么」；
+- `reminders`：`[{step, turnStep, kind}]`，本次运行实际投递的每条提醒（`kind` 就是 `directive` 名，`step` 是该 turn 内的步序）；
+- `reminderCounts`：`{kind: n}` 汇总；另有 `hasSessionIds` 取代旧名 `exact`。
+
+采集方式：跑这一格时把臂补丁另存为 `<tag>.arm.yml` 并加 `debug: true` + `debugFile: <runs>/<tag>.debug`，跑完从调试日志里按 `step=N ... turnSteps=M ... directive=kind` 抽行，然后删掉日志与补丁。`debug` 只在步边界写一行已经格式化好的文本，不参与任何调度判断、不额外发请求；日志写在 run 目录之外，所以 `leak_scan`/session id 统计不受影响。老 result 行没有这些字段，读取方一律用 `.get()`，缺字段等于「没有证据」，不是「零提醒」。
+
+## 正文占比与预注册门禁脚本
+
+```bash
+python3 bench/textshare.py --limit 0      # 全量 def15：正文占 (正文+工具参数) 的 1.18 %
+python3 bench/d2gsign.py D2G_IMPL          # 每个会话第一条压缩提醒落在第几步
+python3 bench/d2gscore.py                  # d2g 预注册五条判据 + 下发步位
+python3 bench/dr8sign.py DR8_MIG           # 二次提醒是否真的发出去
+python3 bench/dr8score.py                  # dr8 预注册判据 + 下发核对
+```
+
+这四个 `d2g*`/`dr8*` 脚本原先只在 `~/.local/fm/`，现在搬进 `bench/`：路径改成相对仓库（`pathlib.Path(__file__).resolve().parent`），会话检索只依赖 `~/.dsh/sessions`（不要求临时 run 目录还在），且同时认 `hasSessionIds` 与历史 `exact`。在现有 result 上跑出来的判定与 BENCHMARK.md 的 HOLD 结论一致（`D2G_IMPL d2g step 4` 一行 FAIL，实际第 3 步）。

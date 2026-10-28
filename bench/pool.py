@@ -8,7 +8,7 @@ the total wall-clock ratio? It mixes nothing across blocks: a pair only counts
 when both cells are valid and live in the same `(tag, task, pair)`.
 
 Validity is the bench rule, not `green`: `exit == 0 and steps >= 1 and out > 0
-and exact and not leak`. `green` only says the hidden assertions passed; a
+and hasSessionIds and not leak`. `green` only says the hidden assertions passed; a
 crashed session that wrote nothing can still be green, so it cannot be used as
 a unit of measurement.
 
@@ -35,7 +35,9 @@ RETRACTED = ('V15', 'TA3', 'TA4')
 
 def valid(row):
     return (row.get('exit') == 0 and row.get('steps', 0) >= 1
-            and row.get('out', 0) > 0 and row.get('exact') and not row.get('leak'))
+            and row.get('out', 0) > 0
+            and row.get('hasSessionIds', row.get('exact'))
+            and not row.get('leak'))
 
 
 def load(blocks):

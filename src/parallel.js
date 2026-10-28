@@ -25,8 +25,23 @@
  * @module dsh-fast-mode/parallel
  */
 
+import {
+  DEFAULT_EXIT_CONFIRM_MS,
+  EXIT_STATES,
+  exitWarning,
+  supportsProcessGroups,
+  terminateProcessTree,
+} from './exit.js'
+
 /** Model-facing tool name. */
 export const SHELL_PARALLEL_TOOL = 'shell_parallel'
+
+/**
+ * How long a cancelled job may spend confirming that its process group is
+ * really gone. Long enough for a shell and its child to be reaped, short enough
+ * that three stuck jobs do not add a visible step to the turn.
+ */
+export const EXIT_CONFIRM_MS = DEFAULT_EXIT_CONFIRM_MS
 
 /** Default pool size. Matches the agent-loop's default cap, with headroom. */
 export const DEFAULT_POOL = 8
@@ -102,6 +117,7 @@ export function buildShellParallelTool ({ spawn, logger, pool = DEFAULT_POOL, cl
       'separate bash calls — even in one block — are executed one after another, so their runtimes add up, while this call overlaps them.',
       'Do NOT put dependent steps here: a command that needs an earlier command\'s output stays a normal bash call.',
       'Do NOT run two jobs that write the same file. Each job is {command, label?, cwd?}; commands run in the session cwd by default.',
+      'A killed job reports exitState: "cancel-requested" (signal sent), "exited" (its process group was seen to be gone), or "unconfirmed" (the group could not be confirmed gone in time). Only "exited" means it stopped; "unconfirmed" may still be writing files.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -159,9 +175,13 @@ export function buildShellParallelTool ({ spawn, logger, pool = DEFAULT_POOL, cl
         let stdout = ''
         let stderr = ''
         let settled = false
+        /** `null` | 'timeout' | 'abort' — who owns this job's ending. */
+        let cancelling = null
+        let abort = null
         const finish = (value) => {
           if (settled) return
           settled = true
+          if (signal && abort) signal.removeEventListener('abort', abort)
           resolve({ index, started, ...value })
         }
         let child
@@ -175,6 +195,11 @@ export function buildShellParallelTool ({ spawn, logger, pool = DEFAULT_POOL, cl
             cwd: jobCwd(exec, job),
             env: process.env,
             stdio: ['ignore', 'pipe', 'pipe'],
+            // The shell is not the job: `bash -lc 'python …'` runs the work in a
+            // grandchild. A process group of its own is what lets a cancellation
+            // reach that grandchild instead of leaving it writing files (see
+            // `src/exit.js` for the three-state model).
+            detached: supportsProcessGroups(),
             // Windows allocates a console for every spawn unless told not to, and
             // that allocation is synchronous on the thread that starts the job:
             // three jobs then take turns instead of overlapping.
@@ -184,34 +209,72 @@ export function buildShellParallelTool ({ spawn, logger, pool = DEFAULT_POOL, cl
           finish({ label: job.label, command: job.command, exit: null, timedOut: false, error: String(error?.message ?? error), stdout: { text: '', clipped: false }, stderr: { text: '', clipped: false } })
           return
         }
-        const timer = setTimeout(() => {
-          try { child.kill('SIGKILL') } catch { /* already gone */ }
-          finish({ label: job.label, command: job.command, exit: null, timedOut: true, stdout: clip(stdout), stderr: clip(stderr) })
-        }, perJob)
-        const abort = () => {
-          try { child.kill('SIGKILL') } catch { /* already gone */ }
+        const group = supportsProcessGroups() && Number.isInteger(child.pid) && child.pid > 0
+        let timer
+        /**
+         * Cancel the managed scope, then settle on what was observed.
+         *
+         * Sending SIGKILL is `cancel-requested`, not an exit: the promise stays
+         * open until the process group is confirmed gone (`exited`) or the
+         * confirmation window expires (`unconfirmed`). A job whose shell died
+         * but whose grandchild is still writing must never be reported as if it
+         * had exited.
+         */
+        const cancel = (kind) => {
+          if (settled || cancelling) return
+          cancelling = kind
           clearTimeout(timer)
-          finish({ label: job.label, command: job.command, exit: null, timedOut: false, aborted: true, stdout: clip(stdout), stderr: clip(stderr) })
+          terminateProcessTree(child, { confirmMs: EXIT_CONFIRM_MS, group }).then((outcome) => {
+            const warning = exitWarning(outcome.state, outcome.scope)
+            finish({
+              label: job.label,
+              command: job.command,
+              exit: null,
+              ...(kind === 'timeout' ? { timedOut: true } : { timedOut: false, aborted: true }),
+              exitState: outcome.state,
+              ...(warning ? { stillRunning: outcome.state !== EXIT_STATES.exited, note: warning } : {}),
+              stdout: clip(stdout),
+              stderr: clip(stderr),
+            })
+          }).catch((error) => {
+            finish({
+              label: job.label,
+              command: job.command,
+              exit: null,
+              ...(kind === 'timeout' ? { timedOut: true } : { timedOut: false, aborted: true }),
+              exitState: EXIT_STATES.unconfirmed,
+              stillRunning: true,
+              note: `exit confirmation failed: ${String(error?.message ?? error)}`,
+              error: String(error?.message ?? error),
+              stdout: clip(stdout),
+              stderr: clip(stderr),
+            })
+          })
         }
+        timer = setTimeout(() => cancel('timeout'), perJob)
+        abort = () => cancel('abort')
         if (signal) {
-          if (signal.aborted) { abort(); return }
+          if (signal.aborted) { cancel('abort'); return }
           signal.addEventListener('abort', abort, { once: true })
         }
         child.stdout?.on('data', (chunk) => { stdout += chunk })
         child.stderr?.on('data', (chunk) => { stderr += chunk })
         child.on('error', (error) => {
+          // A cancellation owns the ending: its state is the truthful one.
+          if (cancelling) return
           clearTimeout(timer)
           finish({ label: job.label, command: job.command, exit: null, timedOut: false, error: String(error?.message ?? error), stdout: clip(stdout), stderr: clip(stderr) })
         })
         child.on('close', (code, sig) => {
+          if (cancelling) return
           clearTimeout(timer)
-          if (signal) signal.removeEventListener('abort', abort)
           finish({
             label: job.label,
             command: job.command,
             exit: typeof code === 'number' ? code : null,
             signal: sig ?? undefined,
             timedOut: false,
+            exitState: EXIT_STATES.exited,
             stdout: clip(stdout),
             stderr: clip(stderr),
           })

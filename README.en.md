@@ -9,7 +9,7 @@
 
 <p align="center">
   <b>DeepSeek Harness's own fast mode: a few configs that set how fast a task runs.</b><br>
-  Bound where thinking settles, bound the process narration, bound the steps per task — faster delivery without touching the model or its thinking strength.
+  Never changes the model or its reasoning effort; it cuts redundant round trips and output through execution-strategy hints — the gain is fewer steps and fewer output tokens, not deleted narration.
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 
 Across 10 task families and 30 complete units (hidden tests 60/60 green):
 
-- **Default**: 0.72x total time, 0.74x output tokens, 0.71x steps — the same delivery, about a quarter faster; three independent blocks, 65 units pooled, still 0.74x.
+- **Default (whole pool, no block picking)**: 12 clean blocks, 10 task families, 138 valid pairs, added as whole tasks — **0.823x** total time (about 18 % saved), 0.818x output tokens, 0.806x steps, 93 of 138 pairs faster (recompute with `python3 bench/pool.py`). The earlier 0.72-0.74x came from three hand-picked blocks and has been withdrawn; why is in BENCHMARK.md.
 - **Moving the "write it once" reminder from step 4 to step 2**: `debugfix` 0.535x, `ledger` 0.506x, `migrate` 0.751x; 13 pairs pooled **0.625x** with output tokens **0.614x**. At step 3, `migrate` alone reaches **0.509x** with output tokens **0.528x**.
 - **Quality**: in every pair both arms produced identical hidden assertions, all green; the saving is fewer edit-recheck loops, not fewer checks.
 - **Where it does not pay**: 1-5 step repairs and data reshaping (`perfrefactor` 1.18x, `csvpipe` 1.12x), so try it once per task shape.
@@ -36,10 +36,16 @@ Across 10 task families and 30 complete units (hidden tests 60/60 green):
 A step costs round-trip overhead × steps + decode time × output tokens + tool wait. Model and thinking strength are not in that equation, so fast mode only moves three programmatic quantities:
 
 - **Parallel fan-out.** The scheduler asks whether this step is "several reads of different targets"; only then does it go wide (up to 8) and remember that shape across turns. Write steps, single-call steps, erroring or stalled turns **stay native** — the whole batching section is not rendered, so it costs no input tokens.
-- **Output discipline.** It trims process narration (no call previews, no restating results, no progress reports); the final answer is untouched.
+- **Output discipline.** Asks the model to skip call previews, restatements and progress reports, never to shorten the final answer. Honest scope: visible assistant prose is only **1.18 %** of the characters in (prose + tool arguments) (def15, 341 sessions / 3,327 messages / 3,569 calls, 51,366 prose vs 4,315,096 argument characters; excludes reasoning and tool results; recompute with `python3 bench/textshare.py --limit 0`), so the speedup cannot be attributed to deleted narration — it comes from fewer round trips and fewer output tokens (fewer repeat edits, re-reads and verification passes). That is not the same claim as "nothing about the work changes".
 - **Stall watchdog.** Shell/script calls get a 120–300 s adaptive cap; a stuck call is cancelled and "change the approach" is written back into the context.
 
 No model switch, no `reasoningEffort` rewrite, no request-field injection (`service_tier`, `max_tokens`, anything like them). While the mode is on, the model's input carries this plugin's own scheduling guidance and reminders — that is the mechanism; switch the mode off and they are gone. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
+
+## Three boundaries
+
+- **The explicit promise**: the plugin does not change the model, does not rewrite `reasoningEffort`, and does not inject request fields. That is where quality degradation would most likely come from, and the plugin stays out of it.
+- **Honest mechanism**: execution-strategy hints cut redundant round trips and output. The evidence is falling steps and output tokens (whole-pool default arm: 0.806× steps, 0.818× output); no claim that the gain comes from deleting narration.
+- **Quality boundary**: quality is judged by hidden tests and real evaluations, and behaviour is not claimed to be fully equivalent. When the quality gate fails, quality wins: experimental knobs ship off, and the default is only adopted from batches where both arms' hidden assertions match cell by cell.
 
 ## Three words, defined
 
@@ -49,7 +55,7 @@ No model switch, no `reasoningEffort` rewrite, no request-field injection (`serv
 
 ## Measured
 
-**Toggle it on and the headline is: about 18% faster in total, and 25–30% faster on the shapes it fits.** That is every clean block with an `off` anchor pooled (12 blocks, 138 valid pairs, 10 task families; recompute with `python3 bench/pool.py`): total time **0.823×** (18% less), output tokens 0.818×, steps 0.806×, per-cell median 0.799×, faster in 93 of 138 pairs (sign test p = 0.0001). Bootstrapping those 138 pairs 2000 times puts the total ratio at a 95% interval of **[0.742, 0.913]** (9% to 26% faster), the per-cell median at [0.703, 0.885], and the geometric mean at 0.825× (interval 0.753–0.900) — "about 18%" is a point estimate, not a floor. The only quality statement at the same denominator: hidden assertions matched cell for cell across the 138 pairs (`off` 2038/2038, default 2037/2038, the one difference being a 21/22 cell) — that is **assertion parity**, not "zero quality loss". Per-family stability and sign tests are in [BENCHMARK.md](BENCHMARK.md), section "合池的自助区间与逐任务稳定性", which also explains why per-family numbers cannot be quoted across blocks.
+**Toggle it on and the headline is: about 18% faster in total, and 25–30% faster on the shapes it fits.** That is every clean block with an `off` anchor pooled (12 blocks, 138 valid pairs, 10 task families; recompute with `python3 bench/pool.py`): total time **0.823×** (18% less), output tokens 0.818×, steps 0.806×, per-cell median 0.799×, faster in 93 of 138 pairs (sign test p = 0.0001). Bootstrapping those 138 pairs 2000 times puts the total ratio at a 95% interval of **[0.742, 0.913]** (9% to 26% faster), the per-cell median at [0.703, 0.885], and the geometric mean at 0.825× (interval 0.753–0.900; that is the paired geometric mean, a different statistic from the pooled total ratio **0.823×**, and the two are not interchangeable) — "about 18%" is a point estimate, not a floor. The only quality statement at the same denominator: hidden assertions matched cell for cell across the 138 pairs (`off` 2038/2038, default 2037/2038, the one difference being a 21/22 cell) — that is **assertion parity**, not "zero quality loss". Per-family stability and sign tests are in [BENCHMARK.md](BENCHMARK.md), section "合池的自助区间与逐任务稳定性", which also explains why per-family numbers cannot be quoted across blocks.
 
 **When to turn it on, and when not to.** On: mid-length tasks with several artifacts and repeated re-checks — `codeimpl` 0.663x (faster in 13 of 15 pairs, sign test p = 0.007) and `shellpipeline` 0.749x (p = 0.039), with `stategraph` 0.708x, `shellops` 0.748x, `codebase` 0.808x and `migrate` 0.822x on the same side but with too few pairs to stand alone. Off: one-to-five-step repairs and data reshaping — `debugfix` 1.032x (output actually 1.29x longer) and `perfrefactor` 1.009x, where the injected reminder cannot pay for itself. `ledger` 0.915x and `csvpipe` 0.982x are a wash. The switch is the lightning bolt per conversation; it remembers your last choice and applies from the next request.
 

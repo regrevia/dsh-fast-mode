@@ -73,6 +73,7 @@ import {
   noteStep,
   noteTool,
   noteTurn,
+  toolTargets,
 } from './src/auto.js'
 import { buildConflictMessage, buildReassertMessage, createNoticeMessage } from './src/notices.js'
 import { buildWorkspaceMap } from './src/map.js'
@@ -96,7 +97,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.17'
+export const VERSION = '1.5.18'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -265,7 +266,7 @@ export function apply(ctx, rawConfig) {
   if (initial.debug) {
     appendDebug(
       initial.debugFile,
-      `apply v${VERSION} entered enabled=${initial.enabled} gear=${initial.gear} parallel=${initial.parallel} map=${String(rawConfig?.workspaceMap)} mapEntries=${String(rawConfig?.mapEntries)}`,
+      `apply v${VERSION} entered enabled=${initial.enabled} gear=${initial.gear} parallel=${initial.parallel} map=${String(initial.workspaceMap)} mapEntries=${String(initial.mapEntries)}`,
     )
     appendDebug(initial.debugFile, `measure v${VERSION}: ${metrics.enabled ? `file=${metrics.file}` : 'off'}`)
     traceSettings(ctx, initial)
@@ -663,9 +664,16 @@ export function apply(ctx, rawConfig) {
         }
         const argBody = args.content ?? args.text ?? args.contents ?? args.new_str ?? args.newString
         const argChars = typeof argBody === 'string' ? argBody.length : 0
+        // The dedupe key is sorted and truncated, so it is not evidence about
+        // which files a call touched. Hand the scheduler the real targets, plus
+        // the session directory a relative target resolves against.
+        const targets = toolTargets(args)
         const observation = {
           name: typeof exec.name === 'string' ? exec.name : 'unknown',
           argsKey: stableKey(exec.arguments),
+          paths: targets.paths,
+          command: targets.command,
+          cwd: typeof exec.agent?.session?.header?.cwd === 'string' ? exec.agent.session.header.cwd : '',
           argChars,
           isError: result?.isError === true,
           chars: contentChars(result?.content),

@@ -36,6 +36,7 @@
  */
 
 import { statSync } from 'node:fs'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 /** The gear id the adaptive scheduler runs under. */
 export const AUTO = 'auto'
 
@@ -131,7 +132,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, outputBudgetAfterSteps?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean, disciplineAfterSteps?: number, disciplineRepeatAtSteps?: number, disciplineEarlyCalls?: number}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, outputBudgetAfterSteps?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean, disciplineAfterSteps?: number, disciplineRepeatAtSteps?: number, disciplineEarlyCalls?: number, rereadHint?: boolean}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -146,6 +147,10 @@ export function notePolicy(state, agent, policy) {
   // The reminder above is once per turn; a long turn drifts back to prose after
   // it, so an explicit step can repeat the same ask exactly once more.
   entry.disciplineRepeatAtSteps = stepCount(policy?.disciplineRepeatAtSteps, 0, 0)
+  // One extra sentence, not one extra message: the compression reminder already
+  // owns a step where the turn has proven itself long, and that is the only
+  // place a re-read rule can be said for free.
+  entry.rereadHint = policy?.rereadHint === true
   // 0 keeps the early reminder unconditional, which is the 1.5.12 behaviour and
   // the arm that measured slower on short turns.
   entry.disciplineEarlyCalls = stepCount(policy?.disciplineEarlyCalls, 0, 0)
@@ -223,15 +228,21 @@ function entryOf(state, agent) {
     /** @type {Map<string, {epoch: number, digest: string}>} */
     checks: new Map(),
     /**
-     * Stat fingerprints of files this session wrote, captured when the write was
-     * observed and refreshed whenever a check passes. A stored pass is only
-     * offered for reuse while these still match on disk, which is the one piece
-     * of evidence the epoch counter cannot see: a write from outside the tool
-     * call stream.
+     * Stat fingerprints of the files this session wrote, keyed by absolute path
+     * and captured when the write was observed. They are only read to snapshot
+     * the artifact versions a passing check covered; they are never rebaselined
+     * by a later check, because that would let one pass make a different pass
+     * look current.
      *
      * @type {Map<string, {mtimeMs: number, size: number}>}
      */
     writes: new Map(),
+    /**
+     * True once a write happened whose target could not be fingerprinted. The
+     * artifact set is then unknown, and no stored pass can be defended by a stat
+     * re-read, so reuse is not offered for the rest of the session.
+     */
+    writesUncertain: false,
     /** Signature of a check that just repeated with a still-valid stored pass. */
     reuseHint: '',
     /** Epoch in which the reuse reminder last fired, so it fires once per epoch. */
@@ -249,8 +260,15 @@ function entryOf(state, agent) {
     disciplineSent: false,
     /** Step for the optional repeat of that reminder; 0 = off. */
     disciplineRepeatAtSteps: AUTO_LIMITS.disciplineRepeatAtSteps,
+    /** Append the "do not re-read what this turn wrote" sentence to the reminder. */
+    rereadHint: false,
     /** True once the repeat has been sent. */
     disciplineRepeatSent: false,
+    /**
+     * The step the real-time reminder was locked to for this turn, decided once
+     * from the first step's call density. 0 means "not decided yet".
+     */
+    disciplineAtLocked: 0,
     /** Hard stop: the step count that ends the turn with "report now". */
     turnStepBudget: AUTO_LIMITS.turnStepBudget,
     /** Soft stop: one "no more scope" reminder at this step, 0 = off. */
@@ -304,6 +322,7 @@ export function noteTurn(state, agent) {
   entry.stepProgress = false
   entry.disciplineSent = false
   entry.disciplineRepeatSent = false
+  entry.disciplineAtLocked = 0
   entry.finishLineSent = false
   entry.outBudgetSent = false
   entry.openingSent = false
@@ -386,14 +405,22 @@ export function noteStep(state, agent) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{name?: string, argsKey?: string, isError?: boolean, chars?: number, digest?: string, durationMs?: number}} observation
+ * @param {{name?: string, argsKey?: string, isError?: boolean, chars?: number, digest?: string,
+ *   durationMs?: number, paths?: string[], command?: string, cwd?: string}} observation
+ *   `argsKey` is dedupe identity only (sorted, truncated); `paths`, `command` and
+ *   `cwd` are the untruncated execution facts the verification evidence needs.
  */
 export function noteTool(state, agent, observation) {
   const entry = entryOf(state, agent)
   const obs = observation && typeof observation === 'object' ? observation : {}
   const name = typeof obs.name === 'string' && obs.name.length > 0 ? obs.name : 'unknown'
   const argsKey = typeof obs.argsKey === 'string' ? obs.argsKey : ''
-  const signature = `${name}\u0000${argsKey}`
+  // Dedupe identity: bounded and cheap. Execution semantics come from the
+  // untruncated command/paths the observation carries, never from this key.
+  const command = typeof obs.command === 'string' ? obs.command : ''
+  const signature = SHELL_CALLS.has(name) && command.length > 0
+    ? `${name}\u0000${command}`
+    : `${name}\u0000${argsKey}`
   const chars = Number.isFinite(obs.chars) ? Number(obs.chars) : -1
   const digest = typeof obs.digest === 'string' && obs.digest.length > 0 ? obs.digest : `chars:${chars}`
   const isError = obs.isError === true
@@ -417,7 +444,7 @@ export function noteTool(state, agent, observation) {
   // command often names a build tool (`npm test`, `make test`): bumping the
   // epoch on the check itself is what used to make the one command this
   // reminder targets unable to produce it.
-  const shellKind = SHELL_CALLS.has(name) ? classifyShell(argsKey) : undefined
+  const shellKind = SHELL_CALLS.has(name) ? classifyShell(command.length > 0 ? command : argsKey) : undefined
   if (MUTATING_CALLS.has(name) || shellKind === 'unknown') {
     entry.epoch += 1
     entry.checks.clear()
@@ -425,7 +452,7 @@ export function noteTool(state, agent, observation) {
     entry.writesSinceCheck += 1
     entry.batchVerifySent = false
   }
-  if (MUTATING_CALLS.has(name)) recordWritePaths(entry, argsKey)
+  if (MUTATING_CALLS.has(name)) recordWritePaths(entry, obs)
 
   // A whole-file argument is the compressible half of output: the file lands on
   // disk either way, so the only thing a hunk form changes is how many tokens
@@ -453,7 +480,7 @@ export function noteTool(state, agent, observation) {
     else if (previous.digest !== digest) progress = true
     entry.seen.set(signature, { digest, chars, errored: false })
     entry.errors = 0
-    noteCheck(entry, argsKey, signature, digest, shellKind)
+    noteCheck(entry, signature, digest, shellKind)
     // Only a verification run is evidence that the current files were checked;
     // a read-only shell command says nothing about the edits still unverified.
     if (shellKind === 'verify') {
@@ -497,6 +524,42 @@ const WRITE_WINDOW = 64
 
 const MUTATING_CALLS = Object.freeze(new Set(['write', 'write_file', 'create_file', 'edit', 'multi_edit', 'apply_patch', 'patch']))
 const SHELL_CALLS = Object.freeze(new Set(['bash', 'shell', 'terminal', 'run_code', 'exec']))
+
+/**
+ * What a tool call actually names: the files a mutation targets, the command text
+ * a shell call runs. Read from the **untruncated** arguments the hook receives.
+ *
+ * This exists because the dedupe key cannot be reused as execution semantics: it
+ * is sorted by field name and cut at 400 characters, so a whole-file write whose
+ * `content` sorts before `path` loses the path entirely — the tracking table then
+ * stays empty while the write did happen. Callers pass the result into
+ * `noteTool` so the reuse evidence covers the real artifact.
+ *
+ * @param {unknown} args
+ * @returns {{paths: string[], command: string}}
+ */
+export function toolTargets(args) {
+  const paths = []
+  const commands = []
+  if (typeof args === 'string') {
+    commands.push(args)
+  } else if (args && typeof args === 'object') {
+    for (const field of PATH_FIELDS) {
+      const value = args[field]
+      if (typeof value === 'string') paths.push(value)
+      else if (Array.isArray(value)) paths.push(...value.filter(part => typeof part === 'string'))
+    }
+    for (const field of COMMAND_FIELDS) {
+      const value = args[field]
+      if (typeof value === 'string') commands.push(value)
+      else if (Array.isArray(value)) commands.push(...value.filter(part => typeof part === 'string'))
+    }
+  }
+  return {
+    paths: paths.filter(path => path.length > 0 && path.length <= 4096),
+    command: commands.join('\n').slice(0, 4000),
+  }
+}
 
 /** @param {string} key @returns {unknown} */
 function parseArgs(key) {
@@ -599,11 +662,28 @@ function classifyShell(argsKey) {
  * @param {string} argsKey
  * @returns {string[]}
  */
-function writePathsOf(argsKey) {
-  const key = typeof argsKey === 'string' ? argsKey : ''
-  if (key.length === 0) return []
+function writePathsOf(obs) {
+  const direct = obs && Array.isArray(obs.paths) ? obs.paths : []
+  const named = direct.filter(path => typeof path === 'string' && path.length > 0 && path.length <= 4096)
+  if (named.length > 0) return named
+  return pathsFromKey(typeof obs?.argsKey === 'string' ? obs.argsKey : '')
+}
+
+/**
+ * Fallback target extraction from the bounded dedupe key. Only for hosts that do
+ * not pass the real arguments: the key is cut at 400 characters and sorted by
+ * field name, so a large whole-file write can lose its path. Treat a key-derived
+ * target as a hint, never as proof that the rest of the call touched nothing —
+ * the caller marks such a write uncertain when a target cannot be fingerprinted.
+ *
+ * @param {string} key
+ * @returns {string[]}
+ */
+function pathsFromKey(key) {
+  const argsKey = typeof key === 'string' ? key : ''
+  if (argsKey.length === 0) return []
   const paths = []
-  const parsed = parseArgs(key)
+  const parsed = parseArgs(argsKey)
   if (typeof parsed === 'string') paths.push(parsed)
   else if (parsed && typeof parsed === 'object') {
     for (const field of PATH_FIELDS) {
@@ -613,15 +693,32 @@ function writePathsOf(argsKey) {
     }
   } else {
     const field = /"(?:path|file_path|filePath|target|file|filename)"\s*:\s*("(?:[^"\\]|\\.)*")/g
-    let match = field.exec(key)
+    let match = field.exec(argsKey)
     while (match) {
       const value = parseArgs(match[1])
       if (typeof value === 'string') paths.push(value)
-      match = field.exec(key)
+      match = field.exec(argsKey)
     }
-    if (paths.length === 0 && !key.startsWith('{') && !key.startsWith('[')) paths.push(key)
+    if (paths.length === 0 && !argsKey.startsWith('{') && !argsKey.startsWith('[')) paths.push(argsKey)
   }
   return paths.filter(path => path.length > 0 && path.length <= 4096)
+}
+
+/**
+ * Resolve a tool-named path the way the tool itself would. A relative path needs
+ * the session's project directory: the host process runs somewhere else, so
+ * `statSync('./src/a.js')` against the wrong base silently tracked the wrong
+ * file (or nothing at all).
+ *
+ * @param {string} cwd
+ * @param {string} path
+ * @returns {string|undefined}
+ */
+function absolutePath(cwd, path) {
+  if (typeof path !== 'string' || path.length === 0) return undefined
+  if (isAbsolute(path)) return path
+  if (typeof cwd !== 'string' || cwd.length === 0) return undefined
+  return resolvePath(cwd, path)
 }
 
 /**
@@ -645,7 +742,7 @@ function fingerprintOf(path) {
 /** @param {Map<string, {mtimeMs: number, size: number}>} writes @param {string} path */
 function trackPath(writes, path) {
   const print = fingerprintOf(path)
-  if (!print) return
+  if (!print) return false
   writes.delete(path)
   writes.set(path, print)
   while (writes.size > WRITE_WINDOW) {
@@ -653,34 +750,59 @@ function trackPath(writes, path) {
     if (oldest === undefined) break
     writes.delete(oldest)
   }
-}
-
-/** @param {object} entry @param {string} argsKey */
-function recordWritePaths(entry, argsKey) {
-  for (const path of writePathsOf(argsKey)) trackPath(entry.writes, path)
+  return true
 }
 
 /**
- * Re-baseline the tracked files at the moment a check passes, so the finger-
- * prints describe the artifact that pass proved rather than the write that
- * preceded it.
+ * Fingerprint the files a mutation named, resolved against the session directory.
  *
  * @param {object} entry
+ * @param {{paths?: string[], cwd?: string, argsKey?: string}} obs
  */
-function refreshWritePaths(entry) {
-  for (const path of [...entry.writes.keys()]) trackPath(entry.writes, path)
+function recordWritePaths(entry, obs) {
+  const cwd = obs && typeof obs.cwd === 'string' ? obs.cwd : ''
+  const paths = writePathsOf(obs)
+  let tracked = 0
+  for (const path of paths) {
+    const absolute = absolutePath(cwd, path)
+    if (absolute === undefined) continue
+    if (trackPath(entry.writes, absolute)) tracked += 1
+  }
+  // A mutation whose target could not be fingerprinted leaves the artifact set
+  // unknown. No stored pass can then be defended by a stat re-read, so the
+  // session stops offering reuse instead of guessing.
+  if (tracked === 0) entry.writesUncertain = true
 }
 
 /**
- * True when a file this session wrote no longer matches the fingerprint of the
- * pass being offered for reuse. A stat that fails counts as changed: a pass is
- * never offered on evidence that could not be re-read.
+ * Snapshot the versions of every tracked artifact at this instant. This is the
+ * evidence a passing check covers: the files on disk when the pass ran, not the
+ * state at the last write (which the pass may have been re-run against) and not a
+ * session-wide table a different check could refresh.
  *
- * @param {Map<string, {mtimeMs: number, size: number}>} writes
+ * @param {object} entry
+ * @returns {Map<string, {mtimeMs: number, size: number}>}
+ */
+function evidenceSnapshot(entry) {
+  const evidence = new Map()
+  for (const path of entry.writes.keys()) {
+    const print = fingerprintOf(path)
+    if (print) evidence.set(path, print)
+  }
+  return evidence
+}
+
+/**
+ * True when a file covered by the stored pass no longer matches the fingerprint
+ * captured with that pass. A stat that fails counts as changed: a pass is never
+ * offered on evidence that could not be re-read.
+ *
+ * @param {Map<string, {mtimeMs: number, size: number}>} evidence
  * @returns {boolean}
  */
-function artifactsChanged(writes) {
-  for (const [path, print] of writes) {
+function evidenceStale(evidence) {
+  if (!(evidence instanceof Map)) return true
+  for (const [path, print] of evidence) {
     const now = fingerprintOf(path)
     if (!now || now.mtimeMs !== print.mtimeMs || now.size !== print.size) return true
   }
@@ -699,28 +821,35 @@ function withdrawCheck(entry, signature) {
 }
 
 /**
- * Store a passing verification as a reusable result, and raise the hint when it
- * is a verbatim repeat of one that is still valid for the current epoch.
+ * Store a passing verification as a reusable result, together with the artifact
+ * versions **that pass actually covered**, and raise the hint when the same check
+ * repeats while that evidence still holds.
  *
- * Only a recognised verification run is stored. A repeated read or grep is not
- * a check: offering to "reuse" its output would be a claim about an artifact
- * that nothing verified.
+ * The evidence is per check, never refreshed by a different check: a later pass
+ * of command B used to re-baseline the session-wide fingerprints, which made an
+ * older pass of command A look current although A had run against older files.
+ * Each stored pass now snapshots `entry.writes` at the moment it is seen, and is
+ * only offered while those exact versions are still on disk and no write or
+ * unrecognised command has bumped the epoch since.
+ *
+ * Only a recognised verification run is stored. A repeated read or grep is not a
+ * check: offering to "reuse" its output would be a claim about an artifact that
+ * nothing verified.
  *
  * @param {object} entry
- * @param {string} argsKey
  * @param {string} signature
  * @param {string} digest
  * @param {'readonly'|'verify'|'unknown'|undefined} shellKind
  */
-function noteCheck(entry, argsKey, signature, digest, shellKind) {
-  if (shellKind !== 'verify' || argsKey.length === 0) return
-  refreshWritePaths(entry)
+function noteCheck(entry, signature, digest, shellKind) {
+  if (shellKind !== 'verify' || signature.length === 0) return
   const stored = entry.checks.get(signature)
-  if (stored && stored.epoch === entry.epoch && stored.digest === digest && entry.reuseHint === '') {
+  if (stored && stored.epoch === entry.epoch && stored.digest === digest
+      && entry.reuseHint === '' && !entry.writesUncertain && !evidenceStale(stored.evidence)) {
     entry.reuseHint = signature
     return
   }
-  entry.checks.set(signature, { epoch: entry.epoch, digest })
+  entry.checks.set(signature, { epoch: entry.epoch, digest, evidence: evidenceSnapshot(entry) })
   if (entry.checks.size > 64) {
     const oldest = entry.checks.keys().next().value
     if (oldest !== undefined) entry.checks.delete(oldest)
@@ -918,11 +1047,19 @@ function directiveFor(entry, stats) {
   // step's own calls have not happened yet, so counting them would let a step pay
   // for its own admission.
   const callsBefore = entry.turnCalls - entry.stepCalls
-  const disciplineAt = entry.disciplineEarlyCalls > 0
-    && earlyAt < AUTO_LIMITS.disciplineAfterSteps
-    && callsBefore < entry.disciplineEarlyCalls
-    ? AUTO_LIMITS.disciplineAfterSteps
-    : earlyAt
+  // The bet is decided once, from the first step's density, and then frozen for
+  // the turn. Re-reading the cumulative count at every step made the reminder
+  // drift: a two-call first step qualified for the early slot at step 2, then the
+  // same turn looked dense at step 3 and pushed the reminder to step 4 instead.
+  if (entry.disciplineEarlyCalls > 0
+      && earlyAt < AUTO_LIMITS.disciplineAfterSteps
+      && entry.disciplineAtLocked === 0
+      && stats.turnSteps >= 2) {
+    entry.disciplineAtLocked = callsBefore < entry.disciplineEarlyCalls
+      ? AUTO_LIMITS.disciplineAfterSteps
+      : earlyAt
+  }
+  const disciplineAt = entry.disciplineAtLocked > 0 ? entry.disciplineAtLocked : earlyAt
   if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= disciplineAt) {
     // Late engagement: the prompt carried no prose rules, so the only cost of a
     // short task was its own work. By this step the task is demonstrably long,
@@ -935,7 +1072,11 @@ function directiveFor(entry, stats) {
       text: 'Auto schedule: this turn is long enough that prose is now the cost. '
         + 'For the remaining steps write only what the next action needs: the command, the file, the '
         + 'conclusion. No restating file contents, no narrating what you are about to do, no summary of '
-        + 'what a tool returned. Keep the answer complete; cut the commentary.',
+        + 'what a tool returned. Keep the answer complete; cut the commentary.'
+        + (entry.rereadHint
+          ? ' For a file this turn already wrote, work from the last edit and the check output; do not read '
+            + 'the whole file again just to confirm.'
+          : ''),
       summary: 'auto: compress output for the rest of the turn',
     }
   }
@@ -954,7 +1095,7 @@ function directiveFor(entry, stats) {
     }
   }
   const outBudget = entry.outBudget
-  const budgetArmed = entry.steps >= (entry.outBudgetAfterSteps || 0)
+  const budgetArmed = stats.turnSteps >= (entry.outBudgetAfterSteps || 0)
   if (outBudget > 0 && budgetArmed && !entry.outBudgetSent && stats.turnOutTokens >= outBudget) {
     // Evidence that the turn is expensive, not that it is long: the counter is
     // the provider's own usage. A three-step turn that wrote 30 000 tokens is a
@@ -1010,14 +1151,16 @@ function directiveFor(entry, stats) {
     // already passed and neither a write nor an unrecognised shell command ran
     // since. Both of those bump the epoch, so reaching this branch already means
     // the tool call stream saw nothing that could have changed the result. The
-    // files it wrote are re-read here because that stream cannot see a change
-    // that arrived some other way; a stale fingerprint withdraws the pass.
-    if (artifactsChanged(entry.writes)) {
-      entry.epoch += 1
-      entry.checks.clear()
+    // artifacts that particular pass covered are re-read here because the stream
+    // cannot see a change that arrived some other way; a pass whose own evidence
+    // no longer matches is withdrawn, and so is every pass once a write left the
+    // artifact set unknown.
+    const stored = entry.checks.get(entry.reuseHint)
+    const backedByEvidence = stored !== undefined && stored.epoch === entry.epoch
+      && !entry.writesUncertain && !evidenceStale(stored.evidence)
+    if (!backedByEvidence) {
+      entry.checks.delete(entry.reuseHint)
       entry.reuseHint = ''
-      entry.writesSinceCheck += 1
-      entry.batchVerifySent = false
     } else {
       entry.reuseHint = ''
       entry.reuseSentEpoch = entry.epoch

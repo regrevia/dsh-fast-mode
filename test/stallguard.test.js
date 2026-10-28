@@ -395,3 +395,70 @@ test('the live registry probe answers only when an ops tool exists', () => {
   assert.equal(opsToolsLive(undefined), false)
   assert.equal(opsToolsLive(ctxWith({ get: () => { throw new Error('scope') } })), false)
 })
+
+// ---------------------------------------------------------------------------
+// Listener hygiene and the three-state report.
+//
+// A fake signal makes the leak observable: the old implementation declared the
+// caller-abort listener inside the `try` block, so the `finally` could not see
+// the binding, the removal threw, the throw was swallowed by the cleanup's own
+// catch, and the listener stayed on the caller's signal for the rest of the
+// turn — then fired later against a closure nobody owned.
+// ---------------------------------------------------------------------------
+
+function fakeSignal () {
+  const listeners = new Set()
+  return {
+    aborted: false,
+    reason: undefined,
+    addEventListener (type, listener) { if (type === 'abort') listeners.add(listener) },
+    removeEventListener (type, listener) { if (type === 'abort') listeners.delete(listener) },
+    get listenerCount () { return listeners.size },
+    abort (reason) {
+      if (this.aborted) return
+      this.aborted = true
+      this.reason = reason
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+test('a call that finishes leaves no listener on the caller signal', async () => {
+  const caller = fakeSignal()
+  const exec = { name: 'bash', signal: caller }
+  const guard = createStallGuard({ budgetFor: () => 10_000 })
+  const result = await guard(exec, async () => ({ isError: false, value: 'ok', content: [] }))
+
+  assert.equal(result.isError, false)
+  assert.equal(caller.listenerCount, 0)
+  assert.equal(exec.signal, caller, 'the caller signal is restored')
+})
+
+test('a stalled call removes the listener it added while confirming', async () => {
+  const caller = fakeSignal()
+  let stalled
+  const guard = createStallGuard({ budgetFor: () => 20, graceMs: 10, onStall: (info) => { stalled = info } })
+  const result = await guard({ name: 'bash', signal: caller }, () => new Promise(() => {}))
+
+  assert.equal(result.isError, true)
+  assert.equal(caller.listenerCount, 0, 'no listener may outlive the guard')
+  assert.equal(stalled.state, 'unconfirmed')
+  assert.equal(stalled.confirmed, false)
+  assert.match(result.content[0].text, /exit is NOT confirmed/)
+})
+
+test('a caller abort during confirmation reports cancel-requested, not exited', async () => {
+  const caller = fakeSignal()
+  let stalled
+  const guard = createStallGuard({ budgetFor: () => 20, graceMs: 5_000, onStall: (info) => { stalled = info } })
+  const pending = guard({ name: 'bash', signal: caller }, () => new Promise(() => {}))
+  const timer = setTimeout(() => caller.abort(new Error('user stopped')), 40)
+  const result = await pending
+  clearTimeout(timer)
+
+  assert.equal(stalled.state, 'cancel-requested')
+  assert.equal(stalled.callerAborted, true)
+  assert.equal(stalled.confirmed, false)
+  assert.equal(caller.listenerCount, 0)
+  assert.match(result.content[0].text, /exit is NOT confirmed/)
+})

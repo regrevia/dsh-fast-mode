@@ -22,6 +22,15 @@ import json
 import statistics as st
 
 
+def row_has_ids(row):
+    """True when the row's steps/out are attributable to its own sessions.
+
+    Written as `hasSessionIds`; historical rows carry the same boolean under the
+    old name `exact`, so both are read. It says nothing about artifact exactness.
+    """
+    return row.get('hasSessionIds', row.get('exact')) is True
+
+
 def load(files, dedupe='last'):
     """Dedupe by (task, pair, arm).
 
@@ -77,7 +86,7 @@ def main():
         rows = [r for r in rows if not r.get('leak')]
         print(f'leak: dropped {len(leaked)} run(s) that reached the fixture: '
               + ', '.join(f"{r['task']} p{r['pair']} {r['arm']}" for r in leaked))
-    inexact = [r for r in rows if r.get('exact') is False]
+    inexact = [r for r in rows if r.get('hasSessionIds', r.get('exact')) is False]
     if inexact:
         print(f'warning: {len(inexact)} run(s) without session ids; steps/out use the '
               'old byte-window attribution and are not comparable')
@@ -113,11 +122,11 @@ def main():
     per = collections.defaultdict(lambda: collections.defaultdict(lambda: [0.0, 0, 0, 0]))
     tokenDrops = []
     for (task, pair), cell in complete.items():
-        counted = all(cell[x].get('exact') is True and cell[x]['out'] > 0
+        counted = all(row_has_ids(cell[x]) and cell[x]['out'] > 0
                       and cell[x]['steps'] > 0 for x in arms)
         if not counted:
             tokenDrops.append({'task': task, 'pair': pair,
-                               'inexact': [x for x in arms if cell[x].get('exact') is not True],
+                               'inexact': [x for x in arms if not row_has_ids(cell[x])],
                                'empty': [x for x in arms if cell[x]['out'] <= 0 or cell[x]['steps'] <= 0]})
         for arm in arms:
             r = cell[arm]

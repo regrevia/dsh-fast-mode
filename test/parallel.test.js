@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   DEFAULT_POOL,
@@ -11,6 +15,15 @@ import {
   normalizeJobs,
   poolSize,
 } from '../src/parallel.js'
+import {
+  EXIT_STATES,
+  exitWarning,
+  isProcessGroupAlive,
+  signalProcessGroup,
+  supportsProcessGroups,
+  terminateProcessTree,
+  waitForExit,
+} from '../src/exit.js'
 
 const tool = buildShellParallelTool({ spawn, pool: DEFAULT_POOL })
 
@@ -104,4 +117,156 @@ test('a hung job is killed at the timeout instead of hanging the turn', async ()
   }, {})
   assert.equal(result.results[0].timedOut, true)
   assert.equal(result.results[1].stdout.text.trim(), 'quick')
+})
+
+// ---------------------------------------------------------------------------
+// Cancellation: a signal reaches the command, not just the shell around it.
+//
+// `bash -lc 'python3 …'` is two processes. Killing the shell (the old
+// implementation) left the python grandchild alive and still writing, while the
+// tool returned as if the job were over. These tests pin the three-state
+// contract: only an observed group exit may be reported as `exited`.
+// ---------------------------------------------------------------------------
+
+const POSIX = process.platform !== 'win32'
+
+/** A python that actually runs here; /usr/bin/python3 can be blocked by the CLT licence. */
+let pythonCache
+function python () {
+  if (pythonCache) return pythonCache
+  for (const candidate of ['python3', '/Users/apple/.local/bin/python3', '/opt/homebrew/bin/python3']) {
+    const probe = spawnSync('bash', ['-lc', `${candidate} -c 'print(1)'`], { encoding: 'utf8', timeout: 5_000 })
+    if (probe.status === 0) { pythonCache = candidate; return candidate }
+  }
+  return null
+}
+
+function tempDir () {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'fm-cancel-'))
+}
+
+/** A python writer: records its own pid, then appends a line every 20 ms. */
+function writerScript (dir) {
+  const script = path.join(dir, 'writer.py')
+  fs.writeFileSync(script, [
+    'import os, sys, time',
+    'pid_path, out_path = sys.argv[1], sys.argv[2]',
+    'open(pid_path, "w").write(str(os.getpid()))',
+    'with open(out_path, "a") as f:',
+    '    while True:',
+    '        f.write("x" * 64 + "\\n")',
+    '        f.flush()',
+    '        time.sleep(0.02)',
+  ].join('\n'))
+  return script
+}
+
+async function waitForFile (file, ms = 5_000) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return true
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return false
+}
+
+function isAlive (pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code !== 'ESRCH'
+  }
+}
+
+test('cancelling a job kills the command its shell started, and says something exited only then', { skip: POSIX ? false : 'process groups are POSIX-only' }, async () => {
+  const dir = tempDir()
+  const pidFile = path.join(dir, 'writer.pid')
+  const counter = path.join(dir, 'writer.log')
+  const command = `: ; ${python()} ${writerScript(dir)} ${pidFile} ${counter}`
+
+  const controller = new AbortController()
+  const pending = tool.execute({
+    jobs: [
+      { command, label: 'writer' },
+      { command: 'sleep 5', label: 'other' },
+    ],
+  }, { signal: controller.signal })
+
+  assert.equal(await waitForFile(pidFile), true, 'the grandchild must have started')
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'))
+  assert.ok(pid > 0, `writer pid ${pid}`)
+
+  controller.abort()
+  const result = await pending
+  const writer = result.results[0]
+
+  assert.equal(writer.aborted, true)
+  assert.equal(writer.exitState, EXIT_STATES.exited, 'the group exit was observed')
+  assert.equal(writer.stillRunning, undefined)
+  assert.equal(isAlive(pid), false, 'the python grandchild is gone')
+
+  // The real regression: after the tool returns, nothing may still write.
+  const size = fs.statSync(counter).size
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal(fs.statSync(counter).size, size, 'no write happened after the tool returned')
+})
+
+test('a timed-out job confirms the group too, instead of returning on the kill', { skip: POSIX ? false : 'process groups are POSIX-only' }, async () => {
+  const dir = tempDir()
+  const pidFile = path.join(dir, 'writer.pid')
+  const counter = path.join(dir, 'writer.log')
+  const command = `: ; ${python()} ${writerScript(dir)} ${pidFile} ${counter}`
+
+  const pending = tool.execute({
+    jobs: [
+      { command, label: 'writer' },
+      { command: 'sleep 3', label: 'other' },
+    ],
+    timeoutSec: 1,
+  }, {})
+
+  assert.equal(await waitForFile(pidFile), true, 'the grandchild must have started')
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'))
+  const result = await pending
+  const writer = result.results[0]
+
+  assert.equal(writer.timedOut, true)
+  assert.equal(writer.exitState, EXIT_STATES.exited)
+  assert.equal(isAlive(pid), false, 'the python grandchild is gone')
+
+  const size = fs.statSync(counter).size
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal(fs.statSync(counter).size, size, 'the timeout path leaves no live writer')
+})
+
+test('an already-gone group is not an error, and an untracked scope is never called exited', async () => {
+  const esrch = () => { const error = new Error('nope'); error.code = 'ESRCH'; throw error }
+  const eperm = () => { const error = new Error('nope'); error.code = 'EPERM'; throw error }
+
+  assert.deepEqual(signalProcessGroup(4242, 'SIGKILL', { kill: esrch }), { sent: false, group: true, reason: 'already-gone' })
+  assert.equal(isProcessGroupAlive(4242, { kill: esrch }), false)
+  assert.equal(isProcessGroupAlive(4242, { kill: eperm }), true, 'EPERM means something is still there')
+  assert.equal(supportsProcessGroups('win32'), false)
+  assert.equal(supportsProcessGroups('darwin'), true)
+
+  // Windows-style scope: the root exited, its descendants were never tracked.
+  const child = new EventEmitter()
+  child.pid = 4242
+  child.exitCode = null
+  child.signalCode = null
+  child.kill = () => true
+  const pending = terminateProcessTree(child, { confirmMs: 200, group: false })
+  child.exitCode = 0
+  child.emit('exit', 0, null)
+  const outcome = await pending
+  assert.equal(outcome.state, EXIT_STATES.unconfirmed)
+  assert.equal(outcome.scope, 'process')
+  assert.equal(outcome.rootExited, true)
+  assert.match(exitWarning(outcome.state, outcome.scope), /not confirmed/)
+
+  // A child that already exited needs no waiting.
+  const done = new EventEmitter()
+  done.exitCode = 0
+  assert.equal(await waitForExit(done, 50), true)
 })

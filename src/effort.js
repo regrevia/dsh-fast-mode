@@ -266,6 +266,8 @@ export function resolveConfig(raw, overrides) {
     disciplineRepeatAtSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.disciplineRepeatAtSteps, 0)))
       : 0,
+    /** Extra sentence in the compression reminder: do not re-read a file this turn wrote. */
+    rereadHint: gear.directive && config.compactRereadHint === true,
     /** One "batch the opening step" reminder per turn, for short tasks. */
     openBatch: gear.directive && config.openBatch === true,
     /** One "send hunks, not whole files" reminder after a large whole-file write. */

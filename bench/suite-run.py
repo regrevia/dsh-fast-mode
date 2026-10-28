@@ -68,6 +68,99 @@ def session_ids(dest):
             if p.is_dir() and p.name.startswith('session-')}
 
 
+NODE = shutil.which('node') or 'node'
+# One debug line per delivered reminder (index.js writes it at the step boundary).
+DEBUG_LINE = re.compile(r'step=(\d+).*?turnSteps=(\d+).*?directive=([a-z-]+)')
+# The resolved fields that decide which reminders an arm can emit. Copied from
+# bench/arm-config.mjs POLICY_KEYS so a row is self-describing without the YAML.
+POLICY_KEYS = ('enabled', 'gear', 'scheduler', 'guidance', 'lateDiscipline', 'discipline',
+               'disciplineAfterSteps', 'disciplineRepeatAtSteps', 'disciplineEarlyCalls',
+               'rereadHint', 'openBatch', 'preferPatch', 'batchVerify', 'shapeGate',
+               'stepBudget', 'finishLineSteps', 'outputBudget', 'outputBudgetAfterSteps',
+               'parallel', 'fanoutWidth', 'workspaceMap', 'stallGuard', 'toolTimeoutMs',
+               'shellParallel', 'reassertAfterCompaction')
+
+
+def resolve_arm(arm_path):
+    """The config the plugin runs with, from its own resolveConfig."""
+    try:
+        p = subprocess.run([NODE, str(HERE / 'arm-config.mjs'), str(arm_path), '--json'],
+                           capture_output=True, text=True, timeout=60)
+        if p.returncode != 0:
+            print(f'warning: arm-config failed for {arm_path}: {p.stderr.strip()[:200]}',
+                  file=sys.stderr)
+            return None
+        return json.loads(p.stdout).get('resolved')
+    except Exception as exc:  # noqa: BLE001 - metadata must never fail a paid run
+        print(f'warning: arm-config unavailable ({exc})', file=sys.stderr)
+        return None
+
+
+def arm_summary(resolved):
+    """The reminder-relevant subset of a resolved config, or None."""
+    return None if not resolved else {k: resolved.get(k) for k in POLICY_KEYS}
+
+
+INLINE_CONFIG = re.compile(r'^(\s*)config:\s*\{(.*)\}\s*$')
+
+
+def _split_flow(body):
+    """Split a YAML flow mapping body on top-level commas."""
+    parts, depth, cur = [], 0, ''
+    for ch in body:
+        if ch in '[{':
+            depth += 1
+        elif ch in ']}':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(cur.strip())
+            cur = ''
+            continue
+        cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return parts
+
+
+def observed_arm(arm_path, dbg):
+    """Arm patch plus `debug: true` / `debugFile`, so reminders are recorded.
+
+    `debug` only writes the step-boundary line `index.js` already formats; it
+    changes no scheduling decision and adds no request. The file lives outside the
+    run directory so `leak_scan` never reads it.
+
+    Some arms write `config: {enabled: false}` on one line; appending indented keys
+    after a flow mapping would be invalid YAML, so those are expanded to block form
+    first (keys only, values kept verbatim).
+    """
+    lines = []
+    for ln in arm_path.read_text().splitlines():
+        if re.match(r'\s+(debug|debugFile):', ln):
+            continue
+        m = INLINE_CONFIG.match(ln)
+        if m:
+            indent, body = m.group(1), m.group(2)
+            lines.append(f'{indent}config:')
+            lines += [f'{indent}  {kv}' for kv in _split_flow(body)]
+        else:
+            lines.append(ln)
+    return '\n'.join(lines).rstrip('\n') + '\n' + \
+        f'    debug: true\n    debugFile: {json.dumps(str(dbg))}\n'
+
+
+def reminder_events(dbg):
+    """Delivered reminders as `[{step, turnStep, kind}]`, one per debug line."""
+    if not dbg.exists():
+        return []
+    events = []
+    for line in dbg.read_text(errors='replace').splitlines():
+        m = DEBUG_LINE.search(line)
+        if m:
+            events.append({'step': int(m.group(1)), 'turnStep': int(m.group(2)),
+                           'kind': m.group(3)})
+    return events
+
+
 def leak_scan(dest):
     """True when a run's transcript reached the fixture (hidden test or ref)."""
     d = session_dir(dest)
@@ -215,10 +308,21 @@ def run_one(cfg, arm, meta, tag):
     met = cfg['met']
     off = met.stat().st_size if met.exists() else 0
     pre_sids = session_ids(dest)  # a resumed cell keeps earlier session dirs around
+    # Reminder evidence. The plugin records a directive only in its debug log, so
+    # the arm is run with debug on for this cell; the log path is a sibling of the
+    # run dir (never inside the artifact) and is deleted after the row is built.
+    dbg = cfg['runs'] / f'{dest.name}.debug'
+    patch = cfg['runs'] / f'{dest.name}.arm.yml'
+    for stale in (dbg, patch):
+        stale.unlink(missing_ok=True)
+    try:
+        patch.write_text(observed_arm(cfg['arms'] / f'{arm}.yml', dbg))
+    except OSError:
+        patch = cfg['arms'] / f'{arm}.yml'
     t0 = time.time()
     try:
         p = subprocess.run([cfg['exe'], cfg['cli'], 'bench', '--patch',
-                            str(cfg['arms'] / f'{arm}.yml'), meta['prompt']],
+                            str(patch), meta['prompt']],
                            cwd=dest, env=cfg['env'], capture_output=True, text=True,
                            timeout=TOKEN_TIMEOUT)
         rc = p.returncode
@@ -233,16 +337,31 @@ def run_one(cfg, arm, meta, tag):
     # Keep only rows that belong to this run's own session ids.
     sids = session_ids(dest) - pre_sids
     mine = [r for r in rows if r.get('sid') in sids] if sids else rows
+    events = reminder_events(dbg)
+    counts = {}
+    for ev in events:
+        counts[ev['kind']] = counts.get(ev['kind'], 0) + 1
+    # `hasSessionIds` says the row's steps/out were attributable to this run's own
+    # sessions -- it is not artifact exactness. Historical rows wrote the same
+    # boolean as `exact`; readers fall back to that key.
     row = {'task': meta['id'], 'arm': arm, 'wall': round(wall, 2), 'exit': rc,
-           'steps': len(mine), 'stepsRaw': len(rows), 'sids': len(sids), 'exact': bool(sids),
+           'steps': len(mine), 'stepsRaw': len(rows), 'sids': len(sids),
+           'hasSessionIds': bool(sids),
            'llm': round(sum(r.get('llmMs') or 0 for r in mine) / 1000, 2),
            'out': sum(r.get('output') or 0 for r in mine),
-           'leak': leak_scan(dest), **verify(dest, meta)}
+           'leak': leak_scan(dest),
+           'armConfig': cfg['armconfigs'].get(arm),
+           'reminders': events, 'reminderCounts': counts, **verify(dest, meta)}
     # A run counts only when a session actually ran and grading completed: a
     # crash at session startup is `exit=1 / 0 steps / 0 output`, which an old
     # reading either scored as a fast run or as a red gate. It is neither.
     row['valid'] = (row['exit'] == 0 and row['steps'] >= 1 and row['out'] > 0
                     and row['hasEntry'] and row['total'] > 0 and not row['leak'])
+    for stale in (dbg, patch):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
     return row
 
 
@@ -276,6 +395,10 @@ def main():
 
     tasks = [t.strip() for t in a.tasks.split(',') if t.strip()]
     arms = [x.strip() for x in a.arms.split(',') if x.strip()]
+    # Record what each arm resolves to once per block, so every row answers "what
+    # was this arm allowed to emit" without re-reading the YAML later.
+    cfg['armconfigs'] = {arm: arm_summary(resolve_arm(arms_dir / f'{arm}.yml'))
+                         for arm in arms}
     metas = {t: load_task(suite, t) for t in tasks}
     done = set()
     if out.exists():

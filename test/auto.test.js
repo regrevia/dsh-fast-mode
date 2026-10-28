@@ -589,6 +589,26 @@ test("outputDiscipline 'late' stays silent until the turn is long, then clears i
   assert.equal(autoSchedule(state, 's1').directive?.kind, 'compress-output')
 })
 
+test('the re-read sentence is opt-in and rides the existing reminder', () => {
+  const plain = createAutoState()
+  notePolicy(plain, 's1', { lateDiscipline: true })
+  noteTurn(plain, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(plain, 's1', 1)
+  const plainText = autoSchedule(plain, 's1').directive?.text ?? ''
+  assert.match(plainText, /remaining steps/)
+  assert.doesNotMatch(plainText, /read the whole file again/, 'default behaviour is unchanged')
+
+  const hint = createAutoState()
+  notePolicy(hint, 's1', { lateDiscipline: true, rereadHint: true })
+  noteTurn(hint, 's1')
+  for (let step = 0; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(hint, 's1', 1)
+  const hinted = autoSchedule(hint, 's1')
+  assert.equal(hinted.directive?.kind, 'compress-output', 'the sentence does not add a second reminder')
+  assert.match(hinted.directive.text, /read the whole file again just to confirm/)
+  // Still one message: the next step stays silent.
+  assert.equal(autoSchedule(hint, 's1').directive, undefined)
+})
+
 test('without the late policy the scheduler never emits the compression reminder', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false })
@@ -629,7 +649,12 @@ test('disciplineEarlyCalls only spends an early reminder on a turn that already 
   noteTurn(sparse, 's1')
   cleanStep(sparse, 's1', 1)
   assert.equal(autoSchedule(sparse, 's1').directive, undefined, 'one call in the first step keeps the built-in step')
-  for (let step = 3; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(sparse, 's1', 1)
+  // The bet is settled once from the first step and then frozen: a turn that
+  // started sparse must not drift back into the early slot just because its
+  // cumulative call count caught up mid-turn.
+  cleanStep(sparse, 's1', 3)
+  assert.equal(autoSchedule(sparse, 's1').directive, undefined, 'a dense step after a sparse start does not re-price the bet')
+  cleanStep(sparse, 's1', 3)
   assert.equal(autoSchedule(sparse, 's1').directive, undefined, 'still quiet before the built-in step')
   cleanStep(sparse, 's1', 1)
   assert.equal(autoSchedule(sparse, 's1').directive?.kind, 'compress-output', 'falls back to the built-in step')
@@ -961,12 +986,108 @@ test('a file that changed on disk after the pass withdraws the reminder', () => 
     assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
       'a file the pass covered changed on disk')
 
-    // After the pass runs again, its fingerprints are re-baselined.
+    // After the pass runs again, its evidence is the version on disk now.
     noteStep(state, 's1')
     noteTool(state, 's1', check)
     noteTool(state, 's1', check)
     cooldownSteps(state, 's1')
     assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a write is tracked through the untruncated argument, not the dedupe key', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-auto-'))
+  const file = join(dir, 'calc.py')
+  try {
+    const state = createAutoState()
+    noteTurn(state, 's1')
+    notePolicy(state, 's1', { lateDiscipline: false })
+    writeFileSync(file, 'print(1)\n')
+    // The dedupe key sorts keys and cuts at 400 chars, so a large `content`
+    // pushes `path` out of it. A scheduler that tracked the key would see no
+    // file here, call the write unresolvable, and stop offering reuse at all.
+    noteTool(state, 's1', {
+      name: 'write',
+      argsKey: JSON.stringify({ content: 'x'.repeat(600), path: file }),
+      paths: [file],
+      chars: 9,
+    })
+    const check = {
+      name: 'bash',
+      argsKey: '{"command":"python3 -m unittest"}',
+      command: 'python3 -m unittest',
+      chars: 42,
+      digest: 'ok',
+    }
+    toReuseHint(state, 's1', check)
+    cooldownSteps(state, 's1')
+    assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'the tracked file still matches the pass')
+    writeFileSync(file, 'print(1)\nprint(2)\n')
+    noteStep(state, 's1')
+    assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'the changed file withdraws the pass even though the key never named it')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a relative write resolves against the session cwd', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-auto-'))
+  try {
+    const state = createAutoState()
+    noteTurn(state, 's1')
+    notePolicy(state, 's1', { lateDiscipline: false })
+    writeFileSync(join(dir, 'calc.py'), 'print(1)\n')
+    noteTool(state, 's1', {
+      name: 'write',
+      argsKey: '{"path":"calc.py"}',
+      paths: ['calc.py'],
+      cwd: dir,
+      chars: 9,
+    })
+    const check = {
+      name: 'bash',
+      argsKey: '{"command":"python3 -m unittest"}',
+      command: 'python3 -m unittest',
+      chars: 42,
+      digest: 'ok',
+    }
+    toReuseHint(state, 's1', check)
+    cooldownSteps(state, 's1')
+    assert.equal(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'resolving against the cwd keeps the write tracked, so the pass stays reusable')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an unresolvable write target disables reuse for the rest of the session', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-auto-'))
+  const file = join(dir, 'calc.py')
+  try {
+    const state = createAutoState()
+    noteTurn(state, 's1')
+    notePolicy(state, 's1', { lateDiscipline: false })
+    writeFileSync(file, 'print(1)\n')
+    noteTool(state, 's1', { name: 'write', argsKey: '{"path":"calc.py"}', paths: [file], chars: 9 })
+    // A patch carries its targets inside the patch body, which the argument
+    // fields never name. Keeping the pass would be a guess, so honesty costs the
+    // remaining reminders in this session.
+    noteTool(state, 's1', { name: 'apply_patch', argsKey: '*** Begin Patch', chars: 180 })
+    const check = {
+      name: 'bash',
+      argsKey: '{"command":"python3 -m unittest"}',
+      command: 'python3 -m unittest',
+      chars: 42,
+      digest: 'ok',
+    }
+    toReuseHint(state, 's1', check)
+    cooldownSteps(state, 's1')
+    assert.notEqual(autoSchedule(state, 's1').directive?.kind, 'reuse-check',
+      'a write the scheduler cannot locate makes the pass unverifiable')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

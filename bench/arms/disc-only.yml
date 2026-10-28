@@ -2,8 +2,35 @@
   config:
     enabled: true
     gear: auto
-    scheduler: false
     metrics: true
     benchmarkFile: ''
     sessions: ''
     debug: false
+    # The late output reminder is delivered BY the scheduler (index.js emits
+    # schedule.directive; src/effort.js sets lateDiscipline only when the gear has
+    # a directive). scheduler: false therefore silences the very mechanism this
+    # arm is named after -- the previous version of this file did exactly that and
+    # emitted 0 reminders. Keep it on.
+    scheduler: true
+    outputDiscipline: 'late'
+    # Everything else that changes traffic or wording, off: guidance adds prompt
+    # paragraphs, parallel/fanoutWidth change batching, the opt-in reminders and
+    # the external channels (workspaceMap, stallGuard, reassert) are separate.
+    guidance: false
+    parallel: 1
+    fanoutWidth: 0
+    openBatch: false
+    preferPatch: false
+    batchVerify: false
+    shapeGate: false
+    workspaceMap: false
+    stallGuard: false
+    shellParallel: false
+    reassertAfterCompaction: false
+    stepBudget: 0
+    finishLineSteps: 0
+    outputBudget: 0
+    outputBudgetAfterSteps: 0
+    disciplineAfterSteps: 4
+    disciplineRepeatAtSteps: 0
+    disciplineEarlyCalls: 0
