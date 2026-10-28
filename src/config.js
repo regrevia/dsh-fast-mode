@@ -161,6 +161,16 @@ export const Config = z.object({
       '压缩指令的入场步 / Compression entry step: `outputDiscipline: late` 时，第几步才提醒「剩下的话只写下一步要用的」；0 = 用内置值（4）。这条提醒是本插件唯一被证明有效的机制（回合变少 + 每步输出变短），所以它的入场点值得单独调：太早会在任务还没展开时就把话掐掉，太晚则前几步的散文已经花掉。0 保持旧行为。',
     ),
 
+  disciplineEarlyCalls: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(20)
+    .default(0)
+    .description(
+      '提前入场的条件 / Early-entry gate: 与 `disciplineAfterSteps` 配合。给一个正数时，提前的入场只对「第 1 步已经发了这么多次工具调用」的回合生效，否则回到内置第 4 步。依据是实测：第 1 步只发 1 次调用的回合是单文件任务（codeimpl 8/8），提前提醒在那一族是 1.073× 更慢；第 1 步发 2 次的是多文件/调试任务（debugfix 7/7、migrate 6/6），那一族提前提醒是快的。0 = 不加条件（1.5.12 行为）。',
+    ),
+
   disciplineRepeatAtSteps: z
     .number()
     .step(1)

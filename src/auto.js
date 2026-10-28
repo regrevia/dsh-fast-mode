@@ -76,6 +76,16 @@ export const AUTO_LIMITS = Object.freeze({
   disciplineAfterSteps: 4,
   /** Off by default: no second compression reminder in a long turn. */
   disciplineRepeatAtSteps: 0,
+  /**
+   * Off by default. When set, an early `disciplineAfterSteps` only applies to a
+   * turn that has already made this many tool calls; otherwise the reminder
+   * waits for the built-in step. The early reminder is what the turn pays for
+   * and what it saves depends on the turn being long, so the call density at
+   * that step is the prediction: measured on 21 paired sessions, a one-call
+   * first step is a single-file task (8/8 codeimpl) and a two-call first step
+   * is a multi-file or debug task (7/7 debugfix, 6/6 migrate).
+   */
+  disciplineEarlyCalls: 0,
   /** A write whose body is at least this long is a whole-file rewrite. */
   patchHintMinChars: 2000,
 })
@@ -121,7 +131,7 @@ export function noteEntry(state, agent, width) {
  *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
- * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, outputBudgetAfterSteps?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean}} policy
+ * @param {{lateDiscipline?: boolean, stepBudget?: number, finishLineSteps?: number, outputBudget?: number, outputBudgetAfterSteps?: number, openBatch?: boolean, shapeGate?: boolean, scheduler?: boolean, fanoutWidth?: number, batchVerify?: boolean, preferPatch?: boolean, disciplineAfterSteps?: number, disciplineRepeatAtSteps?: number, disciplineEarlyCalls?: number}} policy
  */
 export function notePolicy(state, agent, policy) {
   const entry = entryOf(state, agent)
@@ -136,6 +146,9 @@ export function notePolicy(state, agent, policy) {
   // The reminder above is once per turn; a long turn drifts back to prose after
   // it, so an explicit step can repeat the same ask exactly once more.
   entry.disciplineRepeatAtSteps = stepCount(policy?.disciplineRepeatAtSteps, 0, 0)
+  // 0 keeps the early reminder unconditional, which is the 1.5.12 behaviour and
+  // the arm that measured slower on short turns.
+  entry.disciplineEarlyCalls = stepCount(policy?.disciplineEarlyCalls, 0, 0)
   // 0 is a value, not "unset": it is how a caller asks for no hard stop at all.
   entry.turnStepBudget = stepCount(policy?.stepBudget, AUTO_LIMITS.turnStepBudget, 0)
   entry.finishLineSteps = stepCount(policy?.finishLineSteps, AUTO_LIMITS.finishLineSteps, 0)
@@ -896,7 +909,20 @@ function directiveFor(entry, stats) {
       summary: 'auto: group the verification of this edit batch',
     }
   }
-  const disciplineAt = entry.disciplineAfterSteps || AUTO_LIMITS.disciplineAfterSteps
+  // An early reminder is a bet on the turn being long. When the caller asks for
+  // the bet to be conditional, spend the turn's observed call density as the
+  // prediction and fall back to the built-in step when the turn still looks
+  // like a single-file task.
+  const earlyAt = entry.disciplineAfterSteps || AUTO_LIMITS.disciplineAfterSteps
+  // Calls the turn made before the current step: at the moment this line runs the
+  // step's own calls have not happened yet, so counting them would let a step pay
+  // for its own admission.
+  const callsBefore = entry.turnCalls - entry.stepCalls
+  const disciplineAt = entry.disciplineEarlyCalls > 0
+    && earlyAt < AUTO_LIMITS.disciplineAfterSteps
+    && callsBefore < entry.disciplineEarlyCalls
+    ? AUTO_LIMITS.disciplineAfterSteps
+    : earlyAt
   if (entry.lateDiscipline && !entry.disciplineSent && stats.turnSteps >= disciplineAt) {
     // Late engagement: the prompt carried no prose rules, so the only cost of a
     // short task was its own work. By this step the task is demonstrably long,

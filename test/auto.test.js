@@ -619,6 +619,37 @@ test('disciplineAfterSteps moves the compression reminder, and 0 keeps the built
   assert.equal(autoSchedule(fallback, 's1').directive?.kind, 'compress-output')
 })
 
+test('disciplineEarlyCalls only spends an early reminder on a turn that already made calls', () => {
+  // The early entry is a bet that the turn will be long, and the first step's
+  // call count is the bet's price signal: one call is a single-file task, two is
+  // a multi-file or debug task. Spending it unconditionally measured 1.073x
+  // slower on the single-file family (D2_IMPL, 8 pairs), so the gate is the fix.
+  const sparse = createAutoState()
+  notePolicy(sparse, 's1', { lateDiscipline: true, disciplineAfterSteps: 2, disciplineEarlyCalls: 2 })
+  noteTurn(sparse, 's1')
+  cleanStep(sparse, 's1', 1)
+  assert.equal(autoSchedule(sparse, 's1').directive, undefined, 'one call in the first step keeps the built-in step')
+  for (let step = 3; step < AUTO_LIMITS.disciplineAfterSteps; step += 1) cleanStep(sparse, 's1', 1)
+  assert.equal(autoSchedule(sparse, 's1').directive, undefined, 'still quiet before the built-in step')
+  cleanStep(sparse, 's1', 1)
+  assert.equal(autoSchedule(sparse, 's1').directive?.kind, 'compress-output', 'falls back to the built-in step')
+
+  const dense = createAutoState()
+  notePolicy(dense, 's1', { lateDiscipline: true, disciplineAfterSteps: 2, disciplineEarlyCalls: 2 })
+  noteTurn(dense, 's1')
+  cleanStep(dense, 's1', 2)
+  cleanStep(dense, 's1', 1)
+  assert.equal(autoSchedule(dense, 's1').directive?.kind, 'compress-output', 'two calls earn the early entry')
+
+  // 0 is the shipped behaviour: the early step applies to every turn.
+  const open = createAutoState()
+  notePolicy(open, 's1', { lateDiscipline: true, disciplineAfterSteps: 2, disciplineEarlyCalls: 0 })
+  noteTurn(open, 's1')
+  cleanStep(open, 's1', 1)
+  cleanStep(open, 's1', 1)
+  assert.equal(autoSchedule(open, 's1').directive?.kind, 'compress-output', '0 keeps the early entry unconditional')
+})
+
 test('disciplineRepeatAtSteps repeats the same ask once, and 0 never repeats it', () => {
   // The first reminder is once per turn; a long turn drifts back to prose after
   // it, so the repeat is the cheapest way to re-arm the rule. It must still be

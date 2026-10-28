@@ -258,6 +258,10 @@ export function resolveConfig(raw, overrides) {
     disciplineAfterSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.disciplineAfterSteps, 0)))
       : 0,
+    /** Minimum first-step calls for an early reminder to be spent; 0 = unconditional. */
+    disciplineEarlyCalls: gear.directive
+      ? Math.max(0, Math.floor(number(config.disciplineEarlyCalls, 0)))
+      : 0,
     /** Step for the single repeat of the compression reminder; 0 = never. */
     disciplineRepeatAtSteps: gear.directive
       ? Math.max(0, Math.floor(number(config.disciplineRepeatAtSteps, 0)))
