@@ -97,7 +97,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.31'
+export const VERSION = '1.5.32'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -383,7 +383,12 @@ export function apply(ctx, rawConfig) {
   // The scheduler's memory, one entry per conversation: what has been tried, how
   // long calls have been taking, and how many steps went by without a new result.
   const auto = createAutoState()
-  /** Live stall ceilings per conversation, as computed by the scheduler. */
+  /**
+   * Live stall ceilings per conversation, as computed by the scheduler.
+   * Bounded like `compacted`: a long-lived host process sees thousands of
+   * sessions and only the next step of the current one reads a ceiling, so the
+   * oldest entries are dropped instead of kept forever.
+   */
   const autoBudgets = new Map()
   /** @type {Map<string, number>} */
   const startedAt = new Map()
@@ -530,6 +535,7 @@ export function apply(ctx, rawConfig) {
         noteStep(auto, sid)
         notePolicy(auto, sid, cfg)
         const schedule = autoSchedule(auto, sid)
+        if (autoBudgets.size >= 200) autoBudgets.delete(autoBudgets.keys().next().value)
         autoBudgets.set(sid, schedule.stallBudgetMs)
         if (schedule.directive) {
           notices.push(createNoticeMessage(schedule.directive.text, schedule.directive.summary))
