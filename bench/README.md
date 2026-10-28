@@ -136,6 +136,19 @@ node bench/verify-arm-reminders.mjs --arms                # 臂 x 场景的提�
 
 采集方式：跑这一格时把臂补丁另存为 `<tag>.arm.yml` 并加 `debug: true` + `debugFile: <runs>/<tag>.debug`，跑完从调试日志里按 `step=N ... turnSteps=M ... directive=kind` 抽行，然后删掉日志与补丁。`debug` 只在步边界写一行已经格式化好的文本，不参与任何调度判断、不额外发请求；日志写在 run 目录之外，所以 `leak_scan`/session id 统计不受影响。老 result 行没有这些字段，读取方一律用 `.get()`，缺字段等于「没有证据」，不是「零提醒」。
 
+### 提醒是否每轮重新上膛、且每轮只发一次
+
+`bench/turns.py` 读留存会话，按 `turn/start` 切轮，输出：轮数/会话、合格轮（默认 ≥ 4 步）、**没收到提醒**的合格轮、**收到两次以上**的轮、多轮会话里后续轮的重新上膛率。只有 `user/message` / `agent/inbox/spliced` / `system/message` 里的文案算投递，模型在自己正文里复述的不算。
+
+```bash
+python3 bench/turns.py                       # 跑批会话（默认 suite 目录）
+python3 bench/turns.py --since-hours 48      # 真实会话近 48 小时
+python3 bench/turns.py --exclude-arm nodisc  # 排除某个臂的会话后缀
+python3 bench/turns.py --min-steps 4 --json  # 只算够长的轮，机器可读
+```
+
+2026-10-29 用它量出「轮内压缩后同一轮收到两条」，据此修了 1.5.28；读数与根因见 `BENCHMARK.md` 的「提醒投递的稳定性」一节。
+
 ## 正文占比与预注册门禁脚本
 
 ```bash

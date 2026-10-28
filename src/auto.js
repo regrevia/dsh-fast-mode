@@ -200,6 +200,8 @@ function entryOf(state, agent) {
   }
   entry = {
     steps: 0,
+    /** The harness turn number this entry's latches belong to; 0 = unknown. */
+    turn: 0,
     turnSteps: 0,
     noProgress: 0,
     calls: 0,
@@ -309,11 +311,25 @@ function entryOf(state, agent) {
  * session-level memory (what has already been tried) must survive, because that
  * is exactly what a stuck loop re-reads.
  *
+ * A turn that is *resumed* — mid-turn context compaction makes the harness
+ * re-enter the turn without ending it — must not get the slate: resetting here
+ * would clear `disciplineSent` and hand the model the same "prose is the cost"
+ * reminder a second time in the same turn (measured: 227 turns with a doubled
+ * reminder in retained transcripts, 214 of them with a compaction between the
+ * two). The turn number is the discriminator: same number as the entry's current
+ * turn means resume, larger means a real new turn. `0`/absent keeps the old
+ * behaviour, so an event stream that omits the number is never worse off.
+ *
  * @param {ReturnType<typeof createAutoState>} state
  * @param {string} agent
+ * @param {number} [turn] the harness turn number from `turn/start`
  */
-export function noteTurn(state, agent) {
+export function noteTurn(state, agent, turn) {
   const entry = entryOf(state, agent)
+  if (typeof turn === 'number' && Number.isFinite(turn) && turn > 0) {
+    if (entry.turn === turn) return
+    entry.turn = turn
+  }
   entry.turnSteps = 0
   entry.stepCalls = 0
   entry.stepUnsafe = 0

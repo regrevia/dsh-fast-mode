@@ -710,6 +710,43 @@ test('disciplineRepeatAtSteps repeats the same ask once, and 0 never repeats it'
   }
 })
 
+test('a resumed turn keeps its reminder latch; a new turn re-arms it', () => {
+  // Mid-turn context compaction re-enters the turn: the harness starts the turn
+  // again without ending it. Resetting the per-turn latches there delivered the
+  // compression reminder twice in one turn (227 doubled turns in retained
+  // transcripts, 214 with a compaction between the two), so the same turn number
+  // must be read as a resume, and only a larger one as a new turn.
+  const state = createAutoState()
+  notePolicy(state, 's1', { lateDiscipline: true, disciplineAfterSteps: 4 })
+  noteTurn(state, 's1', 3)
+  for (let step = 0; step < 3; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive, undefined, 'quiet before the entry step')
+  cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'compress-output', 'fires once inside turn 3')
+
+  // The resume arrives after the reminder: nothing is cleared, so nothing asks again.
+  noteTurn(state, 's1', 3)
+  for (let step = 0; step < 8; step += 1) {
+    cleanStep(state, 's1', 1)
+    assert.equal(autoSchedule(state, 's1').directive, undefined, 'the resumed turn is not told twice')
+  }
+
+  // A larger turn number is a real new turn: the reminder is available again.
+  noteTurn(state, 's1', 4)
+  for (let step = 0; step < 4; step += 1) cleanStep(state, 's1', 1)
+  assert.equal(autoSchedule(state, 's1').directive?.kind, 'compress-output', 'the next turn gets its own reminder')
+
+  // Without a turn number the old behaviour stands: every call starts a turn.
+  const bare = createAutoState()
+  notePolicy(bare, 's1', { lateDiscipline: true, disciplineAfterSteps: 4 })
+  noteTurn(bare, 's1')
+  for (let step = 0; step < 4; step += 1) cleanStep(bare, 's1', 1)
+  assert.equal(autoSchedule(bare, 's1').directive?.kind, 'compress-output')
+  noteTurn(bare, 's1')
+  for (let step = 0; step < 3; step += 1) cleanStep(bare, 's1', 1)
+  assert.equal(autoSchedule(bare, 's1').directive, undefined, 'the counters did restart')
+})
+
 test('batchVerify waits for a second unverified write and asks only once', () => {
   const state = createAutoState()
   notePolicy(state, 's1', { lateDiscipline: false, batchVerify: true })

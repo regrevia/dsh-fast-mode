@@ -97,7 +97,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.27'
+export const VERSION = '1.5.28'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -326,7 +326,10 @@ export function apply(ctx, rawConfig) {
     }
     if (event && event.type === 'turn/start') {
       try {
-        noteTurn(auto, agentKey(session))
+        // The turn number is what separates a real new turn from the harness
+        // re-entering a turn it compacted mid-flight: the latter must not reset
+        // the per-turn latches, or the model gets the same reminder twice.
+        noteTurn(auto, agentKey(session), event.data?.turn ?? event.turn)
       } catch {
         // A scheduler that can fail a turn is worse than no scheduler.
       }
