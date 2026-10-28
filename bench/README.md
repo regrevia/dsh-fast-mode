@@ -136,6 +136,18 @@ node bench/verify-arm-reminders.mjs --arms                # 臂 x 场景的提�
 
 采集方式：跑这一格时把臂补丁另存为 `<tag>.arm.yml` 并加 `debug: true` + `debugFile: <runs>/<tag>.debug`，跑完从调试日志里按 `step=N ... turnSteps=M ... directive=kind` 抽行，然后删掉日志与补丁。`debug` 只在步边界写一行已经格式化好的文本，不参与任何调度判断、不额外发请求；日志写在 run 目录之外，所以 `leak_scan`/session id 统计不受影响。老 result 行没有这些字段，读取方一律用 `.get()`，缺字段等于「没有证据」，不是「零提醒」。
 
+### 同一份会话，两个版本各会发几条提醒
+
+`bench/replay.mjs` 把留存会话的事件流喂回插件自己的钩子（`session/event` + `agent/pre-step`），输出每一轮的步数、压缩次数、提醒条数与落点。会话 id 是合成的，`metrics`/`benchmarkFile` 关掉，不写任何 `~/.dsh` 状态。
+
+```bash
+node bench/replay.mjs ~/.dsh/sessions/<slug>/session-<uuid>/session.v4.jsonl.zstd
+node bench/replay.mjs <transcript> --json
+node bench/replay.mjs <transcript> --simulate-reentry   # 每次压缩后按当前 turn 号重入
+```
+
+`--simulate-reentry` 补的是会话记录里**不存在**的那条事件：宿主压缩后重入同一轮时用同一个 turn 号再发一次 `turn/start`，而这次重入不落盘。加上它以后，1.5.27 与 1.5.28 的差别就能在同一份数据上量出来（1529 个合格轮：940 → 0）。
+
 ### 提醒是否每轮重新上膛、且每轮只发一次
 
 `bench/turns.py` 读留存会话，按 `turn/start` 切轮，输出：轮数/会话、合格轮（默认 ≥ 4 步）、**没收到提醒**的合格轮、**收到两次以上**的轮、多轮会话里后续轮的重新上膛率。只有 `user/message` / `agent/inbox/spliced` / `system/message` 里的文案算投递，模型在自己正文里复述的不算。
