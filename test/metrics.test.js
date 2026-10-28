@@ -338,6 +338,49 @@ test('usage under the gateway spelling is folded too', () => withTempFile((file)
   )
 }))
 
+test('an OpenAI-compatible gateway produces the same row as the official API', () => withTempFile((file) => {
+  // Self-hosted gateways relay the upstream envelope, so the counts arrive under
+  // the OpenAI spelling, and some of them nest it one level deeper. Before the
+  // normaliser, both of these rows reported zero output tokens, which made a
+  // measured slowdown indistinguishable from a route that said nothing.
+  const recorder = createRecorder({ file })
+  recorder.label('openai-gateway', { mode: 'on', gear: 'auto', effort: 'high', route: 'self/openai-proxy' })
+  const target = session('openai-gateway')
+  recorder.record(target, { type: 'step/start', time: 10, data: { turn: 1, step: 1 } })
+  recorder.record(target, {
+    type: 'assistant/message',
+    time: 20,
+    data: {
+      turn: 1,
+      step: 1,
+      message: { usage: { prompt_tokens: 700, completion_tokens: 45, prompt_tokens_details: { cached_tokens: 200 } } },
+    },
+  })
+  recorder.record(target, { type: 'step/end', time: 30, data: { turn: 1, step: 1 } })
+
+  const [row] = readRows(file)
+  assert.deepEqual(
+    { input: row.input, output: row.output, cacheRead: row.cacheRead },
+    { input: 700, output: 45, cacheRead: 200 },
+  )
+}))
+
+test('a route that reports no usage still writes a step row', () => withTempFile((file) => {
+  // Not every proxy returns usage. The step must still be countable: its timing
+  // and call count are measured by the harness, not by the provider.
+  const recorder = createRecorder({ file })
+  recorder.label('silent-gateway', { mode: 'on', gear: 'auto', effort: 'high', route: 'self/no-usage' })
+  const target = session('silent-gateway')
+  recorder.record(target, { type: 'step/start', time: 10, data: { turn: 1, step: 1 } })
+  recorder.record(target, { type: 'assistant/message', time: 20, data: { turn: 1, step: 1 } })
+  recorder.record(target, { type: 'step/end', time: 30, data: { turn: 1, step: 1 } })
+
+  const [row] = readRows(file)
+  assert.equal(row.output, 0, 'absent usage is zero, not a throw')
+  assert.equal(row.llmMs, 10, 'the step is still timed from the message the harness saw')
+  assert.equal(row.calls, 0)
+}))
+
 test('the sink rotates once at its size cap instead of growing without bound', () => withTempFile((file, dir) => {
   // An installed profile keeps this journal across months: one row per step with
   // no cap is a slow disk leak. The writer rotates the current generation away

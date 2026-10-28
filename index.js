@@ -80,7 +80,8 @@ import { classifyEntry } from './src/shape.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
 import { createRecorder } from './src/metrics.js'
-import { choiceFor } from './src/state.js'
+import { readOutputTokens } from './src/usage.js'
+import { configOverridesFor } from './src/state.js'
 import { buildShellParallelTool } from './src/parallel.js'
 
 /**
@@ -95,7 +96,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.16'
+export const VERSION = '1.5.17'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -316,12 +317,8 @@ export function apply(ctx, rawConfig) {
     // scheduler's token budget needs the provider's own number, not an estimate.
     if (event && event.type === 'assistant/message') {
       try {
-        const data = event.data ?? event
-        const usage = data.usage ?? (data.message && data.message.usage)
-        const out = usage && typeof usage === 'object' ? usage.outputTokens : undefined
-        if (typeof out === 'number' && Number.isFinite(out) && out > 0) {
-          noteOutputTokens(auto, agentKey(session), out)
-        }
+        const out = readOutputTokens(event.data ?? event)
+        if (out > 0) noteOutputTokens(auto, agentKey(session), out)
       } catch {
         // A counter that can fail a turn is worse than no counter.
       }
@@ -362,10 +359,10 @@ export function apply(ctx, rawConfig) {
     // session hash, and a panel click that quietly overrode the arm would empty
     // the control group of the very trial the user asked for.
     if (assigned === undefined) {
-      // No experiment: the conversation's own entry wins, and its absence means
-      // "inherit" — the configured pair is both the default and the record of
-      // the last choice anywhere, which is what a fresh session starts from.
-      const own = choiceFor(rawConfig?.sessions, sessionId)
+      // No experiment: the conversation's own entry wins, field by field, and
+      // its absence means "inherit". Every panel control writes into that entry,
+      // which is what keeps one tab's prose or step cap from touching another.
+      const own = configOverridesFor(rawConfig?.sessions, sessionId)
       return own === undefined ? resolveConfig(rawConfig) : resolveConfig(rawConfig, own)
     }
     // The control arm is an assignment like any other: the mode is off because

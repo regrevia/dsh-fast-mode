@@ -16,6 +16,7 @@ import {
   SESSIONS_LIMIT,
   choiceFor,
   clearChoice,
+  configOverridesFor,
   encodeChoices,
   parseChoices,
   resolveChoice,
@@ -95,10 +96,15 @@ test('unusable entries are dropped instead of trusted', () => {
     'session-b': { enabled: 'yes', gear: '', ts: 'soon' },
     'session-c': { enabled: false, gear: 'fast', ts: 12, extra: 'ignored' },
     'session-d': { gear: 'max' },
+    'session-e': { discipline: 'late', stepBudget: 15, map: true, ts: 3 },
+    'session-f': { discipline: 'sometimes', stepBudget: -2, map: 'yes' },
+    'session-g': { stepBudget: 4.6, discipline: false },
   }))
   assert.deepEqual(parsed, {
     'session-c': { enabled: false, gear: 'fast', ts: 12 },
     'session-d': { gear: 'max' },
+    'session-e': { discipline: 'late', stepBudget: 15, map: true, ts: 3 },
+    'session-g': { discipline: false, stepBudget: 4 },
   })
 })
 
@@ -112,6 +118,29 @@ test('an entry is looked up by session, and absence means inherit', () => {
   assert.equal(choiceFor(column, 'session-c'), undefined)
   assert.equal(choiceFor(column, undefined), undefined)
   assert.equal(choiceFor(column, ''), undefined)
+})
+
+test('a session entry can pin all four panel fields', () => {
+  const column = JSON.stringify({ 'session-a': { enabled: true, gear: 'fast', discipline: false, stepBudget: 30, map: true, ts: 1 } })
+  assert.deepEqual(choiceFor(column, 'session-a'), {
+    enabled: true,
+    gear: 'fast',
+    discipline: false,
+    stepBudget: 30,
+    map: true,
+  })
+})
+
+test('the compact column is spelled as config fields for the policy', () => {
+  const column = JSON.stringify({ 'session-a': { discipline: 'late', stepBudget: 15, map: true } })
+  assert.deepEqual(
+    configOverridesFor(column, 'session-a'),
+    { outputDiscipline: 'late', stepBudget: 15, workspaceMap: true },
+    'map is the short spelling of workspaceMap',
+  )
+  assert.equal(configOverridesFor(column, 'session-b'), undefined, 'no entry means inherit')
+  assert.equal(configOverridesFor(column, undefined), undefined)
+  assert.equal(configOverridesFor(JSON.stringify({ 'x': { ts: 1 } }), 'x'), undefined, 'a timestamp is not a choice')
 })
 
 test('the effective pair falls back field by field, and says whether it was scoped', () => {
@@ -140,6 +169,14 @@ test('writing one entry keeps the others and stamps recency', () => {
   assert.equal(map['session-a'].ts, 1, 'the other conversation is untouched')
   assert.deepEqual(map['session-b'], { enabled: false, gear: 'safe', ts: 42 })
   assert.equal(JSON.parse(sessions)['session-b'].ts, 42, 'the returned column is the durable form')
+})
+
+test('a one-field write keeps the other three choices', () => {
+  const column = JSON.stringify({
+    'session-a': { enabled: true, discipline: 'late', stepBudget: 15, map: true, ts: 1 },
+  })
+  const { map } = writeChoice(column, 'session-a', { stepBudget: 0 }, 5)
+  assert.deepEqual(map['session-a'], { enabled: true, discipline: 'late', stepBudget: 0, map: true, ts: 5 })
 })
 
 test('writing the same entry again merges instead of replacing', () => {
@@ -200,21 +237,39 @@ test('the browser copy reads the column exactly like the host does', () => {
 test('the browser copy writes a column the host reads back unchanged', () => {
   const browser = browserChoices()
   const withOwn = browser.withOwn
-  const merged = withOwn({}, 'session-a', true, 'max')
+  const merged = withOwn({}, 'session-a', { enabled: true, gear: 'max', discipline: false, stepBudget: 30, map: true })
   const encoded = browser.encodeChoices(merged)
 
-  assert.deepEqual(choiceFor(encoded, 'session-a'), { enabled: true, gear: 'max' }, 'the host sees the switch and the gear')
+  assert.deepEqual(
+    choiceFor(encoded, 'session-a'),
+    { enabled: true, gear: 'max', discipline: false, stepBudget: 30, map: true },
+    'the host sees all five values, not just the switch',
+  )
   assert.deepEqual(
     writeChoice(encoded, 'session-b', { enabled: false, gear: 'safe' }, 7).map['session-a'],
-    { enabled: true, gear: 'max', ts: merged[ 'session-a' ].ts },
+    { ...merged['session-a'] },
     'and the entry the browser wrote is the entry the host keeps',
   )
 
-  assert.deepEqual(plain(withOwn({}, undefined, true, 'max')), {}, 'no session means no entry, never a wrong key')
+  assert.deepEqual(plain(withOwn({}, undefined, { enabled: true })), {}, 'no session means no entry, never a wrong key')
   const one = { 'session-a': { enabled: true, gear: 'max', ts: 1 } }
-  const flipped = plain(withOwn(one, 'session-a', false, ''))
+  const flipped = plain(withOwn(one, 'session-a', { enabled: false }))
   assert.equal(flipped['session-a'].enabled, false)
-  assert.equal(flipped['session-a'].gear, 'max', 'an empty gear keeps the one already pinned')
+  assert.equal(flipped['session-a'].gear, 'max', 'an absent gear keeps the one already pinned')
   assert.equal(typeof flipped['session-a'].ts, 'number', 'recency is restamped on every write')
   assert.equal(one['session-a'].ts, 1, 'the input map is not mutated')
+})
+
+test('two conversations keep independent choices in one column', () => {
+  const browser = browserChoices()
+  let column = browser.encodeChoices(browser.withOwn({}, 'session-fast', { enabled: true, discipline: 'late' }))
+  column = browser.encodeChoices(JSON.parse(column))
+  assert.equal(choiceFor(column, 'session-fast').discipline, 'late')
+
+  // A second tab changes its own rows only.
+  const second = browser.withOwn(browser.parseChoices(column), 'session-plain', { enabled: true, discipline: false })
+  const encoded = browser.encodeChoices(second)
+  assert.equal(choiceFor(encoded, 'session-fast').discipline, 'late', 'the first conversation is untouched')
+  assert.equal(choiceFor(encoded, 'session-plain').discipline, false)
+  assert.equal(choiceFor(encoded, 'session-untouched'), undefined, 'a third conversation still inherits')
 })

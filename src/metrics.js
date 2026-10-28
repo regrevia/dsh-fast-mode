@@ -21,6 +21,8 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { findUsage, readUsage } from './usage.js'
+
 /** The measurement format. Bumped when a field changes meaning. */
 export const METRICS_VERSION = 2
 
@@ -100,22 +102,12 @@ const payloadOf = (event) => {
 }
 
 /**
- * Read one token field from a usage object.
+ * Read one usage object in any of the dialects a route may speak.
  *
- * The harness reports `TokenUsage` (`inputTokens`, `outputTokens`,
- * `cacheReadTokens`, `cacheWriteTokens`, `reasoningTokens`), while the session
- * stats projection uses the gateway's own `uncachedInputTokens`/`thoughtTokens`
- * spelling. Both are accepted so a provider that reports either still counts.
- *
- * @param {any} usage @param {string[]} names
+ * The spelling table lives in `usage.js`, because the scheduler budgets against
+ * the same numbers. This module only needs the fold: a self-hosted gateway that
+ * says `completion_tokens` must produce the same row as the official API.
  */
-const tokenField = (usage, names) => {
-  for (const name of names) {
-    const value = usage[name]
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
-  }
-  return 0
-}
 
 /**
  * Milliseconds between two event timestamps, never negative.
@@ -295,15 +287,13 @@ export function createRecorder(options = {}) {
         if (entry.first === undefined) entry.first = time
         entry.last = time
         // The message is appended with `usage` beside it; older adapters hang it
-        // off the message instead. Both are the same numbers.
-        const usage = data.usage ?? (data.message && data.message.usage)
-        if (usage && typeof usage === 'object') {
-          entry.input += tokenField(usage, ['inputTokens', 'uncachedInputTokens'])
-          entry.output += tokenField(usage, ['outputTokens'])
-          entry.reasoning += tokenField(usage, ['reasoningTokens', 'thoughtTokens'])
-          entry.cacheRead += tokenField(usage, ['cacheReadTokens', 'cachedReadTokens'])
-          entry.cacheWrite += tokenField(usage, ['cacheWriteTokens', 'cachedWriteTokens'])
-        }
+        // off the message instead, and a gateway may nest it under `response`.
+        const tokens = readUsage(findUsage(data))
+        entry.input += tokens.input
+        entry.output += tokens.output
+        entry.reasoning += tokens.reasoning
+        entry.cacheRead += tokens.cacheRead
+        entry.cacheWrite += tokens.cacheWrite
         return
       }
 

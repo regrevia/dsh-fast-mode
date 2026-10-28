@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.5.16** 的实际行为（代码与 1.5.15 相同）（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.15 面板为三行），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.5.17** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.17 面板为四行、四行都只影响本会话），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -9,7 +9,8 @@
 ## 交互细节：闪电开关与会话归属
 
 - **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回；这一下只写当前会话。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
-- **右键是面板。** 右键闪电打开三行共享设置："更少中间输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"工作区清单"（`workspaceMap`）。三行都只写共享字段、不带 `sessions`，下一个回合生效；只读或写入中时整块禁用，写失败回滚。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **右键是面板。** 右键闪电打开四行，四行都只影响当前会话："更快"（`enabled`）、"少写过程"（`outputDiscipline`）、"最多几步"（`stepBudget`，循环 0/15/30）、"先列文件清单"（`workspaceMap`）。四行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。没有条目的会话沿用配置里的默认值（`enabled`/`gear`/`outputDiscipline`/`stepBudget`/`workspaceMap`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 少写过程`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
 - **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 思考强度不变 · 点击关闭"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
   - 开启、看门狗有上限：`自动调度 · 并行 2–8 · 单次调用 ≤ 2 分`
@@ -233,7 +234,8 @@
 
 - 请求体原样进出。本插件不写 `reasoningEffort`、不写 `thinking`、不写 `output_config`，也不添加任何 provider 专用字段；
 - 不做"这条路由声明了哪些档位"的过滤和降档。没有 `floor`，没有档位阶梯，没有按步降档；
-- 路由名只被记进测量和调试日志，不参与任何决策。
+- 路由名只被记进测量和调试日志，不参与任何决策；
+- token 用量按上游实际拼写读，不假定某一家：harness 的 `inputTokens/outputTokens/…`、OpenAI Chat 的 `prompt_tokens/completion_tokens`（含 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）、新版 OpenAI 的 `input_tokens/output_tokens`、Anthropic 的 `cache_read_input_tokens/cache_creation_input_tokens`、Google 的 `candidatesTokenCount` 都会落到同一组数字；usage 挂在 `usage`、`message.usage` 或 `response.usage` 下都能找到。网关完全不报 usage 时按 0 处理——步的时间和调用数由 harness 自己量，不靠 provider。
 
 所以无论 provider 声明的是 `off/low/high/max`、还是 `minimal/low/medium/high`、还是只有一档、还是什么都没声明，本插件的行为都一样：它注入提示段、给 shell 调用设上限，然后把你选的 effort 原样发出去。
 
@@ -366,7 +368,7 @@ dsh-fast-mode-experiment stop         # 结束实验
 - `src/metrics.js`：JSONL 计量与汇总；
 - `src/benchmark.js`：按会话哈希分配；
 - `src/peers.js`：冲突插件探测；
-- `client.js`：闪电开关、右键面板（三行共享设置）与按会话的写入。
+- `client.js`：闪电开关、右键面板（四行，按会话写入 `sessions` 列）。
 
 跑测试：
 

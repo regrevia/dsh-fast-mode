@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.17（面板四行、按会话隔离、网关用量兼容）
+
+- **四个开关按会话隔离（核心修复）。** 面板此前写的是 `outputDiscipline` / `stepBudget` / `workspaceMap` 三个共享字段，而设置列的写入只接受 volatile 字段：`settings.write` 对这三个路径直接抛 `Config field "<path>" is not volatile`，所以按钮点了不生效。现在所有选择都写进 volatile 的 `sessions` 列里本会话的条目（`{enabled, gear, discipline, stepBudget, map, ts}`），面板与闪电只写自己那条，不碰共享的 `enabled`/`gear`：A 会话「更快 + 少写过程」与 B 会话「更快 + 不写过程」同时成立，没点过的会话沿用配置默认值。条目上限 200，按 `ts` 淘汰最旧的。
+- **面板改成四行、名字改成说人话的。** 「更快」（开关本身）、「少写过程」、「最多几步」（`15`/`30`/`不限`）、「先列文件清单」；底注「只影响本会话」。四行都带 tooltip 说明后果，只读 / 写入中禁用，写失败回滚并保留原因。配置项描述同步注明面板名称与「这是没有自己条目的会话的默认值」。
+- **自建网关与官方 API 的用量口径统一。** 新 `src/usage.js` 把上游的 token 拼写归一到一组数字：harness 的 `inputTokens/outputTokens/reasoningTokens/cacheReadTokens/cacheWriteTokens`、OpenAI Chat 的 `prompt_tokens/completion_tokens`（含 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）、新版 OpenAI 的 `input_tokens/output_tokens`、Anthropic 的 `cache_read_input_tokens/cache_creation_input_tokens`、Google 的 `candidatesTokenCount`；usage 挂在 `usage`、`message.usage`、`response.usage` 下都能找到，完全不报 usage 时按 0 处理。收益是真实的：此前只在 `outputTokens` 上取数，走 OpenAI 兼容网关的会话输出量恒为 0，调度器的输出预算和计量报告都会把「网关没按这个拼写报」误读成「这一步没输出」。
+- **测试**：`node --test test/*.test.js` **289 pass / 0 fail**。新增 `test/usage.test.js`（9 个方言用例）、`test/metrics.test.js` 的 OpenAI 网关行与「不报 usage 仍计时」行，以及 host 侧 `test/session.test.js`（4 个）——两个会话在同一列里各记各的、没条目的会话用默认值、清单只发一次、提醒按各自开关下发。
+- **文案与检查**：`ui-copy-lint` **clean**（此前 21 error / 2 warning，全部是注释里的 `host` 与 store 初始化的状态点亮出；注释改成说行为、状态字段逐个加说明后清零），`zh-lint` **0 error**（37 warning 为既有），`style-lint` 通过。
+
 ## 1.5.16（只改文档与判据脚本，代码与 1.5.15 相同）
 
 - `BENCHMARK.md` 补两块实测记录：`D2B_DBG`（`d2` 在 debugfix 上的独立复现：7 对几何 0.717×、中位 0.864×、5/7 更快、符号检验 p=0.45、`steps_geo` 1.118×、`out_geo` 0.787×）与「提醒之后输出会不会重新变长」的预注册前提检查（`def15` 有反弹，`d2g` 没有；fixture 里 assistant 可见文字中位 0–200 字符，提醒动的是工具参数与 reasoning 的 token 量）。

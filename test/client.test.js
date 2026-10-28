@@ -230,8 +230,8 @@ test('one click turns fast mode on for this conversation and writes immediately'
 
   assert.equal(remote.calls.length, 1, 'the click is the write; nothing opens in between')
   assert.equal(remote.calls[0].ns, 'fast-mode')
-  assert.equal(remote.calls[0].patch.enabled, true)
-  assert.equal(remote.calls[0].patch.gear, 'auto', 'the scheduler is the only mode')
+  assert.equal(columnOf(remote.calls[0])['session-alpha'].enabled, true, 'the choice lands on this conversation')
+  assert.equal(columnOf(remote.calls[0])['session-alpha'].gear, 'auto', 'the scheduler is the only mode')
   assert.equal(remote.calls[0].revision, 3, 'the write echoes the revision it read')
   assert.equal(boltOf(render()).props['data-on'], 'true', 'the bolt fills after the host echoes')
   assert.equal(boltOf(render()).props.title, 'chip.titleOn')
@@ -244,7 +244,7 @@ test('a second click turns it back off, still echoing the current revision', asy
 
   await clickBolt(render)
 
-  assert.equal(remote.calls[0].patch.enabled, false)
+  assert.equal(columnOf(remote.calls[0])['session-alpha'].enabled, false)
   assert.equal(boltOf(render()).props['data-on'], 'false')
 })
 
@@ -254,8 +254,9 @@ test('the chip never writes a thinking effort, so the user choice cannot drift',
   await clickBolt(render)
 
   const patch = remote.calls[0].patch
-  assert.deepEqual(Object.keys(patch).sort(), ['enabled', 'gear', 'sessions'],
-    'three fields: the switch, the scheduler, and the per-conversation column')
+  assert.deepEqual(Object.keys(patch), ['sessions'],
+    'only the per-conversation column: a shared default would leak the choice into other chats')
+  assert.equal('reasoningEffort' in patch, false)
   assert.equal(JSON.stringify(patch).includes('reasoningEffort'), false)
   assert.equal(JSON.stringify(patch).includes('effort'), false)
 })
@@ -364,38 +365,43 @@ test('styles are injected once per page, not once per apply', () => {
 
 /* ------------------------------------------------- per-conversation state */
 
-test('a click records the choice for its own conversation, next to the shared default', async () => {
+test('a click records the choice in this conversation only, never as a shared default', async () => {
   const remote = fakeRemote({ enabled: false, gear: 'turbo' })
   const { render } = await mount(remote, 'session-alpha')
   await clickBolt(render)
 
-  assert.equal(remote.calls.length, 1, 'one patch carries both tiers')
+  assert.equal(remote.calls.length, 1, 'one patch carries the whole change')
   const patch = remote.calls[0].patch
-  assert.equal(patch.enabled, true, 'the shared field doubles as the last choice')
-  assert.equal(patch.gear, 'auto', 'and normalises the retired gear to the scheduler')
+  assert.deepEqual(Object.keys(patch), ['sessions'], 'nothing outside the per-conversation column')
+  assert.equal(remote.state.value.enabled, false, 'the shared default is untouched')
+  assert.equal(remote.state.value.gear, 'turbo', 'not even the scheduler leaks into it')
   const column = columnOf(remote.calls[0])
   assert.deepEqual(Object.keys(column), ['session-alpha'], 'only the clicked conversation gets an entry')
   assert.equal(column['session-alpha'].enabled, true)
-  assert.equal(column['session-alpha'].gear, 'auto')
+  assert.equal(column['session-alpha'].gear, 'auto', 'the retired gear is normalised to the scheduler')
 })
 
-test('a conversation with its own entry keeps it when the shared switch moves', async () => {
-  const remote = fakeRemote({ enabled: false, gear: 'auto' })
+test('two open conversations switch independently, which is the whole point of the tier', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
 
+  // alpha is on because the configured default is on, and has no entry yet.
   const alpha = await mount(remote, 'session-alpha')
-  await clickBolt(alpha.render)
   assert.equal(boltOf(alpha.render()).props['data-on'], 'true')
 
+  // beta turns fast mode off: its own row only.
   const beta = await mount(remote, 'session-beta')
   await clickBolt(beta.render)
+  assert.deepEqual(Object.keys(remote.calls[0].patch), ['sessions'])
+  assert.equal(columnOf(remote.calls[0])['session-beta'].enabled, false)
+  assert.equal(remote.state.value.enabled, true, 'the shared default still says on')
 
-  assert.equal(remote.calls.at(-1).patch.enabled, false, 'beta turned the shared switch off')
-  const column = columnOf(remote.calls.at(-1))
-  assert.equal(column['session-beta'].enabled, false)
-  assert.equal(column['session-alpha'].enabled, true, 'alpha was never touched')
-
+  // alpha re-reads the host and is unaffected by beta's click.
   const again = await mount(remote, 'session-alpha')
-  assert.equal(boltOf(again.render()).props['data-on'], 'true', 'reopening alpha paints its own entry')
+  assert.equal(boltOf(again.render()).props['data-on'], 'true', 'alpha is still on')
+
+  // and beta still paints its own off after a remount.
+  const stillBeta = await mount(remote, 'session-beta')
+  assert.equal(boltOf(stillBeta.render()).props['data-on'], 'false')
 })
 
 test('a restart restores the last choice per conversation, not a global default', async () => {
@@ -409,7 +415,7 @@ test('a restart restores the last choice per conversation, not a global default'
   assert.equal(boltOf(alpha.render()).props['data-on'], 'false', 'alpha turned fast mode off before the restart')
 
   const fresh = await mount(remote, 'session-brand-new')
-  assert.equal(boltOf(fresh.render()).props['data-on'], 'true', 'a new conversation starts from the last shared choice')
+  assert.equal(boltOf(fresh.render()).props['data-on'], 'true', 'a new conversation starts from the configured default')
 })
 
 test('a conversation with no entry inherits the most recent choice', async () => {
@@ -500,9 +506,9 @@ test('right click opens the panel and writes nothing: the left click is still th
   assert.equal(panelOf(render()), undefined, 'a second right click closes it')
 })
 
-test('the panel switch turns the narration reminder off and on through the shared field', async () => {
+test('the panel switch turns narration down for this conversation only', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote)
+  const { render } = await mount(remote, 'session-alpha')
 
   await rightClick(render)
   assert.equal(rowOf(panelOf(render())).props['aria-checked'], true, 'the shipped default is on')
@@ -511,16 +517,18 @@ test('the panel switch turns the narration reminder off and on through the share
 
   assert.equal(remote.calls.length, 1)
   const patch = remote.calls[0].patch
-  assert.equal(patch.outputDiscipline, false, 'off is a real value, not a missing field')
+  assert.deepEqual(Object.keys(patch), ['sessions'], 'a non-volatile shared field would be refused by the host')
+  assert.equal('outputDiscipline' in patch, false)
   assert.equal('enabled' in patch, false, 'the switch must not flip the mode as a side effect')
+  assert.equal(columnOf(remote.calls[0])['session-alpha'].discipline, false, 'off is a real value, not a missing field')
   assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
-  assert.equal(remote.state.value.outputDiscipline, false)
 
   await rightClick(render)
   assert.equal(rowOf(panelOf(render())).props['aria-checked'], false, 'the panel paints the host value')
   await rowOf(panelOf(render())).props.onClick()
   await sleep(30)
-  assert.equal(remote.calls[1].patch.outputDiscipline, 'late', 'back to the shipped default')
+  assert.equal(columnOf(remote.calls[1])['session-alpha'].discipline, 'late', 'back to the shipped default')
+  assert.equal(remote.state.value.outputDiscipline, undefined, 'the shared default never moved')
 })
 
 test('a read-only configuration disables the panel row instead of swallowing the click', async () => {
@@ -534,9 +542,9 @@ test('a read-only configuration disables the panel row instead of swallowing the
   assert.equal(remote.calls.length, 0)
 })
 
-test('the step cap cycles through 0, 15 and 30 without touching the switch or the session entry', async () => {
+test('the step cap cycles through 0, 15 and 30 inside one conversation', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote)
+  const { render } = await mount(remote, 'session-alpha')
 
   await rightClick(render)
   assert.equal(budgetRowOf(panelOf(render())).props.disabled, false, 'the cap row is live')
@@ -548,34 +556,37 @@ test('the step cap cycles through 0, 15 and 30 without touching the switch or th
     await budgetRowOf(panelOf(render())).props.onClick()
     await sleep(40)
     const call = remote.calls[remote.calls.length - 1]
-    assert.equal(call.patch.stepBudget, want, 'three caps, then back off')
-    assert.equal('sessions' in call.patch, false, 'a shared cap must not rewrite the per-conversation entry')
+    assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the cap rides the per-conversation column')
+    assert.equal(columnOf(call)['session-alpha'].stepBudget, want, 'three caps, then back off')
+    assert.equal('stepBudget' in call.patch, false, 'a non-volatile shared cap would be refused')
     assert.equal('enabled' in call.patch, false, 'the cap is not the mode switch')
     assert.ok(panelOf(render()), 'the panel stays open while cycling a cap')
   }
+  assert.equal(remote.state.value.stepBudget, undefined, 'the shared default never moved')
 })
 
-test('the workspace inventory is a shared switch, off by default, and never rewrites the session entry', async () => {
+test('the file list is off by default and toggles for this conversation only', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote)
+  const { render } = await mount(remote, 'session-alpha')
 
   await rightClick(render)
   const row = mapRowOf(panelOf(render()))
-  assert.equal(row.props.disabled, false, 'the inventory row is live')
+  assert.equal(row.props.disabled, false, 'the file-list row is live')
   assert.equal(row.props['aria-checked'], false, 'off is the shipped default')
   assert.equal(row.children[1].children[0], 'panel.off')
 
   await row.props.onClick()
   await sleep(40)
   const call = remote.calls[remote.calls.length - 1]
-  assert.equal(call.patch.workspaceMap, true, 'one shared field')
-  assert.equal('sessions' in call.patch, false, 'the inventory is not a per-conversation choice')
-  assert.equal('enabled' in call.patch, false, 'the inventory is not the mode switch')
+  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the file list is a per-conversation choice now')
+  assert.equal(columnOf(call)['session-alpha'].map, true)
+  assert.equal('workspaceMap' in call.patch, false, 'the shared field is not volatile, so the host would refuse it')
   assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
 
   await rightClick(render)
   assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'the panel paints the host value')
   await mapRowOf(panelOf(render())).props.onClick()
   await sleep(40)
-  assert.equal(remote.calls[remote.calls.length - 1].patch.workspaceMap, false, 'toggle back off')
+  assert.equal(columnOf(remote.calls[remote.calls.length - 1])['session-alpha'].map, false, 'toggle back off')
+  assert.equal(remote.state.value.workspaceMap, undefined, 'the shared default never moved')
 })

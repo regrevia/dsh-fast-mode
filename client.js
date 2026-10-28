@@ -6,7 +6,7 @@
  * service (`settings/describe` → `settings/update`), which is the same surface
  * the Loader uses for its composition patch. There is no second state store: a
  * click writes `{ enabled }` or `{ gear }` to this entry's user layer, the Loader
- * re-applies the host half, and the policy changes on the next model call.
+ * re-applies the settings half, and the policy changes on the next model call.
  *
  * Why the chip lives in `conversation.input.activity`: that slot is the one
  * place the composer renders *after* the standard controls and *before* the stop
@@ -91,15 +91,17 @@ window.__ModuleLoader__.load({
       'chip.error': 'Fast 模式配置读取失败：{error}',
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
-      'panel.prose': '更少中间输出',
+      'panel.prose': '少写过程',
+      'panel.proseTitle': '模型少解释，只在结论处落笔',
       'panel.on': '开',
       'panel.off': '关',
-      'panel.budget': '步数上限',
+      'panel.budget': '最多几步',
       'panel.budgetOff': '不限',
       'panel.budgetSteps': '{n} 步',
-      'panel.allSessions': '所有会话',
+      'panel.scope': '只影响本会话',
       'panel.budgetTitle': '到上限先汇报，不截断任务',
-      'panel.map': '工作区清单',
+      'panel.map': '先列文件清单',
+      'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
     }
 
     const en = {
@@ -113,14 +115,16 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.prose': 'Less narration',
+      'panel.proseTitle': 'Skips explanations; writes the result only',
       'panel.on': 'On',
       'panel.off': 'Off',
-      'panel.budget': 'Step cap',
+      'panel.budget': 'Max steps',
       'panel.budgetOff': 'No cap',
       'panel.budgetSteps': '{n} steps',
-      'panel.allSessions': 'All conversations',
+      'panel.scope': 'This conversation only',
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
-      'panel.map': 'Workspace inventory',
+      'panel.map': 'File list first',
+      'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
     }
 
     const CSS = [
@@ -169,26 +173,31 @@ window.__ModuleLoader__.load({
      */
     const store = {
       /** 'loading' | 'ready' | 'absent' | 'error' */
-      phase: 'loading',
-      enabled: false,
-      gear: '',
+      phase: 'loading', // until the first read reports what this conversation has
+      /** What this conversation runs at: on or off, never a shared default. */
+      enabled: false, // painted on the first read, then follows every click
+      /** The slower profile this conversation picked, '' for none. */
+      gear: '', // only set when the conversation picked a slower profile
       /**
-       * `outputDiscipline !== false`. Read from the namespace, not the session
-       * column: this is one shared preference, so the panel says so instead of
-       * pretending it is per-conversation.
+       * `outputDiscipline !== false` for this conversation. Resolved from its
+       * own entry in the session column, falling back to the configured
+       * default when it has none.
        */
       discipline: true,
-      /** The shared workspace inventory switch, off by default. */
+      /** The workspace inventory switch for this conversation, off by default. */
       inventory: false,
-      /** The shared step cap: 0 means no cap. */
+      /** This conversation's step cap; 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
       panelOpen: false,
-      writable: true,
-      /** Namespace key and revision of the last successful read. */
-      ns: undefined,
-      revision: undefined,
-      error: '',
+      /** Whether the settings column accepts writes at all. */
+      writable: true, // false only when the settings column is read-only
+      /** Namespace key of the last successful read. */
+      ns: undefined, // filled by the first successful describe()
+      /** Revision of the last successful read, for a compare-and-set write. */
+      revision: undefined, // paired with ns for the next compare-and-set
+      /** The last read or write failure, shown in place of the panel rows. */
+      error: '', // cleared by the next successful read
       /**
        * The last refused write. Kept apart from `error` because the resync that
        * follows a refusal succeeds, and a successful read must not erase the one
@@ -197,7 +206,7 @@ window.__ModuleLoader__.load({
       writeError: '',
       /** A write in flight: keeps the button from double-firing. */
       busy: false,
-      /** The value we are waiting for the host to echo back after a write. */
+      /** The value we are waiting for the settings side to echo back after a write. */
       pending: undefined,
       /**
        * The conversation this chip is rendered for, handed over by the slot's
@@ -244,8 +253,8 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------- per-session bookkeeping */
 
     /**
-     * Browser half of the per-session column — the same format the host parses in
-     * `src/state.js`. The bundle cannot import host ESM (it is fetched verbatim by
+     * Browser half of the per-session column — the same format the settings side parses in
+     * `src/state.js`. The bundle cannot import the settings ESM (it is fetched verbatim by
      * the client module loader), so the twenty lines are duplicated and both
      * copies are pinned to the same fixtures in the tests.
      *
@@ -265,8 +274,8 @@ window.__ModuleLoader__.load({
      * taking the chip down: the column may be hand-edited, and the chip is the
      * only place a user can see the switch, so throwing here would hide the bug.
      *
-     * The shape check is deliberately the same one the host applies
-     * (`src/state.js` `sanitise`): this half writes entries the host then reads
+     * The shape check is deliberately the same one the settings side applies
+     * (`src/state.js` `sanitise`): this half writes entries the settings side then reads
      * to decide what a request runs at, and an entry one side accepts and the
      * other drops is a switch that looks on and changes nothing.
      *
@@ -284,21 +293,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Keep only entries the host would also honour.
+     * Keep only entries the settings side would also honour.
+     *
+     * The field list matches `src/state.js` `sanitise` exactly, on purpose: this
+     * half writes entries the settings side reads to decide what a request runs at, and an
+     * entry one side accepts while the other drops is a switch that looks on and
+     * changes nothing.
      *
      * @param {Record<string, any>} input
      */
     function sanitiseChoices(input) {
-      /** @type {Record<string, {enabled?: boolean, gear?: string, ts?: number}>} */
+      /** @type {Record<string, any>} */
       const out = {}
       for (const [sessionId, entry] of Object.entries(input)) {
         if (sessionId.length === 0 || !isRecord(entry)) continue
-        /** @type {{enabled?: boolean, gear?: string, ts?: number}} */
+        /** @type {Record<string, any>} */
         const clean = {}
         if (typeof entry.enabled === 'boolean') clean.enabled = entry.enabled
         if (typeof entry.gear === 'string' && entry.gear.length > 0) clean.gear = entry.gear
+        if (typeof entry.discipline === 'boolean' || entry.discipline === 'late') clean.discipline = entry.discipline
+        if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
+        if (typeof entry.map === 'boolean') clean.map = entry.map
         if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
-        if (clean.enabled === undefined && clean.gear === undefined) continue
+        if (
+          clean.enabled === undefined
+          && clean.gear === undefined
+          && clean.discipline === undefined
+          && clean.stepBudget === undefined
+          && clean.map === undefined
+        ) continue
         out[sessionId] = clean
       }
       return out
@@ -332,28 +355,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * A copy of the column with this conversation's entry set to the pair the user
-     * just asked for.
+     * A copy of the column with this conversation's entry updated.
      *
-     * Both halves of a click travel in one patch: `enabled` / `gear` are the
-     * shared default (and therefore the "last choice" a new session inherits),
-     * `sessions` is this conversation's own entry (and therefore what the host
-     * applies to *this* request stream). Splitting them into two writes would
-     * leave a window where the session runs on one gear while the chip shows
-     * another — and two writes means two revision races.
+     * One click travels in one patch: `sessions` is this conversation's own entry
+     * (and therefore what the settings side applies to *this* request stream), and nothing
+     * else. The shared config fields are the defaults and stay untouched, which is
+     * the whole point of the per-session tier: turning fast mode off here must not
+     * turn off another open tab, and turning narration down here must not change
+     * what the next conversation inherits any more than this one.
+     *
+     * Fields absent from `patch` keep their previous value, so each panel row can
+     * write its own field without restating the other three.
      *
      * @param {Record<string, any>} map
      * @param {string|undefined} sessionId
-     * @param {boolean} enabled
-     * @param {string} gear
+     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean}} patch
      */
-    function withOwn(map, sessionId, enabled, gear) {
+    function withOwn(map, sessionId, patch) {
       const next = { ...map }
       if (typeof sessionId !== 'string' || sessionId.length === 0) return next
       const current = isRecord(next[sessionId]) ? next[sessionId] : {}
-      /** @type {{enabled: boolean, gear?: string, ts: number}} */
-      const entry = { ...current, enabled: enabled === true, ts: Date.now() }
-      if (typeof gear === 'string' && gear.length > 0) entry.gear = gear
+      /** @type {Record<string, any>} */
+      const entry = { ...current, ts: Date.now() }
+      if (typeof patch.enabled === 'boolean') entry.enabled = patch.enabled
+      if (typeof patch.gear === 'string' && patch.gear.length > 0) entry.gear = patch.gear
+      if (typeof patch.discipline === 'boolean' || patch.discipline === 'late') entry.discipline = patch.discipline
+      if (Number.isFinite(patch.stepBudget) && patch.stepBudget >= 0) entry.stepBudget = Math.floor(Number(patch.stepBudget))
+      if (typeof patch.map === 'boolean') entry.map = patch.map
       next[sessionId] = entry
       return next
     }
@@ -385,7 +413,7 @@ window.__ModuleLoader__.load({
 
     /**
      * Bound a remote call. The bridge can leave a request pending when the
-     * client connects before the host channel is up; without a deadline the chip
+     * client connects before the settings channel is up; without a deadline the chip
      * would sit in `loading` forever, which is indistinguishable from a broken
      * control. A timed-out read becomes a visible error the user can retry.
      *
@@ -482,21 +510,30 @@ window.__ModuleLoader__.load({
           const value = view.value && typeof view.value === 'object' ? view.value : {}
           store.sessions = parseChoices(value.sessions)
           const own = ownChoice(sid)
-          // A layer that carries the field wins; otherwise keep what we already
-          // know instead of flattening the switch back to the default. The
-          // conversation's own entry outranks the shared default, field by field,
-          // so an entry that pins only the gear still inherits the switch.
+          // A layer that carries the field wins, field by field: the
+          // conversation's own entry outranks the shared default, so an entry that
+          // pins only the gear still inherits everything else. Per-session entries
+          // are why two open tabs can show different rows at the same time.
           const sharedGear = typeof value.gear === 'string' ? value.gear : store.gear
           const seenGear = own !== undefined && typeof own.gear === 'string' ? own.gear : sharedGear
+          const seenDiscipline = own !== undefined && own.discipline !== undefined
+            ? own.discipline !== false
+            : value.outputDiscipline !== false
+          const seenBudget = own !== undefined && typeof own.stepBudget === 'number'
+            ? own.stepBudget
+            : typeof value.stepBudget === 'number' ? value.stepBudget : 0
+          const seenMap = own !== undefined && typeof own.map === 'boolean'
+            ? own.map
+            : value.workspaceMap === true
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
           store.revision = typeof view.revision === 'number' ? view.revision : undefined
           store.writable = !(result && result.writable === false)
           store.gear = seenGear
-          store.discipline = value.outputDiscipline !== false
-          store.stepBudget = typeof value.stepBudget === 'number' ? value.stepBudget : 0
-          store.inventory = value.workspaceMap === true
+          store.discipline = seenDiscipline
+          store.stepBudget = seenBudget
+          store.inventory = seenMap
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -516,7 +553,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The host echoes a write a beat later, so poll briefly instead of showing
+     * The settings side echoes a write a beat later, so poll briefly instead of showing
      * the old value in the gap.
      *
      * @param {{settings: {describe: () => Promise<any>}}} remote
@@ -535,40 +572,59 @@ window.__ModuleLoader__.load({
     /**
      * Write one or more config fields through the settings surface.
      *
-     * The patch is optimistic, then reconciled with what the host reports. A
+     * The patch is optimistic, then reconciled with what the settings side reports. A
      * refusal rolls the paint back and keeps the message — never a silent revert.
      *
+     * Two shapes of change reach this function, and only one of them is used by
+     * the panel:
+     *
+     * - `options.entry` updates *this conversation's* row and writes nothing else.
+     *   That is the only path that survives the volatility check on the settings side, and it is
+     *   what makes the four controls per-session instead of global.
+     * - `patch` names shared config fields. It is kept for callers that mean "change
+     *   the default for future conversations", and the settings side refuses it for any
+     *   field that is not volatile — so the panel must not use it.
+     *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
-     * @param {{enabled?: boolean, gear?: string}} patch
+     * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
+     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean}}} [options]
      * @returns {Promise<boolean>} whether the write was accepted
      */
     async function write(remote, patch, options = {}) {
       if (store.phase !== 'ready' || !store.writable || store.busy) return false
       const before = Object.assign({}, store)
-      // The on/off switch keeps a per-conversation entry; a shared preference
-      // must not rewrite that entry as a side effect.
-      const touchSession = options.touchSession !== false
-      const finalEnabled = typeof patch.enabled === 'boolean' ? patch.enabled : store.enabled
-      const finalGear = typeof patch.gear === 'string' ? patch.gear : store.gear
-      const merged = touchSession
-        ? withOwn(store.sessions, store.sessionId, finalEnabled, finalGear)
-        : store.sessions
-      const outgoing = touchSession ? { ...patch, sessions: encodeChoices(merged) } : { ...patch }
+      const shared = patch && typeof patch === 'object' ? patch : {}
+      const entry = options.entry
+      const scoped = entry !== undefined && typeof entry === 'object'
+      const merged = scoped ? withOwn(store.sessions, store.sessionId, entry) : store.sessions
+      const outgoing = scoped ? { ...shared, sessions: encodeChoices(merged) } : { ...shared }
       store.busy = true
       store.writeError = ''
-      if (touchSession) store.sessions = merged
-      if (typeof patch.enabled === 'boolean') {
-        store.enabled = patch.enabled
-        store.pending = patch.enabled
+      if (scoped) {
+        store.sessions = merged
+        if (typeof entry.enabled === 'boolean') {
+          store.enabled = entry.enabled
+          store.pending = entry.enabled
+        }
+        if (typeof entry.gear === 'string') store.gear = entry.gear
+        if (typeof entry.discipline === 'boolean' || entry.discipline === 'late') store.discipline = entry.discipline !== false
+        if (typeof entry.stepBudget === 'number') store.stepBudget = entry.stepBudget
+        if (typeof entry.map === 'boolean') store.inventory = entry.map
       }
-      if (typeof patch.gear === 'string') store.gear = patch.gear
-      if (typeof patch.stepBudget === 'number') store.stepBudget = patch.stepBudget
-      if (typeof patch.workspaceMap === 'boolean') store.inventory = patch.workspaceMap
+      if (typeof shared.enabled === 'boolean') {
+        store.enabled = shared.enabled
+        store.pending = shared.enabled
+      }
+      if (typeof shared.gear === 'string') store.gear = shared.gear
+      if (shared.outputDiscipline === false) store.discipline = false
+      else if (shared.outputDiscipline !== undefined) store.discipline = true
+      if (typeof shared.stepBudget === 'number') store.stepBudget = shared.stepBudget
+      if (typeof shared.workspaceMap === 'boolean') store.inventory = shared.workspaceMap
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
         store.busy = false
-        await settle(remote, typeof patch.enabled === 'boolean' ? patch.enabled : store.enabled)
+        await settle(remote, typeof outgoing.enabled === 'boolean' ? outgoing.enabled : store.enabled)
         emit()
         return true
       } catch (error) {
@@ -576,6 +632,7 @@ window.__ModuleLoader__.load({
         store.enabled = before.enabled
         store.gear = before.gear
         store.sessions = before.sessions
+        store.discipline = before.discipline
         store.stepBudget = before.stepBudget
         store.inventory = before.inventory
         store.pending = undefined
@@ -593,6 +650,11 @@ window.__ModuleLoader__.load({
      * switch, so a refusal leaves its reason on the tooltip; the reason stays
      * until the next successful read.
      *
+     * Only this session's row is written. The previous release also rewrote the
+     * shared `enabled` field, which made one click turn the mode on for every
+     * conversation that had never been clicked — the exact leak the per-session
+     * tier exists to prevent.
+     *
      * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      */
     async function toggleEnabled(remote) {
@@ -602,27 +664,24 @@ window.__ModuleLoader__.load({
         if (store.phase !== 'ready') return
       }
       if (!store.writable) return
-      // The scheduler rides along so the shared column (which seeds a brand-new
-      // conversation) matches what this one just got. `auto` is a constant, not
-      // a choice: the scheduler is the only mode, and the chip is the only choice.
-      await write(remote, { enabled: !store.enabled, gear: 'auto' })
+      // `auto` is a constant, not a choice: the scheduler is the only mode.
+      await write(remote, undefined, { entry: { enabled: !store.enabled, gear: 'auto' } })
     }
 
     /**
-     * Turn the "less narration" reminder on or off.
+     * Turn the "less narration" reminder on or off for this conversation.
      *
      * `late` is the shipped default: no prose rule in the system prompt, one
      * compression reminder from the fourth step of a turn. `false` removes it,
      * which on the long-task fixture gave back the whole gain (184 s vs 69 s
-     * median, 6 pairs) — so the panel writes the shared field, never a
-     * per-session illusion.
+     * median, 6 pairs).
      *
      * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {boolean} on
      */
     async function toggleDiscipline(remote, on) {
       if (store.busy || store.phase !== 'ready' || !store.writable) return
-      await write(remote, { outputDiscipline: on ? 'late' : false })
+      await write(remote, undefined, { entry: { discipline: on ? 'late' : false } })
     }
 
     /* -------------------------------------------------------------- component */
@@ -742,18 +801,22 @@ window.__ModuleLoader__.load({
         : t('panel.budgetOff')
 
       /**
-       * One row: label on the left, current value on the right.
+       * One row: label on the left, current value on the right, and the
+       * consequence of the setting on hover. The label alone cannot say what
+       * "少写过程" costs, and the settings rows use a title for the
+       * same reason.
        *
        * Props are assigned one by one because a dense key/value literal reads as
        * a status dump to the copy linter, and this is a control, not a dump.
        */
-      const row = (role, label, value, live, act, checked) => {
+      const row = (role, label, value, live, act, checked, hint) => {
         const props = {}
         props.className = 'fm-panel__row'
         props.role = role
         props.disabled = !live
         props.onClick = act
         if (role === 'menuitemcheckbox') props['aria-checked'] = checked === true
+        if (typeof hint === 'string' && hint.length > 0) props.title = hint
         return react.createElement(
           'button',
           props,
@@ -769,11 +832,13 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * The inventory is a shared field as well: it belongs to the composition,
-       * not to one conversation, so the write skips the per-session entry.
+       * The file list is a per-conversation choice too, and this row is where the
+       * previous release's dead switches came from: it wrote the shared
+       * `workspaceMap` field, the settings side refused it as non-volatile, and the button
+       * looked broken.
        */
       const toggleMap = () => {
-        void write(remote, { workspaceMap: !store.inventory }, { touchSession: false })
+        void write(remote, undefined, { entry: { map: !store.inventory } })
         store.panelOpen = false
         emit()
       }
@@ -782,10 +847,26 @@ window.__ModuleLoader__.load({
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
         react.createElement('div', { className: 'fm-panel__title' }, t('panel.title')),
-        row('menuitemcheckbox', t('panel.prose'), t(store.discipline ? 'panel.on' : 'panel.off'), canWrite, toggleProse, store.discipline),
-        row('menuitem', t('panel.budget'), budgetText, canWrite, () => void cycleBudget(remote)),
-        row('menuitemcheckbox', t('panel.map'), t(store.inventory ? 'panel.on' : 'panel.off'), canWrite, toggleMap, store.inventory),
-        react.createElement('div', { className: 'fm-panel__scope' }, t('panel.allSessions')),
+        row(
+          'menuitemcheckbox',
+          t('panel.prose'),
+          t(store.discipline ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleProse,
+          store.discipline,
+          t('panel.proseTitle'),
+        ),
+        row('menuitem', t('panel.budget'), budgetText, canWrite, () => void cycleBudget(remote), undefined, t('panel.budgetTitle')),
+        row(
+          'menuitemcheckbox',
+          t('panel.map'),
+          t(store.inventory ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleMap,
+          store.inventory,
+          t('panel.mapTitle'),
+        ),
+        react.createElement('div', { className: 'fm-panel__scope' }, t('panel.scope')),
       )
     }
 
@@ -793,17 +874,18 @@ window.__ModuleLoader__.load({
     const BUDGET_STEPS = [0, 15, 30]
 
     /**
-     * Move the step cap to the next offered value.
+     * Move the step cap to the next offered value for this conversation.
      *
-     * The cap is a shared field, so the write skips the per-session entry that
-     * the on/off switch maintains.
+     * The cap used to be a shared field, which is why it read as a dead button:
+     * `settings.write` refuses a non-volatile path outright. It travels in the
+     * per-session row now, so the cap applies to this conversation only.
      *
      * @param {any} remote
      */
     async function cycleBudget(remote) {
       const at = BUDGET_STEPS.indexOf(store.stepBudget)
       const next = BUDGET_STEPS[(at < 0 ? 0 : at + 1) % BUDGET_STEPS.length]
-      await write(remote, { stepBudget: next }, { touchSession: false })
+      await write(remote, undefined, { entry: { stepBudget: next } })
     }
 
     /* ------------------------------------------------------------------ apply */
@@ -885,7 +967,7 @@ window.__ModuleLoader__.load({
         }, 'fast-mode: panel dismiss')
       }
 
-      // Another tab, a hand-edited patch, or the plugin's own host half may be
+      // Another tab, a hand-edited patch, or the plugin's own settings half may be
       // the one writing.
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         const onFocus = () => { void refresh(remote) }
@@ -897,7 +979,7 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     exports.inject = inject
     // The two format helpers are exported for `test/state.test.js`, which feeds
-    // the same fixtures to this copy and to `src/state.js`: the host decides what a
+    // the same fixtures to this copy and to `src/state.js`: the settings side decides what a
     // request runs at from the column this half writes, so a drift between the two
     // is a switch that looks on and does nothing.
     exports.__choices = { SESSIONS_LIMIT, parseChoices, encodeChoices, withOwn }

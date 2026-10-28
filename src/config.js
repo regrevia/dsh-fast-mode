@@ -81,7 +81,7 @@ export const Config = z.object({
     .union([z.boolean(), z.const('late')])
     .default('late')
     .description(
-      '输出纪律 / Output discipline: 让模型少写过程、只在结论处落笔。`late`（默认）不往系统提示里放文风规则，第 4 步之后由调度器提醒一次——短任务零成本，长任务实测 6 对：墙钟中位 2.68×、步数 10.5→7.5、输出 token −52%、正确性 12/12 不变。`true` 全程生效；`false` 关闭。',
+      '输出纪律 / Output discipline（面板「少写过程」，也是没有自己条目的会话的默认值）: 让模型少写过程、只在结论处落笔。`late`（默认）不往系统提示里放文风规则，第 4 步之后由调度器提醒一次——短任务零成本，长任务实测 6 对：墙钟中位 2.68×、步数 10.5→7.5、输出 token −52%、正确性 12/12 不变。`true` 全程生效；`false` 关闭。',
     ),
 
   shellParallel: z
@@ -98,7 +98,7 @@ export const Config = z.object({
     .max(80)
     .default(0)
     .description(
-      '单轮步数预算 / Steps per turn: 用户自设的硬上限，到达后调度器提醒一次按现状汇报；0 = 不限（默认）。步数只说明成本，不说明任务是否完成——默认不再按步数催停，避免把仍在推进的长任务截断。需要成本上限时自己设。',
+      '单轮步数预算 / Steps per turn（面板「最多几步」，0 显示为「不限」）: 用户自设的硬上限，到达后调度器提醒一次按现状汇报；0 = 不限（默认）。步数只说明成本，不说明任务是否完成——默认不再按步数催停，避免把仍在推进的长任务截断。需要成本上限时自己设。',
     ),
 
   finishLineSteps: z
@@ -185,7 +185,7 @@ export const Config = z.object({
     .boolean()
     .default(false)
     .description(
-      '工作区清单 / Workspace inventory: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。',
+      '工作区清单 / Workspace inventory（面板「先列文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。',
     ),
 
   mapEntries: z
