@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.16（只改文档与判据脚本，代码与 1.5.15 相同）
+
+- `BENCHMARK.md` 补两块实测记录：`D2B_DBG`（`d2` 在 debugfix 上的独立复现：7 对几何 0.717×、中位 0.864×、5/7 更快、符号检验 p=0.45、`steps_geo` 1.118×、`out_geo` 0.787×）与「提醒之后输出会不会重新变长」的预注册前提检查（`def15` 有反弹，`d2g` 没有；fixture 里 assistant 可见文字中位 0–200 字符，提醒动的是工具参数与 reasoning 的 token 量）。
+- `D2G` 判据脚本补上判据 5 的执行：`d2gscore.py` 调 `d2gsign.py` 逐臂断言提醒下发步位，`D2G_IMPL` 的 `d2g` 实际在第 3 步（预注册要求第 4 步）判 FAIL，结论仍是 HOLD、默认第 4 步。
+- `DR8_MIG` 的判据落成可执行脚本：`dr8sign.py`（dr8 命中 ≥1、`def15` 命中 0，否则记「未测到」）与 `dr8score.py`（预注册六条，含 `out_geo ≤ 0.95`、赢面 4/6、质量不倒退）。
+- 无配置项变化，默认 `disciplineRepeatAtSteps: 0` 行为不变。
+
 ## 1.5.15（右键面板第三行；`D2G` 预注册判据判 HOLD）
 
 - **面板第三行「工作区清单」**：写共享字段 `workspaceMap`（默认 `false`），三行面板第三项，`readonly` / 写入中禁用，写失败回滚。与另两行一样只写共享字段、不带 `sessions`，不碰按会话的开关状态。`client.test.js` 新增一行测试覆盖「默认关、写入不带 `sessions`、写后按 host 值重绘、再点关掉」，全套 **270 pass**。
