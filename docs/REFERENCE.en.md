@@ -1,6 +1,6 @@
 # Reference: principles, configuration and limits
 
-This manual describes what **dsh-fast-mode 1.5.6** actually does (compared with 1.5.0 it adds two experimental knobs, `preferPatch` and `workspaceMap`, both off by default; with the default config behaviour is identical to 1.5.0), matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
+This manual describes what **dsh-fast-mode 1.5.15** actually does (injection behaviour under the default config is identical to 1.5.0; 1.5.14 added the right-click panel and 1.5.15 makes it three rows), matching `index.js`, `src/` and `client.js` in the repository. It is not a brochure: where something can be measured it gets a number, and where it has not been measured it says so.
 
 **The one contract: fast mode never changes reasoning effort, the thinking budget, or the model.** The `agent/request` hook does exactly one thing — `await next()`, read the `reasoningEffort` the request already carries for measurement, then return it unchanged. Whatever effort the user picked (the per-session choice in the UI, or the effort pinned by the profile's agent-default-model) is the effort every request uses.
 
@@ -8,7 +8,8 @@ Speed comes from three things only: fewer round trips, less narration, less tool
 
 ## Interaction details: the bolt switch and which conversation it applies to
 
-- **One icon, and it is the switch.** The conversation input's activity slot (`conversation.input.activity`) holds a single bolt button: hollow when off, filled when on. One click toggles it, another click toggles back. There is no gear selector, no caret, no second-level "choose a gear" menu, and no popover.
+- **One icon, and it is the switch.** The conversation input's activity slot (`conversation.input.activity`) holds a single bolt button: hollow when off, filled when on. One click toggles it, another click toggles back, and that click writes only this conversation. There is no gear selector, no caret, no second-level "choose a gear" menu.
+- **Right-click is the panel.** Right-clicking the bolt opens three shared settings: less narration (`outputDiscipline`), step cap (`stepBudget`, cycling 0/15/30), and workspace inventory (`workspaceMap`). All three write shared fields only, never `sessions`, and apply from the next request; the whole block is disabled while read-only or mid-write, and a refused write rolls back. The panel does not expose `disciplineAfterSteps`, `disciplineEarlyCalls`, `shapeGate`, `finishLineSteps`, `shellParallel` or `disciplineRepeatAtSteps` — untested or held.
 - **The button answers one question: is this conversation on.** `aria-pressed` is the state, and the tooltip spells out "this conversation · effort unchanged · click to turn off". What makes the mode faster, where the speed comes from, and the per-call ceiling live in the plugin description (`meta.description` and the config descriptions), not in the composer.
 - **The live line quotes the number being enforced**, not an adjective:
   - on, with a guard ceiling: `Automatic · parallel 2–8 · one call ≤ 2 min`
@@ -361,7 +362,7 @@ Module layout:
 - `src/metrics.js`: JSONL metrics and summaries;
 - `src/benchmark.js`: per-session hash assignment;
 - `src/peers.js`: conflicting-plugin detection;
-- `client.js`: the bolt switch (no popover) and the per-conversation write.
+- `client.js`: the bolt switch, the right-click panel (three shared settings) and the per-conversation write.
 
 Run the tests:
 

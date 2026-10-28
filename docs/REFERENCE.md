@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.5.6** 的实际行为（相对 1.5.0 多两个默认关闭的实验旋钮 `preferPatch` 与 `workspaceMap`，默认配置下行为与 1.5.0 完全一致），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.5.15** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.15 面板为三行），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -8,7 +8,8 @@
 
 ## 交互细节：闪电开关与会话归属
 
-- **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单，也没有面板。
+- **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回；这一下只写当前会话。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
+- **右键是面板。** 右键闪电打开三行共享设置："更少中间输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"工作区清单"（`workspaceMap`）。三行都只写共享字段、不带 `sessions`，下一个回合生效；只读或写入中时整块禁用，写失败回滚。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
 - **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 思考强度不变 · 点击关闭"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
   - 开启、看门狗有上限：`自动调度 · 并行 2–8 · 单次调用 ≤ 2 分`
@@ -365,7 +366,7 @@ dsh-fast-mode-experiment stop         # 结束实验
 - `src/metrics.js`：JSONL 计量与汇总；
 - `src/benchmark.js`：按会话哈希分配；
 - `src/peers.js`：冲突插件探测；
-- `client.js`：闪电开关（无面板）与按会话的写入。
+- `client.js`：闪电开关、右键面板（三行共享设置）与按会话的写入。
 
 跑测试：
 

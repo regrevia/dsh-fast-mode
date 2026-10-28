@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.15（右键面板第三行；`D2G` 预注册判据判 HOLD）
+
+- **面板第三行「工作区清单」**：写共享字段 `workspaceMap`（默认 `false`），三行面板第三项，`readonly` / 写入中禁用，写失败回滚。与另两行一样只写共享字段、不带 `sessions`，不碰按会话的开关状态。`client.test.js` 新增一行测试覆盖「默认关、写入不带 `sessions`、写后按 host 值重绘、再点关掉」，全套 **270 pass**。
+- **文案与检查**：`ui-copy-lint` **21 error / 2 warning**（与 HEAD 逐行相同，全是文件级 React props 误报），`zh-lint` **0 error**（37 warning 为既有），`style-lint` 通过。
+- **`D2G` 预注册判据：HOLD，默认维持第 4 步**。21 对（`D2G_IMPL` 8 / `D2G_DBG` 7 / `D2G_MIG` 6）里 14/21 更快，合并几何 **0.756×**、中位 **0.719×**、总时长 **0.685×**，质量 0 回归；但第 2 条在 `debugfix` 上是 **0.903×**，没进预设的 **≤ 0.80**。按预注册规则，其余判据全过也不能挑指标发版。分块数字：`IMPL` 0.889× / 5-8 更快 / 步数 0.753×；`DBG` 0.903× / 4-7 / 步数 0.987×；`MIG` **0.495×** / 5-6 / 步数 0.964× —— 迁移类省得最多，调试类基本打平。离群点：`codeimpl p6` 2.093×、`migrate p3` 1.601×、`debugfix p5` 1.368×，都在「本来就没有探索空间」的短直线上多走了几步。
+- **交付审计的限度**：报告里的 `delivery audit` 按固定句式找完成通报，命中 0/16、2/14、0/12，这个探针在本套任务上不可用；质量结论只引用 `exact` / `green`（全部 1/1）与判据 5 的 0 个坏格。
+
 ## 1.5.14（`D2G` 判据仍在跑，未据此改默认）
 
 - **闪电右键面板（新）**：只有两行，都是共享设置、下一个回合生效 —— 「更少中间输出」（写 `outputDiscipline`，`late` ↔ `false`，默认开）与「步数上限」（写 `stepBudget`，循环 `0 / 15 / 30`，默认 `0` 不限）。面板只读取值、只挑一个已测过的安全上限，没有暴露 `disciplineAfterSteps`、`shapeGate`、`finishLineSteps`、`shellParallel` 这些未证实或已淘汰的旋钮。步数上限的写入不带 `sessions` 字段，避免动到按会话的开关状态；`client.js` 的 `write()` 因此加了 `{ touchSession: false }` 路径。文案按界面规则压到标签/值/后果三件，`ui-copy-lint` 与 HEAD 同为 21 error / 2 warning（全部是文件级 React props 误报），`zh-lint` 0 error。

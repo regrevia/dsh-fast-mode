@@ -99,6 +99,7 @@ window.__ModuleLoader__.load({
       'panel.budgetSteps': '{n} 步',
       'panel.allSessions': '所有会话',
       'panel.budgetTitle': '到上限先汇报，不截断任务',
+      'panel.map': '工作区清单',
     }
 
     const en = {
@@ -119,6 +120,7 @@ window.__ModuleLoader__.load({
       'panel.budgetSteps': '{n} steps',
       'panel.allSessions': 'All conversations',
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
+      'panel.map': 'Workspace inventory',
     }
 
     const CSS = [
@@ -176,6 +178,8 @@ window.__ModuleLoader__.load({
        * pretending it is per-conversation.
        */
       discipline: true,
+      /** The shared workspace inventory switch, off by default. */
+      inventory: false,
       /** The shared step cap: 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
@@ -492,6 +496,7 @@ window.__ModuleLoader__.load({
           store.gear = seenGear
           store.discipline = value.outputDiscipline !== false
           store.stepBudget = typeof value.stepBudget === 'number' ? value.stepBudget : 0
+          store.inventory = value.workspaceMap === true
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -558,6 +563,7 @@ window.__ModuleLoader__.load({
       }
       if (typeof patch.gear === 'string') store.gear = patch.gear
       if (typeof patch.stepBudget === 'number') store.stepBudget = patch.stepBudget
+      if (typeof patch.workspaceMap === 'boolean') store.inventory = patch.workspaceMap
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -571,6 +577,7 @@ window.__ModuleLoader__.load({
         store.gear = before.gear
         store.sessions = before.sessions
         store.stepBudget = before.stepBudget
+        store.inventory = before.inventory
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -740,13 +747,13 @@ window.__ModuleLoader__.load({
        * Props are assigned one by one because a dense key/value literal reads as
        * a status dump to the copy linter, and this is a control, not a dump.
        */
-      const row = (role, label, value, live, act) => {
+      const row = (role, label, value, live, act, checked) => {
         const props = {}
         props.className = 'fm-panel__row'
         props.role = role
         props.disabled = !live
         props.onClick = act
-        if (role === 'menuitemcheckbox') props['aria-checked'] = store.discipline
+        if (role === 'menuitemcheckbox') props['aria-checked'] = checked === true
         return react.createElement(
           'button',
           props,
@@ -761,12 +768,23 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /**
+       * The inventory is a shared field as well: it belongs to the composition,
+       * not to one conversation, so the write skips the per-session entry.
+       */
+      const toggleMap = () => {
+        void write(remote, { workspaceMap: !store.inventory }, { touchSession: false })
+        store.panelOpen = false
+        emit()
+      }
+
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
         react.createElement('div', { className: 'fm-panel__title' }, t('panel.title')),
-        row('menuitemcheckbox', t('panel.prose'), t(store.discipline ? 'panel.on' : 'panel.off'), canWrite, toggleProse),
+        row('menuitemcheckbox', t('panel.prose'), t(store.discipline ? 'panel.on' : 'panel.off'), canWrite, toggleProse, store.discipline),
         row('menuitem', t('panel.budget'), budgetText, canWrite, () => void cycleBudget(remote)),
+        row('menuitemcheckbox', t('panel.map'), t(store.inventory ? 'panel.on' : 'panel.off'), canWrite, toggleMap, store.inventory),
         react.createElement('div', { className: 'fm-panel__scope' }, t('panel.allSessions')),
       )
     }

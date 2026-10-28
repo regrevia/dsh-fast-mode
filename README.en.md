@@ -87,12 +87,13 @@ Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a d
 
 ## The switch
 
-The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for two shared settings:
+The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for three shared settings:
 
 - **Less narration** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
 - **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
+- **Workspace inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
 
-Both apply from the next request. No dropdown, no multiplier estimate.
+All three apply from the next request. No dropdown, no multiplier estimate.
 
 The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded execution), but their widths are static while this width comes from the conversation's own call evidence; do not install all three. Context-compaction plugins coexist.
 

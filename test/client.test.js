@@ -479,6 +479,11 @@ function budgetRowOf(panel) {
   return panel.children[2]
 }
 
+/** The workspace-inventory row: the third control in the panel. */
+function mapRowOf(panel) {
+  return panel.children[3]
+}
+
 test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote)
@@ -548,4 +553,29 @@ test('the step cap cycles through 0, 15 and 30 without touching the switch or th
     assert.equal('enabled' in call.patch, false, 'the cap is not the mode switch')
     assert.ok(panelOf(render()), 'the panel stays open while cycling a cap')
   }
+})
+
+test('the workspace inventory is a shared switch, off by default, and never rewrites the session entry', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote)
+
+  await rightClick(render)
+  const row = mapRowOf(panelOf(render()))
+  assert.equal(row.props.disabled, false, 'the inventory row is live')
+  assert.equal(row.props['aria-checked'], false, 'off is the shipped default')
+  assert.equal(row.children[1].children[0], 'panel.off')
+
+  await row.props.onClick()
+  await sleep(40)
+  const call = remote.calls[remote.calls.length - 1]
+  assert.equal(call.patch.workspaceMap, true, 'one shared field')
+  assert.equal('sessions' in call.patch, false, 'the inventory is not a per-conversation choice')
+  assert.equal('enabled' in call.patch, false, 'the inventory is not the mode switch')
+  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
+
+  await rightClick(render)
+  assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'the panel paints the host value')
+  await mapRowOf(panelOf(render())).props.onClick()
+  await sleep(40)
+  assert.equal(remote.calls[remote.calls.length - 1].patch.workspaceMap, false, 'toggle back off')
 })
