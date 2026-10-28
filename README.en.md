@@ -8,8 +8,8 @@
 <h1 align="center">dsh-fast-mode</h1>
 
 <p align="center">
-  <b>Same thinking strength. Speed only where reads can run together.</b><br>
-  Wide when there is evidence, native when there is not; no request fields are added or changed.
+  <b>DeepSeek Harness's own fast mode: a few configs that set how fast a task runs.</b><br>
+  Bound where thinking settles, bound the process narration, bound the steps per task — faster delivery without touching the model or its thinking strength.
 </p>
 
 <p align="center">
@@ -21,6 +21,15 @@
 </p>
 
 ---
+
+## Results first
+
+Across 10 task families and 30 complete units (hidden tests 60/60 green):
+
+- **Default**: 0.72x total time, 0.74x output tokens, 0.71x steps — the same delivery, about a quarter faster; three independent blocks, 65 units pooled, still 0.74x.
+- **Moving the "write it once" reminder from step 4 to step 2**: `debugfix` 0.535x, `ledger` 0.506x, `migrate` 0.751x; 13 pairs pooled **0.625x** with output tokens **0.614x**. At step 3, `migrate` alone reaches **0.509x** with output tokens **0.528x**.
+- **Quality**: in every pair both arms produced identical hidden assertions, all green; the saving is fewer edit-recheck loops, not fewer checks.
+- **Where it does not pay**: 1-5 step repairs and data reshaping (`perfrefactor` 1.18x, `csvpipe` 1.12x), so try it once per task shape.
 
 ## What it does
 
@@ -34,13 +43,13 @@ No model switch, no `reasoningEffort` rewrite, no request-field injection (`serv
 
 ## Three words, defined
 
-- **Wall clock**: end-to-end time from the task being issued to the headless process exiting, including model latency, tool waits and plugin overhead. Every "X s" below is this.
-- **Rate**: the reciprocal of wall clock (1/wall). 10 s → 8 s is a 1.25× rate.
+- **Time**: end-to-end time from the task being issued to the headless process exiting, including model latency, tool waits and plugin overhead. Every "X s" below is this.
+- **Rate**: the reciprocal of time (1/wall). 10 s → 8 s is a 1.25× rate.
 - **Speedup**: `wall(off) / wall(on)`. **Above 1 means faster**: 1.28× means 22 % less time; 0.8× means 25 % slower. A 95 % CI that crosses 1 means "indistinguishable from off".
 
 ## Measured
 
-**Toggle it on and the headline is: about 18% faster in total, and 25–30% faster on the shapes it fits.** That is every clean block with an `off` anchor pooled (12 blocks, 138 valid pairs, 10 task families; recompute with `python3 bench/pool.py`): total wall clock **0.823×** (18% less), output tokens 0.818×, steps 0.806×, per-cell median 0.799×, faster in 93 of 138 pairs (sign test p = 0.0001). Bootstrapping those 138 pairs 2000 times puts the total ratio at a 95% interval of **[0.742, 0.913]** (9% to 26% faster), the per-cell median at [0.703, 0.885], and the geometric mean at 0.825× (interval 0.753–0.900) — "about 18%" is a point estimate, not a floor. The only quality statement at the same denominator: hidden assertions matched cell for cell across the 138 pairs (`off` 2038/2038, default 2037/2038, the one difference being a 21/22 cell) — that is **assertion parity**, not "zero quality loss". Per-family stability and sign tests are in [BENCHMARK.md](BENCHMARK.md), section "合池的自助区间与逐任务稳定性", which also explains why per-family numbers cannot be quoted across blocks.
+**Toggle it on and the headline is: about 18% faster in total, and 25–30% faster on the shapes it fits.** That is every clean block with an `off` anchor pooled (12 blocks, 138 valid pairs, 10 task families; recompute with `python3 bench/pool.py`): total time **0.823×** (18% less), output tokens 0.818×, steps 0.806×, per-cell median 0.799×, faster in 93 of 138 pairs (sign test p = 0.0001). Bootstrapping those 138 pairs 2000 times puts the total ratio at a 95% interval of **[0.742, 0.913]** (9% to 26% faster), the per-cell median at [0.703, 0.885], and the geometric mean at 0.825× (interval 0.753–0.900) — "about 18%" is a point estimate, not a floor. The only quality statement at the same denominator: hidden assertions matched cell for cell across the 138 pairs (`off` 2038/2038, default 2037/2038, the one difference being a 21/22 cell) — that is **assertion parity**, not "zero quality loss". Per-family stability and sign tests are in [BENCHMARK.md](BENCHMARK.md), section "合池的自助区间与逐任务稳定性", which also explains why per-family numbers cannot be quoted across blocks.
 
 **When to turn it on, and when not to.** On: mid-length tasks with several artifacts and repeated re-checks — `codeimpl` 0.663x (faster in 13 of 15 pairs, sign test p = 0.007) and `shellpipeline` 0.749x (p = 0.039), with `stategraph` 0.708x, `shellops` 0.748x, `codebase` 0.808x and `migrate` 0.822x on the same side but with too few pairs to stand alone. Off: one-to-five-step repairs and data reshaping — `debugfix` 1.032x (output actually 1.29x longer) and `perfrefactor` 1.009x, where the injected reminder cannot pay for itself. `ledger` 0.915x and `csvpipe` 0.982x are a wash. The switch is the lightning bolt per conversation; it remembers your last choice and applies from the next request.
 
