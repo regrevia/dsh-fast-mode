@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.33（把「多个开关一起开」里那个真正省时的开关做进面板：第五行「一次读多个文件」）
+
+- **面板多了第五行，`openBatch` 第一次能被用户点到。** 1.5.32 实测的 `combo3`（默认 + `workspaceMap` + `openBatch`，11 对 0.742×）里有一半来自 `openBatch`，但它之前只在配置里，面板够不着——等于「测出来了但用户开不了」。这一版把它做成和「先列文件清单」同级的逐会话开关：写 `sessions` 列里本会话条目的 `batch`，宿主侧映射成 `openBatch`（`src/state.js` 的 `configOverridesFor`），不动共享默认值，只影响本会话。
+- **默认仍然关。** 单独开 `openBatch` 测不到显著（0.882×，CI 跨 1），只有和清单一起开才有效；面板 tooltip 写的就是这句后果，不写成「更快」。默认值、`d2g` 的 HOLD 状态都不变。
+- **两侧字段表对齐。** `client.js` 的 `sanitiseChoices` 与 `src/state.js` 的 `sanitise` 同步接受 `batch`，避免出现「客户端写进去、宿主读出来丢掉」的假开关（这正是 1.5.17 那批死按钮的成因）。测试补了三处：状态层的 `batch → openBatch` 映射、面板行的默认值/逐会话写入、以及「共享 `openBatch` 为真但本会话条目为假」时面板按条目画。
+- 动 `client.js`、`src/state.js`、`src/config.js`（描述文案）、两份 README、`docs/REFERENCE.md`；测试 306 → 308 全绿。
+
 ## 1.5.32（先回答「多个开关一起开」：三开 **0.669×**、22 对里 18 对更快、隐藏测试 22/22 绿；附带一个内存上限修复）
 
 - **新增两个组合臂并真的跑了一遍**（此前只有逐个开关的消融，从没跑过「一起开」）：`combo2` = 默认 + `d2g` + `workspaceMap` + `openBatch`，`combo3` = 默认 + `workspaceMap` + `openBatch`。同块内与默认臂按 `(任务, pair)` 配对：

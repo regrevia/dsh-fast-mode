@@ -106,6 +106,7 @@ function sanitise(input) {
     if (typeof entry.discipline === 'boolean' || entry.discipline === 'late') clean.discipline = entry.discipline
     if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
     if (typeof entry.map === 'boolean') clean.map = entry.map
+    if (typeof entry.batch === 'boolean') clean.batch = entry.batch
     if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
     if (
       clean.enabled === undefined
@@ -113,6 +114,7 @@ function sanitise(input) {
       && clean.discipline === undefined
       && clean.stepBudget === undefined
       && clean.map === undefined
+      && clean.batch === undefined
     ) continue
     out[sessionId] = clean
   }
@@ -137,6 +139,7 @@ export function choiceFor(raw, sessionId) {
   if (entry.discipline !== undefined) choice.discipline = entry.discipline
   if (entry.stepBudget !== undefined) choice.stepBudget = entry.stepBudget
   if (entry.map !== undefined) choice.map = entry.map
+  if (entry.batch !== undefined) choice.batch = entry.batch
   return choice
 }
 
@@ -161,6 +164,7 @@ export function configOverridesFor(raw, sessionId) {
   if (choice.discipline !== undefined) overrides.outputDiscipline = choice.discipline
   if (choice.stepBudget !== undefined) overrides.stepBudget = choice.stepBudget
   if (choice.map !== undefined) overrides.workspaceMap = choice.map
+  if (choice.batch !== undefined) overrides.openBatch = choice.batch
   return Object.keys(overrides).length === 0 ? undefined : overrides
 }
 
@@ -215,7 +219,7 @@ export function writeChoice(raw, sessionId, choice, now) {
   return { sessions: encodeChoices(map), map }
 }
 
-/** @typedef {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, ts?: number}} SessionEntry */
+/** @typedef {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, ts?: number}} SessionEntry */
 
 /**
  * Serialise the map, dropping the oldest entries beyond {@link SESSIONS_LIMIT}.

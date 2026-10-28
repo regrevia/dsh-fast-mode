@@ -121,23 +121,25 @@ test('an entry is looked up by session, and absence means inherit', () => {
 })
 
 test('a session entry can pin all four panel fields', () => {
-  const column = JSON.stringify({ 'session-a': { enabled: true, gear: 'fast', discipline: false, stepBudget: 30, map: true, ts: 1 } })
+  const column = JSON.stringify({ 'session-a': { enabled: true, gear: 'fast', discipline: false, stepBudget: 30, map: true, batch: true, ts: 1 } })
   assert.deepEqual(choiceFor(column, 'session-a'), {
     enabled: true,
     gear: 'fast',
     discipline: false,
     stepBudget: 30,
     map: true,
+    batch: true,
   })
 })
 
 test('the compact column is spelled as config fields for the policy', () => {
-  const column = JSON.stringify({ 'session-a': { discipline: 'late', stepBudget: 15, map: true } })
+  const column = JSON.stringify({ 'session-a': { discipline: 'late', stepBudget: 15, map: true, batch: true } })
   assert.deepEqual(
     configOverridesFor(column, 'session-a'),
-    { outputDiscipline: 'late', stepBudget: 15, workspaceMap: true },
-    'map is the short spelling of workspaceMap',
+    { outputDiscipline: 'late', stepBudget: 15, workspaceMap: true, openBatch: true },
+    'map is short for workspaceMap, batch for openBatch',
   )
+  assert.equal(choiceFor(JSON.stringify({ 'a': { ts: 1, batch: 'yes' } }), 'a'), undefined, 'a non-boolean is not a choice')
   assert.equal(configOverridesFor(column, 'session-b'), undefined, 'no entry means inherit')
   assert.equal(configOverridesFor(column, undefined), undefined)
   assert.equal(configOverridesFor(JSON.stringify({ 'x': { ts: 1 } }), 'x'), undefined, 'a timestamp is not a choice')

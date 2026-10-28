@@ -102,6 +102,8 @@ window.__ModuleLoader__.load({
       'panel.budgetTitle': '到上限先汇报，不截断任务',
       'panel.map': '先列文件清单',
       'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
+      'panel.batch': '一次读多个文件',
+      'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
     }
 
     const en = {
@@ -125,6 +127,8 @@ window.__ModuleLoader__.load({
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
       'panel.map': 'File list first',
       'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
+      'panel.batch': 'Read several files at once',
+      'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
     }
 
     const CSS = [
@@ -186,6 +190,8 @@ window.__ModuleLoader__.load({
       discipline: true,
       /** The workspace inventory switch for this conversation, off by default. */
       inventory: false,
+      /** Batches independent reads into one call for this conversation. */
+      batch: false,
       /** This conversation's step cap; 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
@@ -314,6 +320,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.discipline === 'boolean' || entry.discipline === 'late') clean.discipline = entry.discipline
         if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
         if (typeof entry.map === 'boolean') clean.map = entry.map
+        if (typeof entry.batch === 'boolean') clean.batch = entry.batch
         if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
         if (
           clean.enabled === undefined
@@ -321,6 +328,7 @@ window.__ModuleLoader__.load({
           && clean.discipline === undefined
           && clean.stepBudget === undefined
           && clean.map === undefined
+          && clean.batch === undefined
         ) continue
         out[sessionId] = clean
       }
@@ -369,7 +377,7 @@ window.__ModuleLoader__.load({
      *
      * @param {Record<string, any>} map
      * @param {string|undefined} sessionId
-     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean}} patch
+     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean}} patch
      */
     function withOwn(map, sessionId, patch) {
       const next = { ...map }
@@ -382,6 +390,7 @@ window.__ModuleLoader__.load({
       if (typeof patch.discipline === 'boolean' || patch.discipline === 'late') entry.discipline = patch.discipline
       if (Number.isFinite(patch.stepBudget) && patch.stepBudget >= 0) entry.stepBudget = Math.floor(Number(patch.stepBudget))
       if (typeof patch.map === 'boolean') entry.map = patch.map
+      if (typeof patch.batch === 'boolean') entry.batch = patch.batch
       next[sessionId] = entry
       return next
     }
@@ -525,6 +534,9 @@ window.__ModuleLoader__.load({
           const seenMap = own !== undefined && typeof own.map === 'boolean'
             ? own.map
             : value.workspaceMap === true
+          const seenBatch = own !== undefined && typeof own.batch === 'boolean'
+            ? own.batch
+            : value.openBatch === true
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
@@ -534,6 +546,7 @@ window.__ModuleLoader__.load({
           store.discipline = seenDiscipline
           store.stepBudget = seenBudget
           store.inventory = seenMap
+          store.batch = seenBatch
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -587,7 +600,7 @@ window.__ModuleLoader__.load({
      *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
-     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean}}} [options]
+     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean}}} [options]
      * @returns {Promise<boolean>} whether the write was accepted
      */
     async function write(remote, patch, options = {}) {
@@ -610,6 +623,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.discipline === 'boolean' || entry.discipline === 'late') store.discipline = entry.discipline !== false
         if (typeof entry.stepBudget === 'number') store.stepBudget = entry.stepBudget
         if (typeof entry.map === 'boolean') store.inventory = entry.map
+        if (typeof entry.batch === 'boolean') store.batch = entry.batch
       }
       if (typeof shared.enabled === 'boolean') {
         store.enabled = shared.enabled
@@ -620,6 +634,7 @@ window.__ModuleLoader__.load({
       else if (shared.outputDiscipline !== undefined) store.discipline = true
       if (typeof shared.stepBudget === 'number') store.stepBudget = shared.stepBudget
       if (typeof shared.workspaceMap === 'boolean') store.inventory = shared.workspaceMap
+      if (typeof shared.openBatch === 'boolean') store.batch = shared.openBatch
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -635,6 +650,7 @@ window.__ModuleLoader__.load({
         store.discipline = before.discipline
         store.stepBudget = before.stepBudget
         store.inventory = before.inventory
+        store.batch = before.batch
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -843,6 +859,13 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /** Same per-conversation tier as the file list, one call for many reads. */
+      const toggleBatch = () => {
+        void write(remote, undefined, { entry: { batch: !store.batch } })
+        store.panelOpen = false
+        emit()
+      }
+
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
@@ -865,6 +888,15 @@ window.__ModuleLoader__.load({
           toggleMap,
           store.inventory,
           t('panel.mapTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.batch'),
+          t(store.batch ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleBatch,
+          store.batch,
+          t('panel.batchTitle'),
         ),
         react.createElement('div', { className: 'fm-panel__scope' }, t('panel.scope')),
       )

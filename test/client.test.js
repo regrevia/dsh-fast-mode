@@ -494,6 +494,11 @@ function mapRowOf(panel) {
   return panel.children[3]
 }
 
+/** The batch-read row: the fourth control in the panel. */
+function batchRowOf(panel) {
+  return panel.children[4]
+}
+
 test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote)
@@ -595,6 +600,36 @@ test('the file list is off by default and toggles for this conversation only', a
   assert.equal(remote.state.value.workspaceMap, undefined, 'the shared default never moved')
 })
 
+
+test('the batch-read switch is off by default and rides the per-conversation column', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote, 'session-alpha')
+
+  await rightClick(render)
+  const row = batchRowOf(panelOf(render()))
+  assert.equal(row.props.disabled, false, 'the batch row is live')
+  assert.equal(row.props['aria-checked'], false, 'off is the shipped default')
+
+  await row.props.onClick()
+  await sleep(40)
+  const call = remote.calls[remote.calls.length - 1]
+  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the batch switch is a per-conversation choice')
+  assert.equal(columnOf(call)['session-alpha'].batch, true)
+  assert.equal('openBatch' in call.patch, false, 'the shared default never moved')
+  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
+})
+
+test('the batch row paints the host value, including a shared default', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto', openBatch: true })
+  const { render } = await mount(remote, 'session-alpha')
+  await rightClick(render)
+  assert.equal(batchRowOf(panelOf(render())).props['aria-checked'], true, 'the shared field shows through')
+
+  const own = fakeRemote({ enabled: true, gear: 'auto', openBatch: true, sessions: JSON.stringify({ 'session-alpha': { batch: false, ts: 1 } }) })
+  const second = await mount(own, 'session-alpha')
+  await rightClick(second.render)
+  assert.equal(batchRowOf(panelOf(second.render())).props['aria-checked'], false, 'the conversation entry outranks it')
+})
 
 /* ------------------------------------------ the shipped Settings, transcribed
  *
