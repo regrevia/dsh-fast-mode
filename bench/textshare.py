@@ -62,8 +62,8 @@ def read_transcript(d):
 
 
 def tally(text):
-    """(prose chars, tool-arg chars, messages, tool calls) for one transcript."""
-    prose = args = msgs = calls = 0
+    """(prose chars, tool-arg chars, messages, tool calls, multi-call messages)."""
+    prose = args = msgs = calls = multi = textonly = 0
     for line in text.splitlines():
         try:
             o = json.loads(line)
@@ -72,6 +72,7 @@ def tally(text):
         if o.get('type') != 'assistant/message':
             continue
         msgs += 1
+        this = 0
         for part in (o.get('data') or {}).get('message', {}).get('content') or []:
             if not isinstance(part, dict):
                 continue
@@ -79,8 +80,13 @@ def tally(text):
                 prose += len(part.get('text') or '')
             elif part.get('type') == 'tool-call':
                 calls += 1
+                this += 1
                 args += len(part.get('arguments') or '')
-    return prose, args, msgs, calls
+        if this >= 2:
+            multi += 1
+        elif this == 0:
+            textonly += 1
+    return prose, args, msgs, calls, multi, textonly
 
 
 def main():
@@ -94,10 +100,11 @@ def main():
     rows = collect(a.arm, a.tag, a.limit)
     per = []
     for d, name in rows:
-        prose, args, msgs, calls = tally(read_transcript(d))
+        prose, args, msgs, calls, multi, textonly = tally(read_transcript(d))
         if msgs:
             per.append({'run': name, 'prose': prose, 'args': args, 'messages': msgs,
-                        'calls': calls, 'share': prose / (prose + args) if prose + args else 0})
+                        'calls': calls, 'multi': multi, 'textonly': textonly,
+                        'share': prose / (prose + args) if prose + args else 0})
     if not per:
         print(f'no transcripts for arm={a.arm} tag={a.tag or "*"}; nothing to compute')
         return 1
@@ -109,6 +116,12 @@ def main():
         'arm': a.arm, 'tag': a.tag or '*', 'limit': a.limit,
         'sessions': len(per), 'messages': sum(r['messages'] for r in per),
         'calls': sum(r['calls'] for r in per),
+        'multiCallMessages': sum(r['multi'] for r in per),
+        'multiCallShare': (sum(r['multi'] for r in per) /
+                           max(sum(r['messages'] for r in per), 1)),
+        'textOnlyMessages': sum(r['textonly'] for r in per),
+        'textOnlyShare': (sum(r['textonly'] for r in per) /
+                          max(sum(r['messages'] for r in per), 1)),
         'proseChars': prose, 'toolArgChars': args, 'totalChars': total,
         'share': prose / total if total else None,
         'medianShare': st.median(shares), 'p10': shares[int(0.1 * (len(shares) - 1))],

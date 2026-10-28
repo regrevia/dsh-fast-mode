@@ -1,0 +1,12 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false
+    # Isolates the late output reminder: identical to def15 (all schema defaults)
+    # except the discipline channel is off, so the only difference between the two
+    # arms is whether the scheduler may emit "prose is now the cost".
+    outputDiscipline: false
