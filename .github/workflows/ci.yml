@@ -1,21 +1,46 @@
-name: test
+name: ci
+
+# One run per branch, not per push: a new push cancels the older run for the same
+# branch so two CI minutes are never spent proving a commit that is already stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'win/**']
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+
+      # Linux has `bash`; the Windows runner does not, and some tests here shell out
+      # to it. Git for Windows ships one, so put it on PATH for those jobs only.
+      - name: Provide bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bash = 'C:\Program Files\Git\bin\bash.exe'
+          if (-not (Test-Path $bash)) { throw "bash not found at $bash" }
+          Split-Path $bash | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - run: npm install --no-audit --no-fund
       - run: npm test
