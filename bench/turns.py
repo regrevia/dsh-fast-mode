@@ -69,7 +69,8 @@ def scan(path):
         return None
     started = 0
     turns = []
-    cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': []}
+    cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': [],
+           'reminderSteps': []}
     for line in p.stdout.decode('utf-8', 'replace').splitlines():
         if ('turn/start' not in line and 'step/start' not in line
                 and 'Auto schedule' not in line and 'compaction/start' not in line):
@@ -85,7 +86,8 @@ def scan(path):
         if kind == 'turn/start':
             if cur['steps'] or cur['reminders']:
                 turns.append(cur)
-            cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': []}
+            cur = {'steps': 0, 'reminders': 0, 'reminderSeqs': [], 'compactions': [],
+           'reminderSteps': []}
         elif kind == 'step/start':
             cur['steps'] += 1
         elif kind == 'compaction/start':
@@ -93,6 +95,7 @@ def scan(path):
         elif kind in PLUGIN_ROLES and NEEDLE in text_of(data):
             cur['reminders'] += 1
             cur['reminderSeqs'].append(o.get('seq'))
+            cur['reminderSteps'].append(cur['steps'])
     if cur['steps'] or cur['reminders']:
         turns.append(cur)
     return started, turns
@@ -106,6 +109,8 @@ def main():
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--exclude-arm', action='append', default=[],
                     help='skip sessions whose run directory ends in this arm (default: off)')
+    ap.add_argument('--explain-doubles', action='store_true',
+                    help='list every turn that got two reminders, with seqs and compactions')
     ap.add_argument('--since-hours', type=float, default=0,
                     help='only sessions started within this many hours')
     a = ap.parse_args()
@@ -115,6 +120,8 @@ def main():
     misses = doubled = doubled_compacted = 0
     later_qualifying = later_reminded = 0
     per_session_turns = collections.Counter()
+    entry_steps = collections.Counter()
+    offenders = []
     cutoff = (time.time() - a.since_hours * 3600) * 1000 if a.since_hours else 0
     skipped_old = 0
     for f in transcripts(a.dir, a.limit, tuple(a.exclude_arm or ['off'])):
@@ -142,11 +149,22 @@ def main():
                 if i > 0:
                     later_qualifying += 1
                     later_reminded += 1 if t['reminders'] else 0
+            if t['reminders']:
+                entry_steps[t['reminderSteps'][0]] += 1
             if t['reminders'] > 1:
                 doubled += 1
                 seqs = t['reminderSeqs']
                 if any(c is not None and seqs and seqs[0] < c < seqs[-1] for c in t['compactions']):
                     doubled_compacted += 1
+                if a.explain_doubles:
+                    offenders.append({
+                        'session': os.path.basename(os.path.dirname(os.path.dirname(f))),
+                        'turn': i + 1,
+                        'steps': t['steps'],
+                        'reminderSeqs': seqs,
+                        'reminderSteps': t['reminderSteps'],
+                        'compactions': t['compactions'],
+                    })
 
     out = {
         'sessions': sessions,
@@ -159,6 +177,7 @@ def main():
         'missed': misses,
         'doubled': doubled,
         'doubled_with_compaction_between': doubled_compacted,
+        'entry_steps': dict(sorted(entry_steps.items())),
         'later_qualifying_turns': later_qualifying,
         'later_reminded': later_reminded,
         'skipped_old': skipped_old,
@@ -174,6 +193,14 @@ def main():
           f"reminded {reminded} ({100 * reminded / max(qualifying, 1):.0f} %)  "
           f"missed {misses}  doubled {doubled} "
           f"(with a compaction between: {doubled_compacted})")
+    if entry_steps:
+        print(f"first reminder landed at step: {dict(sorted(entry_steps.items()))}")
+    if a.explain_doubles and offenders:
+        print('doubled turns:')
+        for o in offenders[:20]:
+            print(f"  {o['session']} turn {o['turn']} steps {o['steps']} "
+                  f"reminders at steps {o['reminderSteps']} seqs {o['reminderSeqs']} "
+                  f"compactions {o['compactions']}")
     print(f"later turns in multi-turn sessions: qualifying {later_qualifying}  "
           f"reminded {later_reminded} "
           f"({100 * later_reminded / max(later_qualifying, 1):.0f} %)")
