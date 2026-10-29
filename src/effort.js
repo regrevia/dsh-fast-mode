@@ -277,6 +277,15 @@ export function resolveConfig(raw, overrides) {
       ? Math.max(0, Math.floor(number(config.finishLineSteps, 0)))
       : 0,
     /**
+     * Lazy mode: the one switch that may cut deliberation instead of only round
+     * trips. Off by default, because it changes what the model thinks about and
+     * every other switch keeps the "same depth, sooner" promise. `lazyEffort:
+     * false` keeps the ladder text and the nudge but never rewrites effort, so
+     * the two halves can be measured apart.
+     */
+    lazy: gear.directive && config.lazy === true,
+    lazyEffort: gear.directive && config.lazy === true && config.lazyEffort !== false,
+    /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative
      * `toolTimeoutMs` disables it.

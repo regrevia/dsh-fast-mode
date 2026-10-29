@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
     const zh = {
       'chip.on': 'Fast 模式已开启',
       'chip.off': 'Fast 模式已关闭',
-      'chip.titleOn': 'Fast 模式：已开启 · 仅本会话 · 思考强度不变，点击关闭 · 右键设置',
+      'chip.titleOn': 'Fast 模式：已开启 · 仅本会话 · 点击关闭 · 右键设置',
       'chip.titleOff': 'Fast 模式：已关闭 · 点击开启 · 右键设置',
       'chip.titleLoading': 'Fast 模式：正在读取配置，点击重试',
       'chip.readonly': 'Fast 模式配置为只读，无法从这里切换',
@@ -104,6 +104,8 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
       'panel.batch': '一次读多个文件',
       'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
+      'panel.lazy': '想太久就少想一点',
+      'panel.lazyTitle': '想太久时先按已有信息定下去，安全校验照旧',
     }
 
     const en = {
@@ -129,6 +131,8 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
       'panel.batch': 'Read several files at once',
       'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
+      'panel.lazy': 'Think less when it stalls',
+      'panel.lazyTitle': 'Cuts a turn short when it keeps reasoning instead of deciding; safety checks stay',
     }
 
     const CSS = [
@@ -192,6 +196,8 @@ window.__ModuleLoader__.load({
       inventory: false,
       /** Batches independent reads into one call for this conversation. */
       batch: false,
+      /** The lazy switch: this conversation may be reasoned at a lower effort when it over-thinks. */
+      lazy: false,
       /** This conversation's step cap; 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
@@ -537,6 +543,9 @@ window.__ModuleLoader__.load({
           const seenBatch = own !== undefined && typeof own.batch === 'boolean'
             ? own.batch
             : value.openBatch === true
+          const seenLazy = own !== undefined && typeof own.lazy === 'boolean'
+            ? own.lazy
+            : value.lazy === true
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
@@ -547,6 +556,7 @@ window.__ModuleLoader__.load({
           store.stepBudget = seenBudget
           store.inventory = seenMap
           store.batch = seenBatch
+          store.lazy = seenLazy
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -624,6 +634,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.stepBudget === 'number') store.stepBudget = entry.stepBudget
         if (typeof entry.map === 'boolean') store.inventory = entry.map
         if (typeof entry.batch === 'boolean') store.batch = entry.batch
+        if (typeof entry.lazy === 'boolean') store.lazy = entry.lazy
       }
       if (typeof shared.enabled === 'boolean') {
         store.enabled = shared.enabled
@@ -635,6 +646,7 @@ window.__ModuleLoader__.load({
       if (typeof shared.stepBudget === 'number') store.stepBudget = shared.stepBudget
       if (typeof shared.workspaceMap === 'boolean') store.inventory = shared.workspaceMap
       if (typeof shared.openBatch === 'boolean') store.batch = shared.openBatch
+      if (typeof shared.lazy === 'boolean') store.lazy = shared.lazy
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -651,6 +663,7 @@ window.__ModuleLoader__.load({
         store.stepBudget = before.stepBudget
         store.inventory = before.inventory
         store.batch = before.batch
+        store.lazy = before.lazy
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -866,6 +879,16 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /**
+       * The one switch that changes how much this conversation thinks. It can
+       * change the answer, not only its timing, so the row names that first.
+       */
+      const toggleLazy = () => {
+        void write(remote, undefined, { entry: { lazy: !store.lazy } })
+        store.panelOpen = false
+        emit()
+      }
+
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
@@ -897,6 +920,15 @@ window.__ModuleLoader__.load({
           toggleBatch,
           store.batch,
           t('panel.batchTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.lazy'),
+          t(store.lazy ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleLazy,
+          store.lazy,
+          t('panel.lazyTitle'),
         ),
         react.createElement('div', { className: 'fm-panel__scope' }, t('panel.scope')),
       )

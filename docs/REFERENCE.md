@@ -1,17 +1,19 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.5.35** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.33 面板为五行、五行都只影响本会话），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.6.0** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.33 面板为五行，1.6.0 起为六行，六行都只影响本会话），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
-**唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
+**默认契约：Fast 模式不改变思考强度、thinking 预算或模型。** `agent/request` 钩子默认只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
+
+**唯一的例外是 1.6.0 起逐会话可点的 `lazy`，默认关闭。** 它只在「上一请求流出的思考字符明显超量」时把**下一个请求**降一档（最低 `low`，从不升档，每轮最多两次，工具报错后两步内不降），而且每个请求都从用户当次的选择重新读起，所以下一次请求就恢复；它不改模型、不写 thinking 预算、不加任何 provider 字段，`lazyEffort: false` 时一个字段都不写。见下面"六、`lazy`：想太久就少想一点"。
 
 快的部分只来自三件事：更少的往返、更少的冗余输出、更少的卡顿等待。下面逐条说明。
 
 ## 交互细节：闪电开关与会话归属
 
 - **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回；这一下只写当前会话。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
-- **右键是面板。** 右键闪电打开五行，五行都只影响当前会话："更快"（`enabled`）、"少写过程"（`outputDiscipline`）、"最多几步"（`stepBudget`，循环 0/15/30）、"先列文件清单"（`workspaceMap`）、"一次读多个文件"（`openBatch`）。五行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。没有条目的会话沿用配置里的默认值（`enabled`/`gear`/`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
-- **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 少写过程`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
-- **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 思考强度不变 · 点击关闭"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
+- **右键是面板。** 右键闪电打开六行，六行都只影响当前会话："更快"（`enabled`）、"少写过程"（`outputDiscipline`）、"最多几步"（`stepBudget`，循环 0/15/30）、"先列文件清单"（`workspaceMap`）、"一次读多个文件"（`openBatch`）、"想太久就少想一点"（`lazy`）。六行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。没有条目的会话沿用配置里的默认值（`enabled`/`gear`/`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`lazy`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap`、`lazy` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 少写过程`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
+- **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 点击关闭 · 右键设置"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
   - 开启、看门狗有上限：`自动调度 · 并行 2–8 · 单次调用 ≤ 2 分`
   - 开启、看门狗关闭（`stallGuard: false`，或 `toolTimeoutMs` 为负数）：`自动调度 · 并行 2–8 · 单次调用不限时`
@@ -29,9 +31,9 @@
 
 1. `const resolved = await next()`；
 2. 读 `resolved.reasoningEffort`、路由名，写进测量标签；
-3. `return resolved`。
+3. `lazy` 关闭时 `return resolved`，一个字段都不动；`lazy` 打开且 `lazyEffort !== false` 时，只有 `src/lazy.js` 的账本里有证据（上一请求流出的思考字符超过阈值、没有报错冷却、本轮降档次数未用完、当前档在 `low` 之上）才 `return { ...resolved, reasoningEffort: 下一档 }`，否则仍然原样返回。
 
-它不写 `reasoningEffort`，不写 thinking 预算，不换模型，也不添加任何 provider 专用字段。因此"更快"只剩下三个真实杠杆：并行扇出（减少往返）、输出纪律（减少过程文字）、卡顿看门狗（减少工具等待）。思考深度和解码速度不在其中——前者是用户的契约，后者任何提示词都做不到。
+除这一个可点的例外，它不写 thinking 预算，不换模型，也不添加任何 provider 专用字段。因此常备的"更快"杠杆仍是三个：并行扇出（减少往返）、输出纪律（减少过程文字）、卡顿看门狗（减少工具等待）；`lazy` 是第四个，默认关闭，因为它动的是答案而不只是时延。思考深度和解码速度不在常备杠杆里——前者是用户的契约，后者任何提示词都做不到。
 
 ### 二、自适应调度器：`gear: auto`
 
@@ -136,6 +138,19 @@
 
 上限是 200 个会话，超出时淘汰 `ts` 最旧的条目——这是内存与配置文件体积的边界，不是权限模型。host 端的实现（`src/state.js`）和浏览器里的副本（`client.js`）是两份代码，测试用同一组 fixture 锁住它们的读写一致。
 
+### 六、`lazy`：想太久就少想一点（1.6.0，默认关闭）
+
+Ponytail 那句"最好的代码是没写的代码"在这里只借一半：**先读懂，再省**。这一节是插件里唯一会改动 `reasoningEffort` 的路径，所以它默认关闭、逐会话可点、并且每个请求都从用户当次的选择重新读起。
+
+两个动作，都只在有证据时发生：
+
+- **提示侧（`lazy: true` 时始终生效）。** 每轮第一步发一条 notice：先找最省的一级（能不能不做 → 有没有现成 helper → 标准库/平台 → 已装的依赖 → 一行 → 最小实现），确认必须写才写；不许扩范围；不许砍信任边界校验、数据丢失处理、安全与可访问性；结尾用一行说清跳过了什么、风险在哪。文本在 `src/lazy.js` 的 `DIRECTIVE`，`lazyEffort: false` 也照样发。
+- **effort 侧（`lazy: true` 且 `lazyEffort !== false`）。** 账本记两件事：上一步流出的思考字符（`agent/assistant-stream` 的 `reasoning-delta`）与本轮累计。上一步 ≥ 1600 字符，或本轮累计越过 4000 / 8000 字符，就把**下一个请求**降一档（`src/lazy.js` 的 `EFFORT_RUNGS` 顺序，最低到 `low`，从不升档）；每轮最多降两次、每步最多降一次（重试不会连降），工具结果报错后两步内不降——报错通常说明该想得更多，不是更少。
+
+为什么不会像 0.9.x 那样把会话"卡"在低档：`agent/request` 每次都从 `resolved.reasoningEffort`（用户当下的选择）重新读基准，降档只作用于它自己那一次返回值，所以用户切回 High 之后的第一个请求就是 High；面板里关掉 `lazy` 同样立刻恢复。测量口径上，`lazyEffort: false` 是"只发文字、一个字段都不写"的对照臂，用来分辨收益来自提示词还是 provider 真的更低档；`agent/assistant-stream` 记的 `reasoningChars` 是第二条独立通道（不依赖 provider 报 `reasoning_tokens`）。两块数字见 `BENCHMARK.md` 的 `LZ1` 块（12 对、36 次运行）：「只发文字」臂逐对几何墙钟 **0.389×**（95 % CI [0.252, 0.600]，11/12 更快，p = 0.0032），「文字 + 降档」臂 **0.430×**（CI [0.273, 0.677]，11/12），推理字符 0.372× / 0.418×，两臂判分 **216/216 全绿**。两臂直接对打 `laz16 / lazt16` = 1.106×（CI 跨 1），所以诚实的结论是：**收益主要来自提示文字那一半；降 `reasoningEffort` 这一半在这条路由上没有测出额外收益，也没测出代价。** 样本是两个短任务族、单机、单路由，别把它读成「所有题都快 2.5 倍」。
+
+不改的东西：模型、`thinking` 预算、`output_config`、provider 专用字段、以及档位词汇本身（路由声明的档位名不认识时原样放过，不猜）。
+
 ## 配置
 
 放在 profile 的 `cordis.patch.yml` 里：
@@ -166,6 +181,8 @@
 | `sessions` | `''` | 插件自动维护的会话级覆盖，见上一节。**不要手改。** |
 | `outputDiscipline` | `'late'` | 输出纪律。`late`（默认）前 4 步不写任何输出约束，第 4 步起由调度器提醒一次；`true` 全程生效；`false` 关闭输出纪律，仍注入并行与有界调用规则。 |
 | `openBatch` | `false` | 开局批量：每轮第一步发一次「把已知要做的独立调用放进同一块、shell 命令用 `&&` 串起来」。短任务的钱几乎全是每步固定成本（首字延迟 ~0.5 s/次），少一次往返就省一次；只影响第一轮第一步，长任务可忽略。旧批次里它不优于默认，但那些数字已因测量缺陷撤回（运行目录在仓库内、指标按字节偏移切片），尚无干净重测。保持在 `false`，但 1.5.33 起进面板（「一次读多个文件」），逐会话可开；和 `workspaceMap` 一起开 11 对 0.742×，再加 `disciplineAfterSteps: 2` 三开 22 对 0.669×〔CI 0.554–0.799〕，单独开仍测不到显著。 |
+| `lazy` | `false` | 想太久就少想一点：每轮第一步给一次"先找最省的一级、不扩范围、不砍校验"的提示，并在思考字符明显超量时把下一个请求降一档思考强度（最低 `low`，从不升档，每轮最多两次，报错后两步内不降）。默认关闭：它是唯一会改变答案而不只是时延的开关。1.6.0 起进面板（"想太久就少想一点"），逐会话可点。 |
+| `lazyEffort` | `true` | `lazy` 的 effort 半边。设为 `false` 时只发提示文字，一个请求字段都不写——这是分辨"提示词有效"与"provider 真降档"的对照臂。 |
 | `shapeGate` | `false` | 形状闸门：本轮累计调用 ≥ 4 且其中写入类（不在只读名单里的工具）占比 ≥ 60 % 时，**整轮不再注入任何提醒**，行为退回原生。判断只用已有的工具名，不发请求、不加请求体字段。它给的是「不适合就别管我」的退路：写密集型的任务没有可并行的调用，每条提醒都只是一次它用不上的往返。显式设了 `stepBudget` 时该收尾线优先于闸门——「别加速」不等于「无视我叫停」。默认关，因为它会同时关掉本可以救回长尾的收尾提醒。 |
 | `preferPatch` | `false` | 整文件写入之后提醒一次「改已有文件时只发改动的行（edit hunk），不要重发整个文件」。本步 `write` 的正文 ≥ 2000 字符才武装，之后一步发一次，每轮最多一次；文本明确要求结果与原文件逐字节相同，不限制写什么、也不影响何时结束。默认关闭：它只作用于模型的输出形式（工具调用参数），正确性由文件内容决定、与发送形式无关；实测是否真省墙钟见 `BENCHMARK.md` 的 `pp16` 臂。 |
 | `compactRereadHint` | false | 压缩提醒里多一句「本回合写过的文件不要为确认整份重读」；不新增消息。实验旋钮，默认关 |
@@ -193,7 +210,7 @@
 
 三条规则让它们真的能一起用：
 
-1. **不抢同一个字段。** 本插件不碰 `reasoningEffort`、`thinking`、`output_config`，所以没有任何"两个组件同时钳制 effort"的问题。
+1. **不抢同一个字段。** 本插件默认不碰 `reasoningEffort`、`thinking`、`output_config`；`lazy` 打开时也只在 `agent/request` 的返回值上降一档，不写配置、不写 thinking，压缩器与它没有共享字段——所以没有"两个组件同时钳制 effort"的问题。
 2. **压缩步骤不需要特殊照顾。** 1.0.0 没有"按住某一步"的概念；历史折叠发生在请求发出之前，本插件看到的只是一个普通请求。
 3. **摘要调用碰不到。** 压缩器自己的摘要请求往往跑在它自己的进程或 HTTP 层里，不经过 `agent/request`，本插件既不影响它，也不被它影响。
 
@@ -233,12 +250,12 @@
 
 **完全支持，而且不需要任何配置。** 官方 DeepSeek API（`deepseek-official`）、官方 API 前面挂的代理和中转、自建网关（如 `litellm` + Anthropic Messages）、OpenAI 兼容端点，行为完全一样，原因很简单：
 
-- 请求体原样进出。本插件不写 `reasoningEffort`、不写 `thinking`、不写 `output_config`，也不添加任何 provider 专用字段；
+- 请求体原样进出。本插件默认不写 `reasoningEffort`、不写 `thinking`、不写 `output_config`，也不添加任何 provider 专用字段；`lazy` 打开时 `reasoningEffort` 只会被换成一个该路由已经在用的更省档位（不认识当前档位就原样放过），路由不报 reasoning token 也不影响提示侧照常工作；
 - 不做"这条路由声明了哪些档位"的过滤和降档。没有 `floor`，没有档位阶梯，没有按步降档；
 - 路由名只被记进测量和调试日志，不参与任何决策；
 - token 用量按上游实际拼写读，不假定某一家：harness 的 `inputTokens/outputTokens/…`、OpenAI Chat 的 `prompt_tokens/completion_tokens`（含 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）、新版 OpenAI 的 `input_tokens/output_tokens`、Anthropic 的 `cache_read_input_tokens/cache_creation_input_tokens`、Google 的 `candidatesTokenCount` 都会落到同一组数字；usage 挂在 `usage`、`message.usage` 或 `response.usage` 下都能找到。网关完全不报 usage 时按 0 处理——步的时间和调用数由 harness 自己量，不靠 provider。
 
-所以无论 provider 声明的是 `off/low/high/max`、还是 `minimal/low/medium/high`、还是只有一档、还是什么都没声明，本插件的行为都一样：它注入提示段、给 shell 调用设上限，然后把你选的 effort 原样发出去。
+所以无论 provider 声明的是 `off/low/high/max`、还是 `minimal/low/medium/high`、还是只有一档、还是什么都没声明，本插件的行为都一样：它注入提示段、给 shell 调用设上限，然后把你选的 effort 原样发出去（`lazy` 关闭时；打开时只在此前确实想太久的那一步之后降一档，见「六、`lazy`」）。
 
 ## 测量、实验与报告
 
@@ -254,7 +271,8 @@
 | `ts` | 这一步结束的 ISO 时间 |
 | `sid` / `turn` / `step` | 会话 id、轮次、步号 |
 | `mode` / `gear` | `on` 或 `off`；关闭时 gear 记为 `off` |
-| `effort` | **请求实际携带的思考强度，原样记录，不做任何改写**——这是"插件没有动 effort"的证据 |
+| `effort` | **请求实际携带的思考强度**。默认就是你在 UI 里选的那档，一字不改；`lazy` 降档时这里是降后的值 |
+| `effortBase` | 仅在 `lazy` 降档时出现：用户原本选的那档。和 `effort` 的差就是降档证据 |
 | `route` | 路由/模型的标签，仅用于分组 |
 | `ttftMs` | 首字延迟：步开始到第一条 assistant 消息 |
 | `llmMs` | 模型耗时：步开始到最后一条 assistant 消息 |
@@ -264,7 +282,7 @@
 | `cacheRead` / `cacheWrite` | 上游 usage 的缓存读写 token |
 | `assistantMessages` | 本步的 assistant 消息数 |
 
-`effort` 这一列是理解 1.0.0 的关键：它记录的是请求**实际带出去的**值。如果你在 UI 里选了 `high`，每一行就是 `high`；插件不会把它改成别的。
+`effort` 这一列是理解请求路径的关键：它记录的是请求**实际带出去的**值。默认情况下它就是你在 UI 里选的那档（选了 `high`，每一行就是 `high`）；只有开了 `lazy` 且那一步确实想太久时，它才会变成降后的值，同时 `effortBase` 记下你原本的选择。两列同时出现就是「降档发生过」的机器证据。
 
 ### 每个会话自己的开关
 
@@ -331,7 +349,7 @@ dsh-fast-mode-experiment stop         # 结束实验
 ## 安全边界
 
 - **只观察，不改写。** `tools/pre-execute` / `tools/post-execute` 是纯观察者（记录开始时间和调用结果），`agent/request` 原样返回请求。除了注入提示段和两条 producer-owned notice（压缩后提醒、调度指令），插件不往会话里写任何东西。
-- **模型与 effort 不可写。** 源码里没有对 `reasoningEffort` 的赋值；测试会扫描源码，防止将来有人把它加回来。
+- **模型不可写，effort 只有一处可写。** 源码里只有 `src/lazy.js` 的降档路径会写 `reasoningEffort`（`agent/request` 返回值上的一个字段，`lazy` 默认关闭）；`test/effort.test.js` 扫描源码，要求这个赋值恰好一处、形状固定，并且仍然禁止 `thinking:` 与 0.9.x 的 `decideEffort`。
 - **设置只能由这次点击改，且带 revision。** 没有后台静默改配置的路径；冲突写入会失败并回滚，原因是 tooltip。
 - **计量是本地的。** 只写 `metricsFile`；`--lan` 是唯一的出网路径，只读，需要显式 token。
 - **看门狗只改 signal。** 调用方原来的 signal 在 `finally` 里恢复；取消后调用体的 rejection 被吞掉，不会变成未处理的拒绝。
@@ -364,13 +382,14 @@ dsh-fast-mode-experiment stop         # 结束实验
 - `src/guidance.js`：模型可见的提示文本；
 - `src/stallguard.js`：看门狗与预算优先级；
 - `src/effort.js`：档位表与旧名字归一化（不再有 effort 阶梯）；
+- `src/lazy.js`：`lazy` 的提示文本、思考字符账本与降一档的判定；
 - `src/config.js`：schema 与表单字段；
 - `src/state.js`：`sessions` 列的解析与编码；
 - `src/notices.js`：producer-owned notice 的构造与来源校验；
 - `src/metrics.js`：JSONL 计量与汇总；
 - `src/benchmark.js`：按会话哈希分配；
 - `src/peers.js`：冲突插件探测；
-- `client.js`：闪电开关、右键面板（五行，按会话写入 `sessions` 列）。
+- `client.js`：闪电开关、右键面板（六行，按会话写入 `sessions` 列）。
 
 跑测试：
 
@@ -378,6 +397,6 @@ dsh-fast-mode-experiment stop         # 结束实验
 node --test test/*.test.js
 ```
 
-当前 223 个测试在 Node 20.20.2、22.23.4 与 24 上全部通过（每个版本 223/223，0 失败）。测试覆盖：调度器宽度与指令、预算优先级、提示段的开关条件、`sessions` 列在 host 与浏览器两份实现间的一致性、notice 来源校验、计量字段、分配哈希、报告与实验 CLI 的参数解析，以及一条扫描源码、确认没有改写 `reasoningEffort` 的回归测试。
+当前 336 个测试在 Node 24.16.0 上全部通过（336/336，0 失败）。测试覆盖：调度器宽度与指令、预算优先级、提示段的开关条件、`sessions` 列在 host 与浏览器两份实现间的一致性、notice 来源校验、计量字段、分配哈希、报告与实验 CLI 的参数解析，`lazy` 的账本与降档边界（15 条单元测试）、以及一条扫描源码、确认 `reasoningEffort` 只有那一处受控赋值的回归测试。
 
 文档入口：`README.md`（中文）、`README.en.md`（English）、`BENCHMARK.md`（测量方法与历史数据）、`CHANGELOG.md`（每个版本删了什么、加了什么）。

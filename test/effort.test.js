@@ -184,7 +184,19 @@ test('no shipped module constructs a thinking-level field', async () => {
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1')
-    assert.doesNotMatch(code, /reasoningEffort\s*:/, `${file} must not build a reasoningEffort field`)
+    const built = (code.match(/reasoningEffort\s*:/g) ?? []).length
+    if (file === 'index.js') {
+      // Exactly one place may hand a different effort to the provider: the lazy
+      // switch's step-down. Anything wider means the 0.9.x policy is back.
+      assert.equal(built, 1, 'index.js may construct reasoningEffort only for the lazy step-down')
+      assert.match(
+        code,
+        /return planned && planned\.reduced \? \{ \.\.\.resolved, reasoningEffort: applied \} : resolved/,
+        'the one assignment must be the lazy step-down, not a general rewrite',
+      )
+    } else {
+      assert.equal(built, 0, `${file} must not build a reasoningEffort field`)
+    }
     assert.doesNotMatch(code, /\bthinking\s*:\s*\{/, `${file} must not build a thinking payload`)
     assert.doesNotMatch(code, /\bdecideEffort\b/, `${file} must not resurrect the effort policy`)
   }

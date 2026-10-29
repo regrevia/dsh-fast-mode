@@ -90,7 +90,7 @@ const POLICY_KEYS = [
   'rereadHint', 'openBatch', 'preferPatch', 'batchVerify', 'shapeGate',
   'stepBudget', 'finishLineSteps', 'outputBudget', 'outputBudgetAfterSteps',
   'parallel', 'fanoutWidth', 'workspaceMap', 'stallGuard', 'toolTimeoutMs',
-  'shellParallel', 'reassertAfterCompaction',
+  'shellParallel', 'reassertAfterCompaction', 'lazy', 'lazyEffort',
 ]
 
 /** @param {string} file @returns {{arm: string, config: Record<string, unknown>, resolved: Record<string, unknown>}} */

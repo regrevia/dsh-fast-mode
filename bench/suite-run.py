@@ -78,7 +78,7 @@ POLICY_KEYS = ('enabled', 'gear', 'scheduler', 'guidance', 'lateDiscipline', 'di
                'rereadHint', 'openBatch', 'preferPatch', 'batchVerify', 'shapeGate',
                'stepBudget', 'finishLineSteps', 'outputBudget', 'outputBudgetAfterSteps',
                'parallel', 'fanoutWidth', 'workspaceMap', 'stallGuard', 'toolTimeoutMs',
-               'shellParallel', 'reassertAfterCompaction')
+               'shellParallel', 'reassertAfterCompaction', 'lazy', 'lazyEffort')
 
 
 def resolve_arm(arm_path):
@@ -349,6 +349,8 @@ def run_one(cfg, arm, meta, tag):
            'hasSessionIds': bool(sids),
            'llm': round(sum(r.get('llmMs') or 0 for r in mine) / 1000, 2),
            'out': sum(r.get('output') or 0 for r in mine),
+           'reasoning': sum(r.get('reasoningChars') or 0 for r in mine),
+           'textChars': sum(r.get('textChars') or 0 for r in mine),
            'leak': leak_scan(dest),
            'armConfig': cfg['armconfigs'].get(arm),
            'reminders': events, 'reminderCounts': counts, **verify(dest, meta)}

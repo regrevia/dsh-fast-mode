@@ -738,3 +738,107 @@ test('the reminder can be switched off without switching the mode off', async ()
   const { out, decision } = await step(ctx)
   assert.equal(out, decision)
 })
+
+/* ------------------------------------------------------------------- lazy */
+
+const streamReasoning = (ctx, chars, sessionId = 'session-1') => {
+  ctx.fire('agent/assistant-stream', {
+    frame: {
+      type: 'chunk',
+      attemptId: `${sessionId}:attempt-1`,
+      chunk: { type: 'reasoning-delta', text: 'x'.repeat(chars) },
+    },
+  })
+}
+
+test('the lazy switch is opt-in: off hands back the same request and says nothing', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto' })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  const first = await step(ctx, { claimed })
+  assert.equal(first.out, first.decision, 'no ladder text, no nudge')
+  streamReasoning(ctx, 6000)
+  await step(ctx, { claimed })
+  assert.deepEqual(
+    await request(ctx, { step: 2, effort: 'high' }),
+    { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' },
+    'and effort is the harness value, untouched',
+  )
+})
+
+test('lazy mode states the ladder once per turn, in its own notice', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  const first = await step(ctx, { claimed })
+  const notice = first.out.messages.find(m => m && m.source && m.source.form === 'notice')
+  assert.ok(notice, 'the ladder rides the first step of the turn')
+  assert.equal(notice.source.kind, 'plugin:fast-mode')
+  assert.match(notice.content[0].text, /lazy senior developer/i)
+  assert.match(notice.content[0].text, /first rung that works/i)
+  const second = await step(ctx, { claimed })
+  assert.equal(second.out, second.decision, 'the second step of the same turn pays nothing')
+
+  // A new user message starts a turn, so the ladder comes back once.
+  const nextTurn = [{ id: 'u1', role: 'user', content: [] }, { id: 'u2', role: 'user', content: [] }]
+  const third = await step(ctx, { claimed: nextTurn })
+  assert.ok(third.out.messages.some(m => m && m.source && m.source.form === 'notice'))
+})
+
+test('a turn that keeps reasoning is nudged, at most twice', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  const nudges = []
+  for (let i = 0; i < 6; i += 1) {
+    streamReasoning(ctx, 1500)
+    const next = await step(ctx, { claimed })
+    const notice = next.out === next.decision
+      ? undefined
+      : next.out.messages.find(m => m && m.source && m.source.form === 'notice' && /decide/i.test(m.content[0].text))
+    if (notice) nudges.push(notice)
+  }
+  assert.ok(nudges.length >= 1, 'a long stretch of reasoning earns a nudge')
+  assert.ok(nudges.length <= 2, 'and never more than two')
+})
+
+test('a step that over-thought asks for one rung less, then restores the harness value', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  streamReasoning(ctx, 3000)
+  await step(ctx, { claimed })
+
+  const reduced = await request(ctx, { step: 2, effort: 'high' })
+  assert.equal(reduced.reasoningEffort, 'medium', 'one rung down, not a fixed level')
+
+  // The next step streamed little, so the harness's own value goes back out.
+  await step(ctx, { claimed })
+  const restored = await request(ctx, { step: 3, effort: 'high' })
+  assert.equal(restored.reasoningEffort, 'high', 'no drift across steps')
+  assert.deepEqual(Object.keys(restored).sort(), ['model', 'provider', 'reasoningEffort'], 'nothing else is rewritten')
+})
+
+test('the switch can cut the thinking text without touching effort', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', lazy: true, lazyEffort: false })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  const first = await step(ctx, { claimed })
+  assert.ok(first.out.messages.some(m => m && m.source && m.source.form === 'notice'), 'the ladder text still applies')
+  streamReasoning(ctx, 6000)
+  await step(ctx, { claimed })
+  assert.equal((await request(ctx, { step: 2, effort: 'high' })).reasoningEffort, 'high', 'lazyEffort:false pins the level')
+})
+
+test('lazy mode never reduces below low, and never by more than one rung', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  streamReasoning(ctx, 5000)
+  await step(ctx, { claimed })
+  assert.equal((await request(ctx, { step: 2, effort: 'low' })).reasoningEffort, 'low', 'low is the floor')
+  assert.equal((await request(ctx, { step: 2, effort: 'turbo' })).reasoningEffort, 'turbo', 'an unknown rung is never guessed at')
+})

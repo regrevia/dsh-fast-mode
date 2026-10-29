@@ -9,7 +9,7 @@
 
 <p align="center">
   <b>DeepSeek Harness's own fast mode: a few configs that set how fast a task runs.</b><br>
-  Never changes the model or its reasoning effort; it cuts redundant round trips and output through execution-strategy hints — the gain is fewer steps and fewer output tokens, not deleted narration.
+  Never changes the model, and by default not its reasoning effort either; it cuts redundant round trips and output through execution-strategy hints — the gain is fewer steps and fewer output tokens, not deleted narration. The one exception is the off-by-default `lazy` switch: one rung down when a turn keeps over-thinking, and the switch is yours.
 </p>
 
 <p align="center">
@@ -40,11 +40,11 @@ A step costs round-trip overhead × steps + decode time × output tokens + tool 
 - **Output discipline.** Asks the model to skip call previews, restatements and progress reports, never to shorten the final answer. Honest scope: visible assistant prose is only **1.18 %** of the characters in (prose + tool arguments) (def15, 341 sessions / 3,327 messages / 3,569 calls, 51,366 prose vs 4,315,096 argument characters; excludes reasoning and tool results; recompute with `python3 bench/textshare.py --limit 0`), so the speedup cannot be attributed to deleted narration — it comes from fewer round trips and fewer output tokens (fewer repeat edits, re-reads and verification passes). That is not the same claim as "nothing about the work changes".
 - **Stall watchdog.** Shell/script calls get a 120–300 s adaptive cap; a stuck call is cancelled and "change the approach" is written back into the context.
 
-No model switch, no `reasoningEffort` rewrite, no request-field injection (`service_tier`, `max_tokens`, anything like them). While the mode is on, the model's input carries this plugin's own scheduling guidance and reminders — that is the mechanism; switch the mode off and they are gone. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
+No model switch, no request-field injection, and no `reasoningEffort` byte written by default (`lazy` is the one off-by-default exception) (`service_tier`, `max_tokens`, anything like them). While the mode is on, the model's input carries this plugin's own scheduling guidance and reminders — that is the mechanism; switch the mode off and they are gone. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
 
 ## Three boundaries
 
-- **The explicit promise**: the plugin does not change the model, does not rewrite `reasoningEffort`, and does not inject request fields. That is where quality degradation would most likely come from, and the plugin stays out of it.
+- **The explicit promise**: the plugin does not change the model, does not inject request fields, and by default does not rewrite `reasoningEffort`. With `lazy` on it moves at most one rung down, never up, never below `low`, at most twice per turn, and every request re-reads your own choice first. That is where quality degradation would most likely come from, and by default the plugin stays out of it.
 - **Honest mechanism**: execution-strategy hints cut redundant round trips and output. The evidence is falling steps and output tokens (whole-pool default arm: 0.806× steps, 0.818× output); no claim that the gain comes from deleting narration.
 - **Quality boundary**: quality is judged by hidden tests and real evaluations, and behaviour is not claimed to be fully equivalent. When the quality gate fails, quality wins: experimental knobs ship off, and the default is only adopted from batches where both arms' hidden assertions match cell by cell.
 
@@ -103,16 +103,19 @@ Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a d
 
 ## The switch
 
-The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for a five-row panel — the switch itself and four settings:
+The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for a six-row panel — the switch itself and five settings:
 
 - **Less narration** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
 - **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
 - **Workspace inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
 - **Read several files at once** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
+- **Think less when it stalls** (`lazy`) — when a turn keeps pouring out reasoning, one notice asks for the cheapest rung that works and one rung less thinking on the next request. Off by default; it can change the answer, not only the timing.
 
-All five rows take effect from the next request, per conversation. No dropdown, no multiplier estimate.
+All six rows take effect from the next request, per conversation. No dropdown, no multiplier estimate.
 
 **Turn several on at once?** Yes, but only the measured pair. Defaults plus inventory plus batched reads is **0.742x** over 11 pairs; adding the step-2 reminder timing (not a panel row, still on HOLD) reaches **0.669x** over 22 pairs, CI95 [0.554, 0.799], 18/22 faster, hidden tests green. Each switch alone lands at 0.80–0.88 with a confidence interval that crosses 1 — the gain comes from each one cutting a different share of the same cost, not from any single switch. The other knobs (`batchVerify`, `preferPatch`, step budget, wider fan-out) all land at 0.96–1.10; do not stack them.
+
+`lazy` is not on that scale: it can change the answer, not only the timing, so even though the controlled block says it is faster (`LZ1`: 11 of 12 pairs faster, geometric 0.39–0.43×, 216/216 graded assertions green) it stays off by default and joins no default combination. The text-only arm's readings (`lazyEffort: false`) are in the same `LZ1` block of [BENCHMARK.md](BENCHMARK.md).
 
 The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded execution), but their widths are static while this width comes from the conversation's own call evidence; do not install all three. Context-compaction plugins coexist.
 

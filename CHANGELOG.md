@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0（一个新开关 `lazy`「想太久就少想一点」：动态收思考强度 + 压过度思考，默认关闭；12 对 36 次运行实测 0.39–0.43×，判分 216/216 全绿）
+
+按这一轮的要求，只开**一个**新开关，不动任何默认值。它的理念照抄 [ponytail](https://github.com/dietrichgebert/ponytail) 的核心：先读懂再动手，然后从「最小能work的那一级」开始做，不为想象中的未来写代码；但**读完之前不许偷懒**，也不许省掉信任边界校验、安全、数据丢失处理、可访问性。`lazy` 就是把这条用在「思考」上：不是让它不读、不想，而是想够了就停。
+
+- **新开关 `lazy`，出现在面板第六行「想太久就少想一点」。** 默认 `false`，逐会话写入 `sessions` 列（`src/state.js` 的 `configOverridesFor` 映射），只影响本会话。它是本插件**唯一**一个会改变答案而不只是时延的开关，所以默认关、tooltip 也只说后果（「想太久时先按已有信息定下去，安全校验照旧」），不说「更快」。
+- **两半机制，可分开验证。** 提示侧：入场步在对话里放一段 `src/lazy.js` 的梯子文本（先缩小范围 → 复用现成实现 → 标准库/平台能力 → 已装依赖 → 一行 → 最小实现；并把「绝不省略」的四类写清楚），每轮一次；同一轮里推理字符超过 `HOT_CHARS`（1600）就补一条 nudge（最多 2 条，间隔按轮内累计 4000/8000 字符）。字段侧：那一步确实想太久时，把**下一次**请求的 `reasoningEffort` 降一档（`EFFORT_RUNGS` 里往 `low` 方向走，地板 `low`，从不升档），每步最多一次、每轮最多两次，工具报错后两步内不降。`lazyEffort: false` 只发文字、一个请求字段都不写，是这一块的对照臂。
+- **不会重演 0.9.x 把会话钉在低档的事故。** 0.9.x 的问题是改写值活过了它被授权的那个回合：值进了请求头，面板从请求头投影「上次用的强度」，于是一个本来跑在中档的会话会漂到低档并跨重启保留。这一版的基准值是**每个请求现读**的 `resolved.reasoningEffort`（用户此刻的选择），降档只写进这一个请求的返回值，没有任何跨请求/跨会话状态；用户中途换档，下一次就是用户的档。测试里有专门的源码扫描断言：全仓只允许这一处 `reasoningEffort:`，形状是 `planned.reduced ? { ...resolved, reasoningEffort: applied } : resolved`，且不允许出现 `thinking: {` 或任何 `decideEffort`。
+- **测量补齐两个此前拿不到的通道。** `src/metrics.js` 每行新增 `reasoningChars` / `textChars`（流式 chunk 的字符数，`text`、`delta`、`delta.text` 三种拼法都认，认不出就算 0，只做下界）。加这个是因为这条路由的 usage 里 `reasoning` token **一直是 0**（750 行 fit 数据、1888 步），`reasoning_effort` 是否被上游当真从未被证明——所以 `lazy` 的收益必须能从「实际流出了多少推理字符」独立读到，而不是相信一个恒为 0 的字段。降档发生时，行里同时有 `effort`（实际带出去的）与 `effortBase`（用户原本选的），两列同现就是降档的机器证据；下一个未降档的请求会显式清掉 `effortBase`，不会把它归因到后来每一步。
+- **实测（`LZ1`，12 对、36 次运行、两族任务、ABBA 交替）：** `lazt16`（只发文字）逐对几何墙钟 **0.389×**，95 % CI [0.252, 0.600]，**11/12 更快**，符号检验 p = 0.0032；`laz16`（文字 + 降档）**0.430×**，CI [0.273, 0.677]，同样 11/12。推理字符几何 0.372× / 0.418×，步数中位 8.0 → 5.5 / 4.5，判分 **216/216 全绿**（两臂与 `def15` 完全相同）。把两臂直接对打：`laz16 / lazt16` = **1.106×**（CI [0.682, 1.792]，5/12 更快），即**收益来自提示文字那一半，降 `reasoningEffort` 这一半没有测出额外收益**——这一条如实写进 `BENCHMARK.md`，不做成「双保险都有效」。
+- **没有动的东西：** 默认值一个没改（`enabled: false` 仍是出厂态）、`disciplineAfterSteps` 仍是 4、`d2`/`d2g`/`dr8` 仍然 HOLD、没有新增任何提醒时机或预算旋钮。外部评审建议「先做稳定性、别加旋钮」，这一轮只在用户明确要求下加这一个开关，其余仍是稳定性与测量。
+- 测试 313 → **336 全绿**（新增 `test/lazy.test.js` 15 条、`test/plugin.test.js` 6 条集成、`test/metrics.test.js` 2 条 `effortBase` 断言；源码扫描测试按「恰好一处、且是这一种形状」放宽）。动 `index.js`、`src/lazy.js`（新）、`src/config.js`、`src/effort.js`、`src/state.js`、`src/metrics.js`、`client.js`、`bench/suite-run.py`、`bench/arm-config.mjs`、`bench/arms/laz16.yml`（新）、`bench/arms/lazt16.yml`（新）、两份 README、`docs/REFERENCE.md`、`BENCHMARK.md`、`CHANGELOG.md`。
+
 ## 1.5.35（1.5.34 的补包：把 `bench/soak.mjs` 打进 npm 包）
 
 - 1.5.34 的 `BENCHMARK.md` 让人「自己跑一遍浸泡」，但 `bench/soak.mjs` 没在 `package.json` 的 `files` 里——装了包的人照着跑会发现文件不存在。这一版只补这一行 `files`（自包含：只 import `../index.js`），行为零改动，测试仍 313 全绿。

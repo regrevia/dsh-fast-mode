@@ -154,6 +154,30 @@ test('the label is per session: two sessions never bleed into each other', () =>
   assert.deepEqual(rows.map(row => [row.sid, row.mode, row.gear]), [['s1', 'off', 'off'], ['s2', 'on', 'max']])
 }))
 
+test('a lazy step-down records both halves, and the next plain step clears the base', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  // What the request hook posts when `lazy` moved `high` down to `medium`.
+  recorder.label('s1', { mode: 'on', gear: 'auto', effort: 'medium', effortBase: 'high', route: 'p/m' })
+  step(recorder, 's1', { start: 0, ttft: 100, end: 200, usage: { outputTokens: 1 } })
+  // The following request kept the user's own effort: base must not leak.
+  recorder.label('s1', { mode: 'on', gear: 'auto', effort: 'high', effortBase: null, route: 'p/m' })
+  step(recorder, 's1', { start: 200, ttft: 300, end: 400, usage: { outputTokens: 2 } })
+
+  const rows = readRows(file)
+  assert.deepEqual([rows[0].effort, rows[0].effortBase], ['medium', 'high'], 'the reduction is machine-visible')
+  assert.deepEqual([rows[1].effort, rows[1].effortBase], ['high', undefined], 'and one step later it is gone, not attributed again')
+}))
+
+test('a label call without effortBase keeps the fields it does not mention', () => withTempFile((file) => {
+  const recorder = createRecorder({ file })
+  recorder.label('s1', { mode: 'on', gear: 'auto', effort: 'low', route: 'p/m' })
+  recorder.label('s1', { effortBase: 'high' })
+  step(recorder, 's1', { start: 0, ttft: 100, end: 200, usage: { outputTokens: 1 } })
+
+  const [row] = readRows(file)
+  assert.deepEqual([row.mode, row.gear, row.effort, row.effortBase], ['on', 'auto', 'low', 'high'], 'a partial call cannot blank the gear')
+}))
+
 test('without a label a row is still written, marked unknown', () => withTempFile((file) => {
   const recorder = createRecorder({ file })
   step(recorder, 's1', { start: 0, ttft: 100, end: 200, usage: { outputTokens: 1 } })

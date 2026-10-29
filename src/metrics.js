@@ -113,6 +113,21 @@ const chunkKind = (chunk) => {
   return typeof chunk.type === 'string' ? chunk.type : 'unknown'
 }
 
+/**
+ * The text a delta chunk carries. Adapters spell it `text` or `delta`; anything
+ * else is counted as zero characters rather than guessed at, so the column can
+ * be read as a lower bound and never as an estimate.
+ *
+ * @param {any} chunk
+ */
+const deltaText = (chunk) => {
+  if (!chunk || typeof chunk !== 'object') return ''
+  if (typeof chunk.text === 'string') return chunk.text
+  if (typeof chunk.delta === 'string') return chunk.delta
+  const nested = chunk.delta
+  return nested && typeof nested === 'object' && typeof nested.text === 'string' ? nested.text : ''
+}
+
 const payloadOf = (event) => {
   const data = event && typeof event === 'object' ? event.data : undefined
   return data && typeof data === 'object' ? data : (event ?? {})
@@ -144,7 +159,7 @@ export function createRecorder(options = {}) {
   const on = file.length > 0
   /** @type {Map<string, any>} */
   const steps = new Map()
-  /** @type {Map<string, {mode: string, gear: string, effort?: string, route?: string}>} */
+  /** @type {Map<string, {mode: string, gear: string, effort?: string, effortBase?: string, route?: string}>} */
   const labels = new Map()
   let prepared = false
 
@@ -205,6 +220,8 @@ export function createRecorder(options = {}) {
       calls: 0,
       errors: 0,
       seen: 0,
+      reasoningChars: 0,
+      textChars: 0,
     }
     steps.set(key, entry)
     trim(steps, STEPS_MAX)
@@ -222,8 +239,14 @@ export function createRecorder(options = {}) {
      * Tell the next step rows which stance produced them. Called from the
      * request hook, which is the only place that knows the resolved gear.
      *
+     * A call may carry only some fields: the omitted ones keep the session's
+     * previous value, so a later call cannot blank the gear it does not know
+     * about. `effortBase: null` is the one explicit clear, used when a step did
+     * *not* step down — without it the previous reduction would be attributed to
+     * every following row.
+     *
      * @param {string|undefined} sid
-     * @param {{mode: string, gear: string, effort?: string, route?: string}} label
+     * @param {{mode?: string, gear?: string, effort?: string, effortBase?: string|null, route?: string}} label
      */
     label(sid, label) {
       if (typeof sid !== 'string' || sid.length === 0) return
@@ -232,14 +255,19 @@ export function createRecorder(options = {}) {
       // not exist is pure retention. (1.5.33 and earlier kept them anyway.)
       if (!on) return
       const previous = labels.get(sid)
-      if (previous && previous.mode === label.mode && previous.gear === label.gear
-        && previous.effort === label.effort && previous.route === label.route) return
-      labels.set(sid, {
-        mode: label.mode,
-        gear: label.gear,
-        effort: label.effort,
-        route: label.route,
-      })
+      const next = {
+        mode: label.mode !== undefined ? label.mode : previous && previous.mode,
+        gear: label.gear !== undefined ? label.gear : previous && previous.gear,
+        effort: label.effort !== undefined ? label.effort : previous && previous.effort,
+        effortBase: label.effortBase === null
+          ? undefined
+          : label.effortBase !== undefined ? label.effortBase : previous && previous.effortBase,
+        route: label.route !== undefined ? label.route : previous && previous.route,
+      }
+      if (previous && previous.mode === next.mode && previous.gear === next.gear
+        && previous.effort === next.effort && previous.effortBase === next.effortBase
+        && previous.route === next.route) return
+      labels.set(sid, next)
       trim(labels, LABELS_MAX)
     },
 
@@ -302,6 +330,13 @@ export function createRecorder(options = {}) {
           }
           return
         }
+        // Streaming volume is the only live view of how much the model is
+        // deliberating: this route reports zero reasoning *tokens* in `usage`
+        // even when it streams a long reasoner block, so the character count is
+        // the measurement that can actually be compared across arms.
+        const carried = deltaText(data.chunk)
+        if (chunkType === 'reasoning-delta') entry.reasoningChars += carried.length
+        else if (chunkType === 'text-delta') entry.textChars += carried.length
         if (entry.chunkFirst === undefined) {
           entry.chunkFirst = time
           entry.chunkKind = chunkType
@@ -354,6 +389,7 @@ export function createRecorder(options = {}) {
         mode: label ? label.mode : 'unknown',
         gear: label ? label.gear : 'unknown',
         effort: label ? label.effort : undefined,
+        effortBase: label ? label.effortBase : undefined,
         route: label ? label.route : undefined,
         // `ttftMs` is queue + prefill: `step/start` to the first streamed chunk.
         // `decodeMs` is the generation window that follows it. `llmMs` stays the
@@ -370,6 +406,8 @@ export function createRecorder(options = {}) {
         input: entry.input,
         output: entry.output,
         reasoning: entry.reasoning,
+        reasoningChars: entry.reasoningChars,
+        textChars: entry.textChars,
         cacheRead: entry.cacheRead,
         cacheWrite: entry.cacheWrite,
         assistantMessages: entry.seen,

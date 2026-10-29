@@ -85,6 +85,7 @@ import { createRecorder } from './src/metrics.js'
 import { readOutputTokens } from './src/usage.js'
 import { configOverridesFor } from './src/state.js'
 import { buildShellParallelTool } from './src/parallel.js'
+import { beginStep as lazyBeginStep, createLazyWatch, DIRECTIVE_SUMMARY as LAZY_SUMMARY, NUDGE_SUMMARY as LAZY_NUDGE_SUMMARY, noteReasoning as lazyNoteReasoning, noteToolResult as lazyNoteToolResult, planEffort as lazyPlanEffort } from './src/lazy.js'
 
 /**
  * The settings-page schema. Re-exported from here because the Loader reads
@@ -98,7 +99,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.35'
+export const VERSION = '1.6.0'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -138,6 +139,26 @@ function latestUserText(messages) {
     return ''
   }
   return ''
+}
+
+/**
+ * How many messages in this turn came from the human. Plugin notices are also
+ * `role: 'user'`, so a bare role count would move every time this plugin spoke
+ * and every turn would look new.
+ *
+ * @param {unknown} messages
+ * @returns {number}
+ */
+function claimedUserCount(messages) {
+  if (!Array.isArray(messages)) return 0
+  let count = 0
+  for (const m of messages) {
+    if (!m || m.role !== 'user') continue
+    const source = m.source
+    if (source && typeof source === 'object' && source.form === 'notice') continue
+    count += 1
+  }
+  return count
 }
 
 function insertAfterClaimed(messages, claimed, notices) {
@@ -187,6 +208,18 @@ function routeOf(resolved) {
   const provider = resolved && typeof resolved === 'object' ? resolved.provider : undefined
   const model = resolved && typeof resolved === 'object' ? resolved.model : undefined
   return typeof provider === 'string' && typeof model === 'string' ? `${provider}/${model}` : 'unknown'
+}
+
+/**
+ * The effort label a journal row carries: the resolved value when it is a
+ * string, otherwise `undefined`. Kept separate from the value itself so a route
+ * that hands back a non-string can never be stringified into a fake rung.
+ *
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+function summaryEffort(value) {
+  return typeof value === 'string' ? value : undefined
 }
 
 /**
@@ -396,6 +429,11 @@ export function apply(ctx, rawConfig) {
   // The scheduler's memory, one entry per conversation: what has been tried, how
   // long calls have been taking, and how many steps went by without a new result.
   const auto = createAutoState()
+  const lazyWatch = createLazyWatch()
+  // Which human turn each session is in. `agent/pre-step` carries no turn number,
+  // so the count of claimed (non-plugin) user messages is the boundary: it moves
+  // exactly when the user speaks again.
+  const lazyTurnKey = new Map()
   /**
    * Live stall ceilings per conversation, as computed by the scheduler.
    * Bounded like `compacted`: a long-lived host process sees thousands of
@@ -481,13 +519,27 @@ export function apply(ctx, rawConfig) {
   // `attemptId` whose prefix is the session. They carry no turn or step, so the
   // recorder attributes them to the step that session has open.
   ctx.on('agent/assistant-stream', (payload) => {
-    if (!metrics.enabled) return
     const frame = payload && payload.frame
     if (!frame || frame.type !== 'chunk' || typeof frame.attemptId !== 'string') return
     const cut = frame.attemptId.lastIndexOf(':')
     if (cut <= 0) return
+    const sid = frame.attemptId.slice(0, cut)
     try {
-      metrics.record({ id: frame.attemptId.slice(0, cut) }, {
+      // Lazy mode reads the same stream, and must keep reading when the journal
+      // is off: the effort step-down is decided from how much the route actually
+      // streamed, not from a usage field this route reports as zero.
+      if (lazyWatch.runs.has(sid)) {
+        const chunk = frame.chunk
+        const kind = chunk && typeof chunk === 'object' ? chunk.type : undefined
+        if (kind === 'reasoning-delta') {
+          const text = typeof chunk.text === 'string'
+            ? chunk.text
+            : typeof chunk.delta === 'string' ? chunk.delta : ''
+          lazyNoteReasoning(lazyWatch, sid, text.length)
+        }
+      }
+      if (!metrics.enabled) return
+      metrics.record({ id: sid }, {
         type: 'assistant/chunk',
         time: frame.time,
         data: { chunk: frame.chunk },
@@ -566,6 +618,25 @@ export function apply(ctx, rawConfig) {
                 + ` directive=${schedule.directive.kind} preferPatch=${schedule.stats.preferPatch} patchHint=${schedule.stats.patchHint} patchHintSent=${schedule.stats.patchHintSent}`,
             )
           }
+        }
+      }
+      if (cfg.lazy === true) {
+        // Lazy mode's two prompt-side mechanisms: the ladder text on the first
+        // step of a turn, and at most two nudges when a turn's streamed reasoning
+        // passes its threshold. The tail of a long turn is where over-thinking
+        // costs the most and where a reminder changes the next step rather than
+        // the one already paid for.
+        const key = `${sid}\u0000${claimedUserCount(payload?.messages)}`
+        const fresh = lazyTurnKey.get(sid) !== key
+        if (fresh) {
+          lazyTurnKey.set(sid, key)
+          trim(lazyTurnKey, 200)
+        }
+        const plan = lazyBeginStep(lazyWatch, sid, { firstStep: fresh })
+        if (plan && plan.directive) notices.push(createNoticeMessage(plan.directive, LAZY_SUMMARY))
+        if (plan && plan.nudge) notices.push(createNoticeMessage(plan.nudge, LAZY_NUDGE_SUMMARY))
+        if (plan && initial.debug) {
+          appendDebug(initial.debugFile, `lazy v${VERSION}: turn=${key.split('\u0000').pop()} directive=${plan.directive ? 'yes' : 'no'} nudge=${plan.nudge ? 'yes' : 'no'}`)
         }
       }
       if (cfg.workspaceMap === true) {
@@ -714,6 +785,9 @@ export function apply(ctx, rawConfig) {
         // The scheduler reads the same observation: a call that returns the same
         // bytes for the same arguments is the raw material of the long tail.
         noteTool(auto, agent, observation)
+        // An error result is the one signal that the model may need more room to
+        // think, so it cancels any pending effort step-down for a couple of steps.
+        lazyNoteToolResult(lazyWatch, agent, observation)
       }
     } catch {
       // Observation is best-effort. A failure here must not affect the tool
@@ -729,30 +803,44 @@ export function apply(ctx, rawConfig) {
     const sid = agentKey(payload?.agent)
     const agent = sid === GLOBAL_AGENT ? undefined : sid
     const cfg = configFor(agent)
-    const effort = resolved?.reasoningEffort
+    const baseEffort = resolved?.reasoningEffort
     const route = routeOf(resolved)
-    const label = effort === undefined ? undefined : String(effort)
 
-    // Fast mode does not touch the thinking budget, on purpose. The route and the
-    // effort are the user's contract with the model: a mode that quietly thinks
-    // less produces a different answer, not a faster one, and the measured public
-    // benchmarks showed the effort ladder bought no wall-clock on this route
-    // anyway (0 reasoning tokens in every arm). What is left is the part that
-    // makes the same thinking finish sooner — wider steps, bounded calls, and a
-    // breaker for the sessions that only look busy.
+    // The rule this plugin kept for five releases was "never touch the thinking
+    // budget", and it is still the rule unless the user turns on the one switch
+    // that says otherwise. See `src/lazy.js`: it lowers effort only after a step
+    // visibly over-thought, never below the user's own floor, twice a turn at
+    // most, and it restores the resolved value on the very next request — the
+    // 0.9.x damage was that a rewrite outlived the turn that justified it.
     if (!cfg.enabled) {
-      metrics.label(sid, { mode: 'off', gear: 'off', effort: label, route })
+      metrics.label(sid, { mode: 'off', gear: 'off', effort: summaryEffort(baseEffort), effortBase: null, route })
       return resolved
     }
 
     const schedule = cfg.gear === AUTO ? autoSchedule(auto, sid, { emit: false }) : undefined
     checkParallelCap(cfg, schedule?.parallel)
-    metrics.label(sid, { mode: 'on', gear: cfg.gear, effort: label, route })
+    const planned = cfg.lazy === true && cfg.lazyEffort === true
+      ? lazyPlanEffort(lazyWatch, sid, baseEffort)
+      : undefined
+    const applied = planned && planned.reduced ? planned.effort : baseEffort
+    // The journal keeps both halves in one call: `effort` is what the request
+    // carried, `effortBase` is what the user chose, so a comparison can tell a
+    // lazy step-down from a session that was simply started at a lower rung.
+    // `null`, not omitted, on a step that did not step down — otherwise the
+    // previous reduction would leak into every following row.
+    metrics.label(sid, {
+      mode: 'on',
+      gear: cfg.gear,
+      effort: summaryEffort(applied),
+      effortBase: planned && planned.reduced ? summaryEffort(baseEffort) : null,
+      route,
+    })
 
     if (cfg.debug) {
       appendDebug(
         cfg.debugFile,
-        `turn=${payload?.turn} step=${payload?.step} gear=${cfg.gear} effort=${String(label)} (unchanged)`
+        `turn=${payload?.turn} step=${payload?.step} gear=${cfg.gear} effort=${String(summaryEffort(baseEffort))}`
+          + (planned && planned.reduced ? `->${String(applied)} (lazy step-down)` : ' (unchanged)')
           + ` route=${route}`
           + (schedule
             ? ` parallel=${schedule.parallel} budget=${schedule.stallBudgetMs}ms`
@@ -762,17 +850,18 @@ export function apply(ctx, rawConfig) {
       )
     }
 
-    return resolved
+    return planned && planned.reduced ? { ...resolved, reasoningEffort: applied } : resolved
   })
 
   ctx.logger?.info?.(
-    '%s v%s loaded: enabled=%s gear=%s parallel=%d adaptive=%s reasoningEffort=untouched metrics=%s',
+    '%s v%s loaded: enabled=%s gear=%s parallel=%d adaptive=%s reasoningEffort=%s metrics=%s',
     TAG,
     VERSION,
     initial.enabled,
     initial.gear,
     initial.parallel,
     initial.adaptive === true,
+    initial.lazy === true ? (initial.lazyEffort === false ? 'lazy-text-only' : 'lazy') : 'untouched',
     metrics.enabled ? metrics.file : 'off',
   )
   if (initial.legacyGear) {

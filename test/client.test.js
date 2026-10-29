@@ -343,14 +343,18 @@ test('every dictionary key is flat, because the locale lookup indexes it flat', 
     'the popover dictionary is gone; the explanation lives in the plugin description')
 })
 
-test('the copy states the two things the mode promises: same effort, this conversation only', async () => {
+test('the chip copy promises only what the chip can promise: this conversation, and what a click does', async () => {
   const { ctx } = await mount(fakeRemote())
   const dict = ctx.labels[0].dict
 
-  assert.match(dict.zh['chip.titleOn'], /思考强度不变/, 'the tooltip states the contract: effort is untouched')
-  assert.match(dict.zh['chip.titleOn'], /本会话/, 'and that the choice is scoped to the conversation')
+  // The tooltip used to state "effort unchanged". `lazy` is a panel row that can
+  // step effort down, so the chip no longer makes that claim; it would otherwise
+  // be false for exactly the conversations that turned `lazy` on. The promise
+  // moved to the panel row and the docs, where it is conditional and testable.
+  assert.equal(/思考强度/.test(dict.zh['chip.titleOn']), false, 'the chip makes no effort promise it cannot keep')
+  assert.match(dict.zh['chip.titleOn'], /本会话/, 'the choice is scoped to the conversation')
   assert.match(dict.zh['chip.titleOn'], /点击关闭/, 'and what the click does')
-  assert.match(dict.en['chip.titleOn'], /effort unchanged/i, 'English says the same thing')
+  assert.match(dict.en['chip.titleOn'], /this conversation/i, 'English says the same thing')
   assert.equal(/×/.test(JSON.stringify(dict)), false, 'no multiplier claim survives anywhere in the chip copy')
 })
 
@@ -776,8 +780,8 @@ test('the panel paints the shared defaults the shipped host resolves, not the bu
   const namespaces = (await remote.settings.describe()).value.namespaces
   assert.deepEqual(
     Object.keys(namespaces[0].value).sort(),
-    ['enabled', 'gear', 'outputDiscipline', 'sessions', 'stepBudget', 'workspaceMap'],
-    'describe() carries the three shared defaults because they are volatile',
+    ['enabled', 'gear', 'lazy', 'outputDiscipline', 'sessions', 'stepBudget', 'workspaceMap'],
+    'describe() carries the shared defaults because they are volatile',
   )
 
   await rightClick(render)

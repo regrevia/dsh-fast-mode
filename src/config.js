@@ -10,7 +10,7 @@
  *   why the on/off switch and the gear selector exist there without a line of
  *   client code.
  *
- * The seven form fields (`enabled`, `gear`, `parallel`, `sessions`,
+ * The form fields (`enabled`, `gear`, `parallel`, `sessions`,
  * `outputDiscipline`, `stepBudget`, `workspaceMap`) are `.volatile()`: that is
  * what makes them appear in the generated form *and* what lets an edit reach a
  * running fiber instead of forcing a remount. A non-volatile declaration is
@@ -18,7 +18,7 @@
  * keeps only volatile nodes, and `update()` refuses the path with "is not
  * volatile".
  *
- * The panel's three rows are volatile for exactly that reason: the client half
+ * The panel's rows are volatile for exactly that reason: the client half
  * has one channel to read state from, `describe()`, so a non-volatile field is a
  * row it can write into `sessions` but never paint — it would keep showing the
  * built-in default (`late` / 0 / off) while a hand-written `cordis.patch.yml`
@@ -39,9 +39,10 @@
  * the form.
  *
  * `enabled` defaults to **false** on purpose: opt-in is what makes "off means
- * completely off" verifiable. Nothing here can change the model's thinking
- * effort — the old `floor` / `ladder` / `aliases` knobs are gone, along with the
- * code that read them.
+ * completely off" verifiable. The old `floor` / `ladder` / `aliases` knobs are
+ * gone, along with the code that read them; the one field that can still move
+ * effort is `lazy`, and it is off by default because it can change the answer,
+ * not only the timing.
  *
  * @module dsh-fast-mode/config
  */
@@ -158,6 +159,21 @@ export const Config = z.object({
     .default(false)
     .description(
       '开局批量 / Opening batch（面板名「一次读多个文件」）: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。面板可逐会话开；和 `workspaceMap` 一起开时实测 0.742×（11 对），单独开测不到显著，所以默认仍是 false。',
+    ),
+
+  lazy: z
+    .boolean()
+    .default(false)
+    .volatile()
+    .description(
+      '想太久就少想一点 / Think less when it stalls（面板「想太久就少想一点」）: 每轮第一步给一次「先找最省的一级、不扩范围、不砍信任边界校验/数据丢失处理/安全/可访问性」的提示；当上一步流出的思考字符 ≥ 1600、或本轮累计超过 4000/8000 时，把下一个请求的思考强度降一档（最低 low、从不升档、每轮最多两次、工具报错后两步内不降）。每个请求都从用户当下的选择重新读基准，所以下一次请求就恢复。默认关闭：它是唯一会改变答案而不只是时延的开关。',
+    ),
+
+  lazyEffort: z
+    .boolean()
+    .default(true)
+    .description(
+      'lazy 的思考强度半边 / Lazy effort step-down: 设为 false 时 lazy 只发提示文字，一个请求字段都不写。对照臂，用来分辨收益来自提示词还是 provider 真的更低档；默认 true。',
     ),
 
   preferPatch: z
