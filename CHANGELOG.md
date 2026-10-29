@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.2（修面板：`lazy` 那张卡以前点不开；标签改成能看懂的说法；lazy 的梯子文本做了三版对照，不换默认）
+
+- **「过度思考时降档」以前点不开，是真的坏了。** `client.js` 里浏览器侧的 `sessions` 列有两处白名单：`sanitiseChoices` 和 `withOwn`，它们认识 `enabled/gear/discipline/stepBudget/map/batch` 六个字段，唯独没写 `lazy`。于是点击「打开」时写出去的会话条目里根本没有这个 key，宿主读回来是「没有条目」，面板再读一遍又画成「关」——看起来就是按钮没有反应。宿主侧 `src/state.js` 一直是认识 `lazy` 的，缺的只是浏览器这一半。两处都补上，并加了一条跨侧回归测试（`test/state.test.js`：浏览器序列化 → 宿主 `choiceFor` 读回 `{lazy:true}` → 浏览器 `parseChoices` 再读回 `true`；非布尔值仍被丢弃）。**旧版本里已经点过的人不会留下坏数据**，因为那次点击压根没写进去。
+- **标签改名，说明手段而不是口号。** 面板第六行从「想太久就少想一点」改成 **「过度思考时降档」**（英文 `Cap over-thinking`），tooltip 写清条件与保证：「一步里推理超量时，下一个请求降一档；安全校验照旧」。旧说法是建议、听起来像文风；新说法说的是这个开关实际做的事，也交代了降的是什么。
+- **`lazy` 的梯子文本做了三版对照（`lazyVariant`，只在 bench 里选，不进面板）。** `v1` 是 1.6.0/1.6.1 已经发布的那份文本；`v2` 在它后面加两条（「不要重述任务或先解释计划」「下一步已经清楚就直接做，不要再权衡一遍不打算采用的方案」）；`v3` 是同样规则的精简重写（629 字符 vs 762）。两轮对照（`LZ2` 12 对 36 次运行、`codeimpl`+`ledger`；`LZ3` 15 对 30 次运行、`debugfix`+`migrate`+`stategraph`）的结论是 **不换文本**：`LZ2` 里 v2 对 v1 是 0.699×（9/12 更快），但 `LZ3` 里反过来是 0.822×、中位 1.014、7/15 更快，`debugfix` 五对**全慢**（1.08–1.23×）——短任务上多出来的两句话是纯成本。v3 在 `LZ2` 是 0.997×，等于没变。两轮判分都和对照臂完全一致（648/648、370/370），所以这不是质量换速度，是**只在长任务上划算、在短任务上倒亏**的取舍；默认仍是 `v1`，`lazyVariant` 保留为复现实验用的隐藏字段，面板上看不到。
+- **没有动的东西：** 默认值一个没改（`enabled: false`、`lazy: false` 仍是出厂态）、`lazyEffort` 仍默认 `true`、`HOT_CHARS`/`NUDGE_CHARS`/降档上限全部照旧、`d2`/`d2g`/`dr8` 仍然 HOLD、没有新增任何提醒时机或预算旋钮。
+- 测试 336 → **338 全绿**。动 `client.js`（两处白名单 + 标签）、`src/config.js`（`lazyVariant`）、`src/lazy.js`（`DIRECTIVES` 三版）、`src/effort.js`、`index.js`（版本号 + 传 `variant`）、`test/state.test.js`、`test/config.test.js`、`test/lazy.test.js`、`bench/suite-run.py`、`bench/arm-config.mjs`、`bench/arms/lz2v{1,2,3}.yml`（新）、两份 README、`docs/REFERENCE.md`、`BENCHMARK.md`。
+
 ## 1.6.1（1.6.0 的补包：npm 页面上那句「从不改 reasoningEffort」在 1.6.0 之后不准确了）
 
 - 1.6.0 加了 `lazy`（默认关闭，唯一会改 `reasoningEffort` 的路径），但 `package.json` 的 `description` 还是旧话「Never changes reasoning effort, the model, or the request body」，npm 首页会照抄这句。这一版只改这一句：**默认**不改推理强度、模型与请求体，例外是默认关闭的 `lazy`（想太久时降一档）。行为、默认值、测试零改动（336 全绿）。

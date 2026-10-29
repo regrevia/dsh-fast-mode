@@ -262,6 +262,21 @@ test('the browser copy writes a column the host reads back unchanged', () => {
   assert.equal(one['session-a'].ts, 1, 'the input map is not mutated')
 })
 
+test('the lazy switch survives the browser column and the host reader alike', () => {
+  // The lazy row writes a one-field entry, so it was the first entry whose only
+  // key was not one of the five older ones: the browser copy dropped it on the
+  // way out and the panel painted the switch back off.
+  const browser = browserChoices()
+  const column = browser.encodeChoices(browser.withOwn({}, 'session-a', { lazy: true }))
+  assert.deepEqual(plain(choiceFor(column, 'session-a')), { lazy: true }, 'the host reads the field back')
+  assert.equal(plain(browser.parseChoices(column))['session-a'].lazy, true, 'and so does the panel')
+  assert.equal(browser.parseChoices(column)['session-a'].lazy, true, 'the switch reads on, not undefined')
+
+  const off = browser.encodeChoices(browser.withOwn(browser.parseChoices(column), 'session-a', { lazy: false }))
+  assert.deepEqual(plain(choiceFor(off, 'session-a')), { lazy: false }, 'turning it off is a write, not a missing key')
+  assert.equal(browser.parseChoices(JSON.stringify({ 'session-a': { lazy: 'yes', ts: 3 } }))['session-a'], undefined, 'a non-boolean is not a switch')
+})
+
 test('two conversations keep independent choices in one column', () => {
   const browser = browserChoices()
   let column = browser.encodeChoices(browser.withOwn({}, 'session-fast', { enabled: true, discipline: 'late' }))

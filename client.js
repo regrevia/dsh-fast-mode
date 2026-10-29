@@ -327,6 +327,7 @@ window.__ModuleLoader__.load({
         if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
         if (typeof entry.map === 'boolean') clean.map = entry.map
         if (typeof entry.batch === 'boolean') clean.batch = entry.batch
+        if (typeof entry.lazy === 'boolean') clean.lazy = entry.lazy
         if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
         if (
           clean.enabled === undefined
@@ -335,6 +336,7 @@ window.__ModuleLoader__.load({
           && clean.stepBudget === undefined
           && clean.map === undefined
           && clean.batch === undefined
+          && clean.lazy === undefined
         ) continue
         out[sessionId] = clean
       }
@@ -383,7 +385,7 @@ window.__ModuleLoader__.load({
      *
      * @param {Record<string, any>} map
      * @param {string|undefined} sessionId
-     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean}} patch
+     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, lazy?: boolean}} patch
      */
     function withOwn(map, sessionId, patch) {
       const next = { ...map }
@@ -397,6 +399,7 @@ window.__ModuleLoader__.load({
       if (Number.isFinite(patch.stepBudget) && patch.stepBudget >= 0) entry.stepBudget = Math.floor(Number(patch.stepBudget))
       if (typeof patch.map === 'boolean') entry.map = patch.map
       if (typeof patch.batch === 'boolean') entry.batch = patch.batch
+      if (typeof patch.lazy === 'boolean') entry.lazy = patch.lazy
       next[sessionId] = entry
       return next
     }
@@ -610,7 +613,7 @@ window.__ModuleLoader__.load({
      *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
-     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean}}} [options]
+     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, lazy?: boolean}}} [options]
      * @returns {Promise<boolean>} whether the write was accepted
      */
     async function write(remote, patch, options = {}) {
