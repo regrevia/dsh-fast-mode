@@ -285,6 +285,7 @@ export function resolveConfig(raw, overrides) {
      */
     lazy: gear.directive && config.lazy === true,
     lazyEffort: gear.directive && config.lazy === true && config.lazyEffort !== false,
+    lazyVariant: String(config.lazyVariant || 'v1'),
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative

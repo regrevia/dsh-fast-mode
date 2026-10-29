@@ -632,7 +632,7 @@ export function apply(ctx, rawConfig) {
           lazyTurnKey.set(sid, key)
           trim(lazyTurnKey, 200)
         }
-        const plan = lazyBeginStep(lazyWatch, sid, { firstStep: fresh })
+        const plan = lazyBeginStep(lazyWatch, sid, { firstStep: fresh, variant: cfg.lazyVariant })
         if (plan && plan.directive) notices.push(createNoticeMessage(plan.directive, LAZY_SUMMARY))
         if (plan && plan.nudge) notices.push(createNoticeMessage(plan.nudge, LAZY_NUDGE_SUMMARY))
         if (plan && initial.debug) {

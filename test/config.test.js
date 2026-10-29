@@ -73,7 +73,7 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps', 'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'lazy', 'lazyEffort', 'mapEntries', 'metrics', 'metricsFile',
+    'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps', 'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'lazy', 'lazyEffort', 'lazyVariant', 'mapEntries', 'metrics', 'metricsFile',
     'openBatch', 'outputBudget', 'outputBudgetAfterSteps', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
     'stepBudget', 'toolTimeoutMs', 'workspaceMap',
   ])
@@ -110,7 +110,7 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   // Everything else is a composition knob, like `debugFile`: read at load and
   // deliberately out of the form. Changing it is an edit in cordis.patch.yml,
   // not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction', 'lazyEffort']) {
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction', 'lazyEffort', 'lazyVariant']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

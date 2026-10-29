@@ -47,6 +47,31 @@ export const DIRECTIVE = `Work like a lazy senior developer: the best step is th
 - Never cut these to save code or time: validation where input crosses a trust boundary, error handling that protects data, security, accessibility, and the deliverable the user asked for.
 - End the turn with one line: what you skipped, and the risk that carries.`
 
+/**
+ * Bench variants of the ladder text, selected by `lazyVariant`. The measured
+ * block compares them in one run, so the control stays the released text.
+ */
+export const DIRECTIVES = Object.freeze({
+  v1: DIRECTIVE,
+  v2: `Work like a lazy senior developer: the best step is the one not taken.
+
+- Read before deciding. Trace the real flow of the code the change touches, then decide. Being lazy about the solution never means being lazy about the reading.
+- Once a step fully does the job, stop planning it. No option, abstraction, or "for later" code nobody asked for.
+- Take the first rung that works: what this repo already has, then the platform or a tool you already hold, then one line, then the minimum that works.
+- Never cut these to save code or time: validation where input crosses a trust boundary, error handling that protects data, security, accessibility, and the deliverable the user asked for.
+- End the turn with one line: what you skipped, and the risk that carries.
+- Do not restate the task or re-explain the plan before acting: the reader already has it.
+- If the next action is already clear, take it now. Do not spend a step weighing alternatives you are not going to use.`,
+  v3: `Work like a lazy senior developer: the best step is the one not taken.
+
+- Read the flow the change touches before you decide; never be lazy about the reading.
+- Take the first rung that works: what the repo already has, the platform, a tool you hold, one line, then the minimum.
+- Once the step fully does the job, stop planning it: no option, abstraction, or code nobody asked for.
+- Never cut these: validation at a trust boundary, error handling that protects data, security, accessibility, and the deliverable.
+- Do not restate the task. If the next action is clear, take it. End with one line: what you skipped and the risk.`,
+})
+
+
 const DIRECTIVE_SUMMARY = 'lazy mode: first rung that works, no scope beyond the task'
 
 /** Reasoning rungs a route may name, weakest first. */
@@ -156,7 +181,7 @@ export function beginStep(watch, sid, where) {
     const fresh = newTurn()
     fresh.step = step
     watch.runs.set(sid, fresh)
-    return { directive: DIRECTIVE }
+    return { directive: DIRECTIVES[where?.variant] || DIRECTIVE }
   }
   // The previous step's streamed volume is the evidence the next request acts on.
   run.hot = run.stepChars >= HOT_CHARS

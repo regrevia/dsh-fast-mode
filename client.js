@@ -104,8 +104,8 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
       'panel.batch': '一次读多个文件',
       'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
-      'panel.lazy': '想太久就少想一点',
-      'panel.lazyTitle': '想太久时先按已有信息定下去，安全校验照旧',
+      'panel.lazy': '过度思考时降档',
+      'panel.lazyTitle': '一步里推理超量时，下一个请求降一档；安全校验照旧',
     }
 
     const en = {
@@ -131,8 +131,8 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
       'panel.batch': 'Read several files at once',
       'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
-      'panel.lazy': 'Think less when it stalls',
-      'panel.lazyTitle': 'Cuts a turn short when it keeps reasoning instead of deciding; safety checks stay',
+      'panel.lazy': 'Cap over-thinking',
+      'panel.lazyTitle': 'One rung lower on the next request when a step over-reasons; safety checks stay',
     }
 
     const CSS = [

@@ -15,6 +15,7 @@ import {
   createLazyWatch,
   DIRECTIVE,
   DIRECTIVE_SUMMARY,
+  DIRECTIVES,
   EFFORT_RUNGS,
   noteReasoning,
   noteToolResult,
@@ -184,4 +185,17 @@ test('sessions do not share a ledger, and the ledger stays bounded', () => {
   assert.deepEqual(planEffort(watch, 'b', 'high'), { effort: 'high', reduced: false })
   for (let i = 0; i < 200; i += 1) beginStep(watch, `x${i}`, { firstStep: true })
   assert.ok(watch.runs.size <= 64, 'a long-lived host does not leak one entry per conversation')
+})
+
+test('the ladder text has three bench variants and the step opens with the chosen one', () => {
+  assert.equal(typeof DIRECTIVES.v1, 'string')
+  assert.notEqual(DIRECTIVES.v2, DIRECTIVES.v1, 'v2 adds its own lines')
+  assert.notEqual(DIRECTIVES.v3, DIRECTIVES.v1, 'v3 is a rewrite, not a copy')
+  for (const [name, text] of Object.entries(DIRECTIVES)) {
+    assert.ok(/trust boundary|trust/.test(text), `${name} keeps the never-cut list`)
+  }
+  const watch = createLazyWatch()
+  assert.equal(beginStep(watch, 's2', { firstStep: true, variant: 'v2' }).directive, DIRECTIVES.v2)
+  assert.equal(beginStep(watch, 's3', { firstStep: true }).directive, DIRECTIVES.v1, 'default stays the released text')
+  assert.equal(beginStep(watch, 's4', { firstStep: true, variant: 'nope' }).directive, DIRECTIVES.v1, 'unknown variant never guesses')
 })

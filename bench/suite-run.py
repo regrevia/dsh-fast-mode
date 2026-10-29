@@ -78,7 +78,8 @@ POLICY_KEYS = ('enabled', 'gear', 'scheduler', 'guidance', 'lateDiscipline', 'di
                'rereadHint', 'openBatch', 'preferPatch', 'batchVerify', 'shapeGate',
                'stepBudget', 'finishLineSteps', 'outputBudget', 'outputBudgetAfterSteps',
                'parallel', 'fanoutWidth', 'workspaceMap', 'stallGuard', 'toolTimeoutMs',
-               'shellParallel', 'reassertAfterCompaction', 'lazy', 'lazyEffort')
+               'shellParallel', 'reassertAfterCompaction', 'lazy', 'lazyEffort',
+               'lazyVariant')
 
 
 def resolve_arm(arm_path):

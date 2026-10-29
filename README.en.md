@@ -109,7 +109,7 @@ The bolt is the switch: one click writes on/off, per conversation, restored on r
 - **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
 - **Workspace inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
 - **Read several files at once** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
-- **Think less when it stalls** (`lazy`) — when a turn keeps pouring out reasoning, one notice asks for the cheapest rung that works and one rung less thinking on the next request. Off by default; it can change the answer, not only the timing.
+- **Cap over-thinking** (`lazy`) — when a turn keeps pouring out reasoning, one notice asks for the cheapest rung that works and one rung less thinking on the next request. Off by default; it can change the answer, not only the timing.
 
 All six rows take effect from the next request, per conversation. No dropdown, no multiplier estimate.
 
