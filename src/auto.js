@@ -37,6 +37,8 @@
 
 import { statSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
+
+import { trim } from './bounded.js'
 /** The gear id the adaptive scheduler runs under. */
 export const AUTO = 'auto'
 
@@ -299,10 +301,7 @@ function entryOf(state, agent) {
     turnUnsafe: 0,
   }
   state.sessions.set(key, entry)
-  if (state.sessions.size > AUTO_SESSIONS) {
-    const oldest = state.sessions.keys().next().value
-    if (oldest !== undefined) state.sessions.delete(oldest)
-  }
+  trim(state.sessions, AUTO_SESSIONS)
   return entry
 }
 

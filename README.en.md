@@ -103,14 +103,14 @@ Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a d
 
 ## The switch
 
-The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for four per-conversation settings:
+The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for a five-row panel — the switch itself and four settings:
 
 - **Less narration** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
 - **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
 - **Workspace inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
 - **Read several files at once** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
 
-All four apply from the next request, per conversation. No dropdown, no multiplier estimate.
+All five rows take effect from the next request, per conversation. No dropdown, no multiplier estimate.
 
 **Turn several on at once?** Yes, but only the measured pair. Defaults plus inventory plus batched reads is **0.742x** over 11 pairs; adding the step-2 reminder timing (not a panel row, still on HOLD) reaches **0.669x** over 22 pairs, CI95 [0.554, 0.799], 18/22 faster, hidden tests green. Each switch alone lands at 0.80–0.88 with a confidence interval that crosses 1 — the gain comes from each one cutting a different share of the same cost, not from any single switch. The other knobs (`batchVerify`, `preferPatch`, step budget, wider fan-out) all land at 0.96–1.10; do not stack them.
 

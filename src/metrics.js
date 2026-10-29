@@ -21,10 +21,27 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { trim } from './bounded.js'
 import { findUsage, readUsage } from './usage.js'
 
 /** The measurement format. Bumped when a field changes meaning. */
 export const METRICS_VERSION = 2
+
+/**
+ * Ceilings for the four long-lived caches below. A host process lives for weeks
+ * and these caches are keyed by ids that never repeat, so "one entry per session
+ * it has ever seen" is an unbounded ceiling in disguise. The caps are far above
+ * anything one process holds at a time (the harness runs a handful of sessions
+ * and a few calls concurrently), so in practice they never evict a live entry —
+ * they exist so a long uptime cannot turn into a heap that only a restart fixes.
+ */
+export const LABELS_MAX = 2000
+/** In-flight step accumulators; one per open step across all sessions. */
+export const STEPS_MAX = 2000
+/** Which step a session's first streamed chunk belongs to. */
+export const OPEN_MAX = 2000
+/** A chunk that arrived before its `step/start`. */
+export const PENDING_MAX = 1000
 
 /**
  * The size at which the step journal is rotated to `<file>.1`.
@@ -190,6 +207,7 @@ export function createRecorder(options = {}) {
       seen: 0,
     }
     steps.set(key, entry)
+    trim(steps, STEPS_MAX)
     return { key, entry }
   }
 
@@ -209,6 +227,10 @@ export function createRecorder(options = {}) {
      */
     label(sid, label) {
       if (typeof sid !== 'string' || sid.length === 0) return
+      // With the sink off nothing will ever read this map, and the request hook
+      // calls this for every session: remembering labels for a file that does
+      // not exist is pure retention. (1.5.33 and earlier kept them anyway.)
+      if (!on) return
       const previous = labels.get(sid)
       if (previous && previous.mode === label.mode && previous.gear === label.gear
         && previous.effort === label.effort && previous.route === label.route) return
@@ -218,6 +240,7 @@ export function createRecorder(options = {}) {
         effort: label.effort,
         route: label.route,
       })
+      trim(labels, LABELS_MAX)
     },
 
     /** The last label recorded for a session. */
@@ -244,6 +267,8 @@ export function createRecorder(options = {}) {
         entry.started = time
         steps.set(key, entry)
         open.set(sid, key)
+        trim(steps, STEPS_MAX)
+        trim(open, OPEN_MAX)
         const early = pendingChunk.get(sid)
         if (early) {
           entry.chunkFirst = early.time
@@ -271,7 +296,10 @@ export function createRecorder(options = {}) {
         if (!entry) {
           // The live stream can arrive a few milliseconds before the durable
           // `step/start`; hold the first token until the step exists.
-          if (!pendingChunk.has(sid)) pendingChunk.set(sid, { time, kind: chunkType })
+          if (!pendingChunk.has(sid)) {
+            pendingChunk.set(sid, { time, kind: chunkType })
+            trim(pendingChunk, PENDING_MAX)
+          }
           return
         }
         if (entry.chunkFirst === undefined) {

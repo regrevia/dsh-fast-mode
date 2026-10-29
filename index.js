@@ -60,6 +60,7 @@ import { appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { trim } from './src/bounded.js'
 import { CONTROL, createAssignment } from './src/benchmark.js'
 import { contentChars, GEARS, resolveConfig, stableKey } from './src/effort.js'
 import { buildGuidance, GUIDANCE_ORDER, GUIDANCE_SECTION } from './src/guidance.js'
@@ -97,8 +98,16 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.5.33'
+export const VERSION = '1.5.34'
 const GLOBAL_AGENT = '__global__'
+
+/**
+ * Ceilings for the two caches keyed by ids that never repeat. Both are read
+ * by the *current* session or call, so the caps sit far above any live working
+ * set and only exist to keep a process that never restarts from growing.
+ */
+const MAP_SENT_MAX = 500
+const STARTED_MAX = 2000
 
 /**
  * Insert notices after the last message the step claims to be answering.
@@ -280,7 +289,11 @@ export function apply(ctx, rawConfig) {
   // The same listener remembers the compactions, so the two things that read the
   // event stream are read in one place and in one order.
   const compacted = new Set()
-  /** `${sid}${cwd}` pairs already given a workspace inventory. */
+  /**
+   * `${sid}${cwd}` pairs already given a workspace inventory. Capped for the
+   * same reason as `compacted`: the entry is only useful while that session is
+   * current, and a host that stays up for weeks accumulates them.
+   */
   const mapSent = new Set()
   /**
    * @param {{id?: string}} session
@@ -295,8 +308,8 @@ export function apply(ctx, rawConfig) {
       if (!sid) return
       // Bounded: a long-lived process sees thousands of sessions, and only the
       // next step of a just-compacted one needs the flag.
-      if (compacted.size >= 200) compacted.delete(compacted.values().next().value)
       compacted.add(sid)
+      trim(compacted, 200)
     } catch {
       // A reminder that cannot be scheduled must not affect the event stream.
     }
@@ -390,7 +403,12 @@ export function apply(ctx, rawConfig) {
    * oldest entries are dropped instead of kept forever.
    */
   const autoBudgets = new Map()
-  /** @type {Map<string, number>} */
+  /**
+   * Call id → start time. Deleted on `tools/post-execute`; a call whose result
+   * never arrives would otherwise keep its timestamp for the life of the
+   * process, so the map is capped as well.
+   * @type {Map<string, number>}
+   */
   const startedAt = new Map()
   /** Parallel caps already warned about. */
   const warnedCaps = new Set()
@@ -535,8 +553,8 @@ export function apply(ctx, rawConfig) {
         noteStep(auto, sid)
         notePolicy(auto, sid, cfg)
         const schedule = autoSchedule(auto, sid)
-        if (autoBudgets.size >= 200) autoBudgets.delete(autoBudgets.keys().next().value)
         autoBudgets.set(sid, schedule.stallBudgetMs)
+        trim(autoBudgets, 200)
         if (schedule.directive) {
           notices.push(createNoticeMessage(schedule.directive.text, schedule.directive.summary))
           if (initial.debug) {
@@ -569,6 +587,7 @@ export function apply(ctx, rawConfig) {
           }
           if (map) {
             mapSent.add(key)
+            trim(mapSent, MAP_SENT_MAX)
             notices.push(createNoticeMessage(map, 'auto: workspace inventory'))
           }
         }
@@ -649,7 +668,10 @@ export function apply(ctx, rawConfig) {
   }
 
   ctx.on('tools/pre-execute', async (exec, next) => {
-    if (exec && typeof exec.callId === 'string') startedAt.set(exec.callId, Date.now())
+    if (exec && typeof exec.callId === 'string') {
+      startedAt.set(exec.callId, Date.now())
+      trim(startedAt, STARTED_MAX)
+    }
     return next()
   })
 

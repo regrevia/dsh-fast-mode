@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.34（稳定性版：插件里最后 6 个随宿主任期增长的缓存全部封顶，附一个可重跑的浸泡测试）
+
+按外部评审这一轮的建议，不新增任何提醒时机、重复提醒或预算旋钮，默认值与全部开关一律不动。只做一件事：**让插件在「几周不重启的宿主」里不再积累任何东西**，并把这件事变成能重跑的数字。
+
+- **审计了插件自己持有的 8 个缓存，其中 6 个之前是无界的。** `mapSent`（`${sid}${cwd}`）、`startedAt`（`callId`，结果没回来的调用不会被 `delete`）、测量 sink 的 `labels`/`steps`/`open`/`pendingChunk` 都不封顶；`compacted`、`autoBudgets`、`sessions` 有上限但各写一遍淘汰循环。现在全部走同一个 `src/bounded.js` 的 `trim(cache, cap)`（插入顺序即淘汰顺序，`cap <= 0` 不动），上限分别是 500 / 2000 / 2000 / 2000 / 2000 / 1000。上限远高于任何真实并发量，正常使用不会淘汰活条目。
+- **sink 关闭时不再记 label。** `agent/request` 每个请求都会调 `label()`，而默认配置根本不写测量文件——1.5.33 及以前照样把每个会话的档位记进一个 Map。20000 次 `label()` 的堆增长因此从 **2.48 MB 降到 0.01 MB**（`/tmp/labelctl.mjs`）。淘汰也不会写错行：被淘汰会话的测量行记 `mode: 'unknown'`，不再可能借用别人的档位，这一条是 `test/bounded.test.js` 的断言。
+- **新增 `bench/soak.mjs`：一个从不重启的假宿主。** 用与 `test/plugin.test.js` 相同的假 Cordis 挂载真插件，跑 N 个会话 × 4 轮、每轮 `step/start` → `agent/request` → 工具调用 → `step/end`。20000 会话 / 242400 步：堆增长 **−1.64 MB（−0.1 KB/会话）**；加 `--metrics`（真的写盘，跑完删临时文件）跑 4000 会话是 −0.58 MB。阈值 0.004 KB/会话，超了退出码非 0。
+- **这个脚本第一次跑报的是假泄漏，值得记下。** 4000 会话 +63.67 MB，`--off` 一模一样；二分到 `--no-request` 变 −0.55 MB，`--one-id` 仍 +49 MB——根因是脚本自己 `ctx.fire('agent/request', …)` 没 `await`，16000 个 pending Promise 冒充成插件泄漏。改成 `await` 后同规模 −0.61 MB。脚本头注释里写清了这条，免得下次又去插件里找。
+- **同时复核了已发布源码没退化（`V1533`，12 次运行）：** `debugfix`+`migrate` 3 对 ABBA，`def15` 6 次合计墙钟 **654.0 s（0.50×）**、步数 0.46×、输出 0.57×、逐对 5/6 更快、两臂 **6/6 全绿**，与历史块同量级。
+- 测试 308 → **313 全绿**（新增 `test/bounded.test.js` 5 条）。动 `index.js`、`src/metrics.js`、`src/auto.js`、`src/bounded.js`、`bench/soak.mjs`、`BENCHMARK.md`、`docs/REFERENCE.md`；顺手把 `README.en.md` 里「右键有四行设置」改成五行（1.5.33 加了第五行，英文版漏改）。面板、配置、默认值零改动。
+
 ## 1.5.33（把「多个开关一起开」里那个真正省时的开关做进面板：第五行「一次读多个文件」）
 
 - **面板多了第五行，`openBatch` 第一次能被用户点到。** 1.5.32 实测的 `combo3`（默认 + `workspaceMap` + `openBatch`，11 对 0.742×）里有一半来自 `openBatch`，但它之前只在配置里，面板够不着——等于「测出来了但用户开不了」。这一版把它做成和「先列文件清单」同级的逐会话开关：写 `sessions` 列里本会话条目的 `batch`，宿主侧映射成 `openBatch`（`src/state.js` 的 `configOverridesFor`），不动共享默认值，只影响本会话。

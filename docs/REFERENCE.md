@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.5.33** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.33 面板为五行、五行都只影响本会话），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.5.34** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.5.33 面板为五行、五行都只影响本会话），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **唯一的契约：Fast 模式从不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort` 记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -335,6 +335,7 @@ dsh-fast-mode-experiment stop         # 结束实验
 - **设置只能由这次点击改，且带 revision。** 没有后台静默改配置的路径；冲突写入会失败并回滚，原因是 tooltip。
 - **计量是本地的。** 只写 `metricsFile`；`--lan` 是唯一的出网路径，只读，需要显式 token。
 - **看门狗只改 signal。** 调用方原来的 signal 在 `finally` 里恢复；取消后调用体的 rejection 被吞掉，不会变成未处理的拒绝。
+- **每个缓存都有上限。** 插件持有的 8 个缓存全部以永不重复的 id 为键（会话 id、`callId`、`${sid}${cwd}`），而宿主进程会活几周，所以一个都不留无界：`compacted` 200、`mapSent` 500、`autoBudgets` 200、`startedAt` 2000、`warnedCaps` 有界、测量 sink 的 `labels` 2000 / `steps` 2000 / `open` 2000 / `pendingChunk` 1000、`src/auto.js` 的会话状态 200（LRU）。淘汰统一走 `src/bounded.js` 的 `trim(cache, cap)`，插入顺序即淘汰顺序。上限远高于真实并发量，所以正常使用不会淘汰活条目；真的淘汰了也不会写错行——测量行记 `mode: 'unknown'`，不会借用别人的档位。sink 关闭时 `label()` 直接不写（默认配置就是关闭）。`bench/soak.mjs` 用 20000 个会话的黑盒浸泡验证这条（−0.1 KB/会话）。
 
 ## 诚实的限制
 
