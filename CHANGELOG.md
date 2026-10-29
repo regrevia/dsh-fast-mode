@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1（1.6.0 的补包：npm 页面上那句「从不改 reasoningEffort」在 1.6.0 之后不准确了）
+
+- 1.6.0 加了 `lazy`（默认关闭，唯一会改 `reasoningEffort` 的路径），但 `package.json` 的 `description` 还是旧话「Never changes reasoning effort, the model, or the request body」，npm 首页会照抄这句。这一版只改这一句：**默认**不改推理强度、模型与请求体，例外是默认关闭的 `lazy`（想太久时降一档）。行为、默认值、测试零改动（336 全绿）。
+
 ## 1.6.0（一个新开关 `lazy`「想太久就少想一点」：动态收思考强度 + 压过度思考，默认关闭；12 对 36 次运行实测 0.39–0.43×，判分 216/216 全绿）
 
 按这一轮的要求，只开**一个**新开关，不动任何默认值。它的理念照抄 [ponytail](https://github.com/dietrichgebert/ponytail) 的核心：先读懂再动手，然后从「最小能work的那一级」开始做，不为想象中的未来写代码；但**读完之前不许偷懒**，也不许省掉信任边界校验、安全、数据丢失处理、可访问性。`lazy` 就是把这条用在「思考」上：不是让它不读、不想，而是想够了就停。
