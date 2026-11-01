@@ -8,11 +8,17 @@
  * click writes `{ enabled }` or `{ gear }` to this entry's user layer, the Loader
  * re-applies the settings half, and the policy changes on the next model call.
  *
- * Why the chip lives in `conversation.input.activity`: that slot is the one
- * place the composer renders *after* the standard controls and *before* the stop
- * button — beside the model selector, which is where a speed switch belongs.
- * Occupying `conversation.input.model` instead would shadow the shipped
- * selector, so this bundle never does.
+ * Why the chip lives in `conversation.input.right`: that slot is the list of
+ * compact controls the composer renders *before* the submit action, beside the
+ * model selector, which is where a speed switch belongs. Occupying
+ * `conversation.input.model` instead would shadow the shipped selector, so this
+ * bundle never does.
+ *
+ * It used to live in `conversation.input.activity`. That slot is a *single*
+ * slot: only one registrant renders there, so when dsh-voice-mode also claimed
+ * it for its microphone, one of the two controls silently disappeared — the
+ * chip was shadowed with no error anywhere. A *list* slot keeps every `id`
+ * visible beside the others, so the chip and the mic now coexist.
  *
  * ## Never a dead button
  *
@@ -55,8 +61,15 @@ window.__ModuleLoader__.load({
 
     /** Dictionary namespace owned by this client half. */
     const NS = 'fast-mode'
-    /** Composer slot: beside the model selector, left of the stop button. */
-    const SLOT = 'conversation.input.activity'
+    /**
+     * Composer slot: the compact-controls list right before the submit action.
+     *
+     * `conversation.input.activity` is a *single* slot: only the lowest-priority
+     * registrant renders there, so a second plugin on it (dsh-voice-mode's mic)
+     * silently shadows the chip. `conversation.input.right` is a *list* slot, so
+     * every `id` renders beside the others.
+     */
+    const SLOT = 'conversation.input.right'
     const STYLE_ID = 'dsh-fast-mode/chip.css'
     /**
      * Entry ids this plugin may be mounted under. The patch id in
@@ -1057,15 +1070,16 @@ window.__ModuleLoader__.load({
       try {
         ctx.slots.inject(SLOT, () => ctx.slots.register({
           name: SLOT,
+          id: 'fast-mode',
+          order: 70,
           locale: NS,
-          // The activity slot is session-scoped (`scope: "session"` in the
-          // composer tree), and the kit calls this factory with the binding key
-          // before the actions object (`runInject(entry, binding, actions)` in
+          // This slot is session-scoped (`scope: "session"` in the composer
+          // tree), and the kit calls this factory with the binding key before
+          // the actions object (`runInject(entry, binding, actions)` in
           // `@deepseek-ai/dsh-client-ui-slots`), so the first argument is the
-          // conversation id. `conversation.composer.bar` in the stock UI relies
-          // on exactly that signature. The id goes out under `chatId`, not
-          // `sessionId`, because standard session props may already own that
-          // name and a colliding injected prop is a slot-assembly error.
+          // conversation id. The id goes out under `chatId`, not `sessionId`,
+          // because standard session props may already own that name and a
+          // colliding injected prop is a slot-assembly error.
           inject: (sessionId) => ({ remote, chatId: typeof sessionId === 'string' ? sessionId : undefined }),
         }, FastChip))
       } catch (error) {

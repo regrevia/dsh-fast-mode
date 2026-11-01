@@ -197,10 +197,13 @@ test('it registers one chip on the composer slot beside the model selector, neve
   module.apply(ctx)
   await sleep(5)
 
-  assert.deepEqual([...ctx.injected], ['conversation.input.activity'])
+  assert.deepEqual([...ctx.injected], ['conversation.input.right'])
   assert.equal(ctx.registered.length, 1)
   const { options } = ctx.registered[0]
-  assert.equal(options.name, 'conversation.input.activity')
+  assert.equal(options.name, 'conversation.input.right')
+  assert.equal(options.id, 'fast-mode', 'a list slot needs an id so other controls can share it')
+  assert.equal(options.order, 70, 'the chip sits before dsh-voice-mode\'s microphone (order 80)')
+  assert.notEqual(options.name, 'conversation.input.activity', 'that slot is single: a second registrant would shadow the chip')
   assert.equal(options.locale, 'fast-mode', 'the chip must own a dictionary namespace')
   assert.equal(options.inject().remote, remote, 'the component needs the settings remote')
   assert.equal(ctx.labels.length, 1, 'dictionaries are registered once')
