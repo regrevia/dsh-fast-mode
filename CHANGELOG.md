@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.7.1（`actBeforePlan` 补上第二个信号：本回合思考已写多长；仍然只改提示词，不加面板行）
+
+1.7.0 用 `repeatNudge` 去抓「没新信息还在想」，但本语料里模型很少把同一个调用原样重发第三遍：`DP17` 十二个会话只发出 3 条提醒，全部来自「连续结果相同」那条分支，「同调用 ≥2 次」一次都没满足。所以第二个信号换成本来就记在会话里的东西——**这一回合已经写了多少字符的思考**。
+
+- **判定与文本。** `assistant/message` 事件里的 `reasoning` 块按字计数（`src/usage.js` 的 `readReasoningChars`），按回合累加（`noteReasoning`）；到 `REASONING_CHARS`（4000）字符时，在下一步之前给一条通知，之后每再翻一个 4000 的台阶可以再来一条，每回合上限 `MAX_REASONING_NUDGES`（2）。文本写明它看到的字数并给两个出口：`You have written about N characters of reasoning in this turn. Past that length, more thinking about facts you already have rarely changes the next action: take the action the evidence supports, or read the one fact that is still missing.` 触发条件只有长度本身，所以文本**不断言**「没有新信息」。
+- **它挂在 `actBeforePlan` 上，没有新开关。** 面板固定七行，加第四行会破坏「七行」这个说法；这条和「先动手再解释」是同一个方向（把计划和推理压到能动作为止），所以合在一个开关里。代价必须说清：`ab17` 从此同时量两个行为，读数只能按「两个行为一起」解释。
+- **仍然一个请求字段都不碰。** 字数只读不写，`agent/request` 照旧原样返回 `resolved`。路由不吐 reasoning 块时读回 0，开关在那条路由上保持沉默——默认关闭的东西该有的失败方式。
+- **`DP18` 复核的是 1.7.0 的读数**（长度提醒还没上）：`codeimpl`/`ledger`/`stategraph` 三族各 3 对、四臂轮转、36 次运行，`trio17` **0.491×** [0.314, 0.788]、8/9 更快，`ab17` **0.643×** [0.427, 0.920]、6/9，`pf17` **0.719×** [0.492, 0.999]、7/9；与 `DP17` 合池 21 对后 `ab17` 0.708× [0.558, 0.898]、`trio17` 0.575× [0.444, 0.748]（18/21 更快）。思考字符几何均值 `off` 71275 → `ab17` 44617 / `trio17` 32463，步数 12.86 → 8.98 / 6.87，判分全绿。计划里的 5 对减到 3 对是资源纪律（同一时刻只跑一个块、不长时间占满 CPU），理由与代价写进 `BENCHMARK.md`。
+- 测试 334 → **337 全绿**（`test/deliberation.test.js` +2、`test/usage.test.js` +1）。动 `src/deliberation.js`、`src/usage.js`、`index.js`、两个测试文件。
+
+- **`DP19` 回归复核（1.7.1 的代码，`off` 对 `ab17`，`debugfix`+`migrate` 各 4 对、16 次运行）：** `ab17` **0.701×** [0.516, 0.930]、6/8 更快、判分 16/16 绿；`debugfix` 0.756×（4/4，1.7.0 时 0.582×）、`migrate` 0.649×（2/4，1.7.0 时 0.996×），思考字符几何均值 28275 → 17834、步数 9.27 → 7.62。提醒在真实运行里发出过：4 个 `ab17` 会话各 1–2 条（每回合上限 2），`off` 0 条；同批每回合思考字符 5350–120897。结论只到「加了它没让这个臂变差」，8 对不足以说更快，也没拆开两个行为各自的贡献。
+
+## 1.7.0（删掉 `lazy` 与它改 `reasoningEffort` 的那一半；换成三个默认关闭的纯提示侧开关：`probeFirst`「不确定时先查一次」、`actBeforePlan`「先动手再解释」、`repeatNudge`「重复无进展时提醒」；12 对 5 臂 60 次运行里三开 0.647×，判分全绿）
+
+这一轮的两件事是同一个决定的两面：**插件从此不碰任何请求字段**，**以及**把「别想太久」换成不改答案的做法。
+
+- **`lazy` 整个删掉，不是关掉。** `src/lazy.js`、`test/lazy.test.js`、`lazy`/`lazyEffort`/`lazyVariant` 三个配置键、面板第六行、`bench/arms/laz*.yml`、以及 `agent/request` 里那处唯一的 `{ ...resolved, reasoningEffort }` 全部消失。删的原因是上一轮自己测出来的：`LZ1` 里只发文字是 0.389× [0.252, 0.600]，文字加降档是 0.430× [0.273, 0.677]，两臂直接对打 1.106× [0.682, 1.792]——**置信区间跨过 1，请求侧那一半没有测出任何额外收益**；而且它是全插件唯一会改变答案而不只是改变时延的机制。加上这条路由在所有 9678 行测量里 `reasoning` 用量都报 0，参数是否被上游当真从来没有被证明过。删掉之后「默认契约」升级成绝对承诺：**`agent/request` 原样返回 `resolved`，仓库里不存在任何构造 `reasoningEffort:` 的代码**，不存在「某个开关打开时会改」的例外。
+- **三个新开关都是纯提示侧、默认关闭、逐会话、上屏可见。**
+  - `probeFirst`「不确定时先查一次」：入场步一条通知——拿不准的代码库事实去读一次（先 grep 再 read，先读区间再读全文），不要用推理去猜。
+  - `actBeforePlan`「先动手再解释」：第一个工具调用之前最多一行计划；下一步已经清楚就直接做。
+  - `repeatNudge`「重复无进展时提醒」：回合进行中才说话，条件是**本地证据**——同一个调用（工具名 + 稳定的 arguments 键）本回合已经跑过 ≥2 次，或最近三条相邻结果内容完全一致；提醒里写明观察到的次数。每回合上限 2 条，同一份证据不重复提醒，**报错结果永不算作循环、并清掉陈旧计数**（失败是信息，不是原地打转）。
+  - probe 与 act 共用**一条**通知和一条 `GUARD`（「信任边界、数据丢失、安全、可访问性上绝不跳过验证」），两个都开也只花一条消息。
+- **机制在 `src/deliberation.js`，有界且不可能污染工具结果。** `createProgressWatch`/`beginTurn`/`noteCall`/`planRepeatNudge` 加常量 `MAX_REPEAT_NUDGES = 2`、`REPEAT_CALLS = 2`、`STALE_RESULTS = 2`；内存上限 `RUN_MAX = 64` 个会话、每回合 `HISTORY_MAX = 8` 次调用；全部调用都包在既有的 catch 里，检测失败只会丢一条提醒，不会改变任何一步工具结果。
+- **实测（`DP17`，`debugfix` + `migrate`，每族 6 对共 12 对、五个 arm 配置按对轮转，共 60 次运行；比值 = 该臂墙钟 / `off` 墙钟，逐对几何平均，括号是 95 % bootstrap CI）：**
+
+  | 开关 | 汇总墙钟比 | 更快 | 测试 |
+  |---|---|---|---|
+  | `probeFirst` | 0.883× [0.663, 1.176] | 7/12 对 | 全绿 |
+  | `actBeforePlan` | 0.761× [0.578, 1.032] | 8/12 对 | 全绿 |
+  | `repeatNudge` | 1.007× [0.839, 1.227] | 7/12 对 | 全绿 |
+  | 三个全开（`trio17`） | **0.647× [0.501, 0.893]** | **10/12 对** | 全绿 |
+
+  分家族看差别很大：`debugfix` 上 `actBeforePlan` 0.582×、6/6 更快，思考字符（几何均值）8249 → 3152（**这正对着「思考链过长」这个现象**）；`migrate` 上它 0.996×、步数反而（几何均值）11.0 → 15.65，说明该族需要先规划，硬推会绕路。`probeFirst` 在 `migrate` 上 0.785×（思考字符 61560 → 45499），在 `debugfix` 上 0.993×。`repeatNudge` 单开等于没变，但它在组合里不拖后腿——三开 0.647× 是本次唯一置信区间不跨过 1 的臂。**所有臂、所有对，判分与 `off` 一致，零失败。** 更宽的三族验证（`DP18`）跑在 `codeimpl`/`ledger`/`stategraph` 上，结果补齐后写进 `BENCHMARK.md`。
+- **`repeatNudge` 为什么单开等于没变：它基本没被触发。** 把 `rn17` 那 12 个会话的记录翻出来数提醒原文：12 个会话里只有 2 个各收到过提醒（`debugfix-p2` 一条、`p5` 两条），合计 **3 条**，而且全部来自「连续结果内容相同」那条分支（观察到的相同条数是 3、7、7）；「同一调用本回合已跑 ≥2 次」这条分支**一次都没满足**。原因不是逻辑坏了，是阈值对着「极端打转」而不是「日常长链」：本语料里模型很少把同一个调用原样重发第三遍。所以 1.007× 的读数其实是「几乎没发生」的读数，不能当成「提醒没用」。这一条如实写在这里，下一轮要改就改阈值本身（不加开关、不加面板行），并用新的臂重测。
+
+- **没有动的东西：** 默认值一个没改（`enabled: false` 仍是出厂态）、`d2`/`d2g`/`dr8` 仍然 HOLD、没有新增提醒时机或预算旋钮、没有新增任何请求字段或系统提示段落。
+- 测试 338 → **334 全绿**（删 15 条 lazy 测试，新增 `test/deliberation.test.js` 10 条 + `test/plugin.test.js` 9 条集成）。动 `index.js`（删流式 reasoning 块、入场接线、`agent/request` 原样返回、版本号）、`src/deliberation.js`（新）、`src/config.js`（三键换三键，32 键）、`src/effort.js`、`src/state.js`、`client.js`（三行面板 + 两个白名单 + 四个写路径）、`src/lazy.js` 与 `test/lazy.test.js`（删除）、`test/{client,config,effort,metrics,plugin,state}.test.js`、`bench/arm-config.mjs`、`bench/suite-run.py`、`bench/arms/{pf17,ab17,rn17,trio17}.yml`（新）、`package.json`、两份 README、`docs/REFERENCE.md`、`BENCHMARK.md`。
+
+- **`DP18` 补齐（三族复核，1.7.0 的臂）：** `codeimpl`/`ledger`/`stategraph` 各 3 对、36 次运行，`trio17` **0.491×** [0.314, 0.788]、8/9 更快，`ab17` 0.643× [0.427, 0.920]，`pf17` 0.719× [0.492, 0.999]，判分全绿；与 `DP17` 合池 21 对：`ab17` 0.708× [0.558, 0.898]、`trio17` 0.575× [0.444, 0.748]。三个 arm 的方向在两族短任务（`DP17`）与三族长任务（`DP18`）上一致，`trio17` 是唯一在两块里 CI 都不跨 1 的臂。详见 `BENCHMARK.md` 的「块 DP18」。
+
 ## 1.6.2（修面板：`lazy` 那张卡以前点不开；标签改成能看懂的说法；lazy 的梯子文本做了三版对照，不换默认）
 
 - **「过度思考时降档」以前点不开，是真的坏了。** `client.js` 里浏览器侧的 `sessions` 列有两处白名单：`sanitiseChoices` 和 `withOwn`，它们认识 `enabled/gear/discipline/stepBudget/map/batch` 六个字段，唯独没写 `lazy`。于是点击「打开」时写出去的会话条目里根本没有这个 key，宿主读回来是「没有条目」，面板再读一遍又画成「关」——看起来就是按钮没有反应。宿主侧 `src/state.js` 一直是认识 `lazy` 的，缺的只是浏览器这一半。两处都补上，并加了一条跨侧回归测试（`test/state.test.js`：浏览器序列化 → 宿主 `choiceFor` 读回 `{lazy:true}` → 浏览器 `parseChoices` 再读回 `true`；非布尔值仍被丢弃）。**旧版本里已经点过的人不会留下坏数据**，因为那次点击压根没写进去。

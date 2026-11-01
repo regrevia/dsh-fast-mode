@@ -739,106 +739,124 @@ test('the reminder can be switched off without switching the mode off', async ()
   assert.equal(out, decision)
 })
 
-/* ------------------------------------------------------------------- lazy */
+/* ----------------------------------------------------------- deliberation */
 
-const streamReasoning = (ctx, chars, sessionId = 'session-1') => {
-  ctx.fire('agent/assistant-stream', {
-    frame: {
-      type: 'chunk',
-      attemptId: `${sessionId}:attempt-1`,
-      chunk: { type: 'reasoning-delta', text: 'x'.repeat(chars) },
-    },
-  })
-}
+const noticesOf = (out) => (out && out.messages ? out.messages : [])
+  .filter(m => m && m.source && m.source.form === 'notice' && m.source.kind === 'plugin:fast-mode')
 
-test('the lazy switch is opt-in: off hands back the same request and says nothing', async () => {
+const noticeText = (out) => noticesOf(out).map(m => m.content[0].text).join('\n')
+
+test('the deliberation switches are opt-in: all three off changes nothing', async () => {
   const ctx = fakeContext()
   apply(ctx, { ...ON, gear: 'auto' })
   const claimed = [{ id: 'u1', role: 'user', content: [] }]
   const first = await step(ctx, { claimed })
-  assert.equal(first.out, first.decision, 'no ladder text, no nudge')
-  streamReasoning(ctx, 6000)
-  await step(ctx, { claimed })
+  assert.equal(first.out, first.decision, 'no notice at turn entry')
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.js' } })
+  await runTool(ctx, { callId: 'c2', name: 'read', args: { path: 'a.js' } })
+  const second = await step(ctx, { claimed })
+  assert.equal(second.out, second.decision, 'no evidence nudge either')
   assert.deepEqual(
     await request(ctx, { step: 2, effort: 'high' }),
     { provider: 'company', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' },
-    'and effort is the harness value, untouched',
+    'and the request is the harness value, untouched',
   )
 })
 
-test('lazy mode states the ladder once per turn, in its own notice', async () => {
+test('probeFirst adds one notice at turn entry, and only once per turn', async () => {
   const ctx = fakeContext()
-  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  apply(ctx, { ...ON, gear: 'auto', probeFirst: true })
   const claimed = [{ id: 'u1', role: 'user', content: [] }]
   const first = await step(ctx, { claimed })
-  const notice = first.out.messages.find(m => m && m.source && m.source.form === 'notice')
-  assert.ok(notice, 'the ladder rides the first step of the turn')
-  assert.equal(notice.source.kind, 'plugin:fast-mode')
-  assert.match(notice.content[0].text, /lazy senior developer/i)
-  assert.match(notice.content[0].text, /first rung that works/i)
+  const notices = noticesOf(first.out)
+  assert.equal(notices.length, 1, 'exactly one notice, and it is this plugin\'s')
+  assert.match(noticeText(first.out), /read it once instead of reasoning/i)
+  assert.match(noticeText(first.out), /trust boundaries/i, 'the never-cut guard rides along')
   const second = await step(ctx, { claimed })
   assert.equal(second.out, second.decision, 'the second step of the same turn pays nothing')
 
-  // A new user message starts a turn, so the ladder comes back once.
   const nextTurn = [{ id: 'u1', role: 'user', content: [] }, { id: 'u2', role: 'user', content: [] }]
   const third = await step(ctx, { claimed: nextTurn })
-  assert.ok(third.out.messages.some(m => m && m.source && m.source.form === 'notice'))
+  assert.equal(noticesOf(third.out).length, 1, 'a new user message starts a turn, so it comes back once')
 })
 
-test('a turn that keeps reasoning is nudged, at most twice', async () => {
+test('actBeforePlan states the plan rule and not the read rule', async () => {
   const ctx = fakeContext()
-  apply(ctx, { ...ON, gear: 'auto', lazy: true })
+  apply(ctx, { ...ON, gear: 'auto', actBeforePlan: true })
+  const first = await step(ctx, { claimed: [{ id: 'u1', role: 'user', content: [] }] })
+  const text = noticeText(first.out)
+  assert.match(text, /one line of plan is enough/i)
+  assert.match(text, /trust boundaries/i)
+  assert.doesNotMatch(text, /read it once instead of reasoning/i, 'the switches stay separate')
+})
+
+test('both text switches on share one notice instead of costing two', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', probeFirst: true, actBeforePlan: true })
+  const first = await step(ctx, { claimed: [{ id: 'u1', role: 'user', content: [] }] })
+  assert.equal(noticesOf(first.out).length, 1, 'one message carries both rules')
+  const text = noticeText(first.out)
+  assert.match(text, /read it once instead of reasoning/i)
+  assert.match(text, /one line of plan is enough/i)
+  assert.equal(text.split('trust boundaries').length - 1, 1, 'the guard appears once')
+})
+
+test('repeatNudge names the repeated call, and never the same evidence twice', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', repeatNudge: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.js' } })
+  await runTool(ctx, { callId: 'c2', name: 'read', args: { path: 'a.js' } })
+  const nudged = await step(ctx, { claimed })
+  const text = noticeText(nudged.out)
+  assert.match(text, /already run 2 times in this turn/i, 'the count is stated as a finding')
+  assert.doesNotMatch(text, /trust boundaries/i, 'the evidence nudge is not a directive')
+
+  const again = await step(ctx, { claimed })
+  assert.equal(again.out, again.decision, 'the same evidence does not repeat the same sentence')
+})
+
+test('repeatNudge also fires when several results carry nothing new', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', repeatNudge: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  for (let i = 0; i < 3; i += 1) {
+    await runTool(ctx, { callId: `c${i}`, name: 'read', args: { path: `f${i}.js` }, text: 'same bytes' })
+  }
+  const nudged = await step(ctx, { claimed })
+  assert.match(noticeText(nudged.out), /returned the same content/i)
+})
+
+test('repeatNudge stays quiet after an error: an error is information', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', repeatNudge: true })
+  const claimed = [{ id: 'u1', role: 'user', content: [] }]
+  await step(ctx, { claimed })
+  await runTool(ctx, { callId: 'c1', name: 'read', args: { path: 'a.js' }, text: 'boom', isError: true })
+  await runTool(ctx, { callId: 'c2', name: 'read', args: { path: 'a.js' }, text: 'boom', isError: true })
+  const quiet = await step(ctx, { claimed })
+  assert.equal(quiet.out, quiet.decision, 'a failing call is not a loop')
+})
+
+test('repeatNudge is capped per turn and the next turn starts clean', async () => {
+  const ctx = fakeContext()
+  apply(ctx, { ...ON, gear: 'auto', repeatNudge: true })
   const claimed = [{ id: 'u1', role: 'user', content: [] }]
   await step(ctx, { claimed })
   const nudges = []
-  for (let i = 0; i < 6; i += 1) {
-    streamReasoning(ctx, 1500)
+  for (let i = 0; i < 8; i += 1) {
+    await runTool(ctx, { callId: `c${i}`, name: 'grep', args: { pattern: `p${i}` }, text: 'same bytes' })
     const next = await step(ctx, { claimed })
-    const notice = next.out === next.decision
-      ? undefined
-      : next.out.messages.find(m => m && m.source && m.source.form === 'notice' && /decide/i.test(m.content[0].text))
-    if (notice) nudges.push(notice)
+    if (noticesOf(next.out).length > 0) nudges.push(next)
   }
-  assert.ok(nudges.length >= 1, 'a long stretch of reasoning earns a nudge')
-  assert.ok(nudges.length <= 2, 'and never more than two')
-})
+  assert.ok(nudges.length >= 1, 'a run of identical results earns the nudge')
+  assert.ok(nudges.length <= 2, 'and never more than two per turn')
 
-test('a step that over-thought asks for one rung less, then restores the harness value', async () => {
-  const ctx = fakeContext()
-  apply(ctx, { ...ON, gear: 'auto', lazy: true })
-  const claimed = [{ id: 'u1', role: 'user', content: [] }]
-  await step(ctx, { claimed })
-  streamReasoning(ctx, 3000)
-  await step(ctx, { claimed })
-
-  const reduced = await request(ctx, { step: 2, effort: 'high' })
-  assert.equal(reduced.reasoningEffort, 'medium', 'one rung down, not a fixed level')
-
-  // The next step streamed little, so the harness's own value goes back out.
-  await step(ctx, { claimed })
-  const restored = await request(ctx, { step: 3, effort: 'high' })
-  assert.equal(restored.reasoningEffort, 'high', 'no drift across steps')
-  assert.deepEqual(Object.keys(restored).sort(), ['model', 'provider', 'reasoningEffort'], 'nothing else is rewritten')
-})
-
-test('the switch can cut the thinking text without touching effort', async () => {
-  const ctx = fakeContext()
-  apply(ctx, { ...ON, gear: 'auto', lazy: true, lazyEffort: false })
-  const claimed = [{ id: 'u1', role: 'user', content: [] }]
-  const first = await step(ctx, { claimed })
-  assert.ok(first.out.messages.some(m => m && m.source && m.source.form === 'notice'), 'the ladder text still applies')
-  streamReasoning(ctx, 6000)
-  await step(ctx, { claimed })
-  assert.equal((await request(ctx, { step: 2, effort: 'high' })).reasoningEffort, 'high', 'lazyEffort:false pins the level')
-})
-
-test('lazy mode never reduces below low, and never by more than one rung', async () => {
-  const ctx = fakeContext()
-  apply(ctx, { ...ON, gear: 'auto', lazy: true })
-  const claimed = [{ id: 'u1', role: 'user', content: [] }]
-  await step(ctx, { claimed })
-  streamReasoning(ctx, 5000)
-  await step(ctx, { claimed })
-  assert.equal((await request(ctx, { step: 2, effort: 'low' })).reasoningEffort, 'low', 'low is the floor')
-  assert.equal((await request(ctx, { step: 2, effort: 'turbo' })).reasoningEffort, 'turbo', 'an unknown rung is never guessed at')
+  const nextTurn = [{ id: 'u1', role: 'user', content: [] }, { id: 'u2', role: 'user', content: [] }]
+  await step(ctx, { claimed: nextTurn })
+  await runTool(ctx, { callId: 'x1', name: 'grep', args: { pattern: 'q' }, text: 'same bytes' })
+  await runTool(ctx, { callId: 'x2', name: 'grep', args: { pattern: 'q' }, text: 'same bytes' })
+  assert.match(noticeText((await step(ctx, { claimed: nextTurn })).out), /already run 2 times/i, 'a new turn is a new ledger')
 })

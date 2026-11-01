@@ -154,9 +154,10 @@ test('the label is per session: two sessions never bleed into each other', () =>
   assert.deepEqual(rows.map(row => [row.sid, row.mode, row.gear]), [['s1', 'off', 'off'], ['s2', 'on', 'max']])
 }))
 
-test('a lazy step-down records both halves, and the next plain step clears the base', () => withTempFile((file) => {
+test('a labelled effort base is recorded and cleared, not carried forward', () => withTempFile((file) => {
   const recorder = createRecorder({ file })
-  // What the request hook posts when `lazy` moved `high` down to `medium`.
+  // The field outlives the 1.6.x step-down that motivated it: any caller that
+  // ever labels a base must not leak it into the next row either.
   recorder.label('s1', { mode: 'on', gear: 'auto', effort: 'medium', effortBase: 'high', route: 'p/m' })
   step(recorder, 's1', { start: 0, ttft: 100, end: 200, usage: { outputTokens: 1 } })
   // The following request kept the user's own effort: base must not leak.

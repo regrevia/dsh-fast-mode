@@ -40,9 +40,10 @@
  *
  * `enabled` defaults to **false** on purpose: opt-in is what makes "off means
  * completely off" verifiable. The old `floor` / `ladder` / `aliases` knobs are
- * gone, along with the code that read them; the one field that can still move
- * effort is `lazy`, and it is off by default because it can change the answer,
- * not only the timing.
+ * gone, along with the code that read them, and so is the 1.6.x effort
+ * step-down: no field in this schema changes a request field any more. The three
+ * deliberation switches (`probeFirst`, `actBeforePlan`, `repeatNudge`) only add
+ * prompt text, and all three are off by default.
  *
  * @module dsh-fast-mode/config
  */
@@ -161,26 +162,28 @@ export const Config = z.object({
       '开局批量 / Opening batch（面板名「一次读多个文件」）: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。面板可逐会话开；和 `workspaceMap` 一起开时实测 0.742×（11 对），单独开测不到显著，所以默认仍是 false。',
     ),
 
-  lazy: z
+  probeFirst: z
     .boolean()
     .default(false)
     .volatile()
     .description(
-      '过度思考时降档 / Cap over-thinking（面板「过度思考时降档」）: 每轮第一步给一次「先找最省的一级、不扩范围、不砍信任边界校验/数据丢失处理/安全/可访问性」的提示；当上一步流出的思考字符 ≥ 1600、或本轮累计超过 4000/8000 时，把下一个请求的思考强度降一档（最低 low、从不升档、每轮最多两次、工具报错后两步内不降）。每个请求都从用户当下的选择重新读基准，所以下一次请求就恢复。默认关闭：它是唯一会改变答案而不只是时延的开关。',
+      '不确定时先查一次 / Read before guessing（面板「不确定时先查一次」）: 每轮第一步的提示里加一句「拿不准的仓库事实就读一次：一次调用，选最便宜的那个（grep 先于 read，读范围先于整文件）；结果出乎意料时先重读，再解释为什么」。只加提示文字，不改任何请求字段、不改调度、不改完成判定。依据是本插件唯一测出大收益的机制就是提示文字（LZ1 0.389×），而参数降档测不出效果；这条专门对着「用推理代替读取」这种过思考。默认关闭。',
     ),
 
-  lazyVariant: z
-    .union(['v1', 'v2', 'v3'].map(name => z.const(name)))
-    .default('v1')
-    .description(
-      '实验开关，不进面板：lazy 的梯子文本用哪一版。v1 是 1.6.x 已发布的文本，v2 在它后面加「不重述任务、行动已经清楚就直接做」，v3 是同样规则的精简重写。只用于同一块里对照三版文本，默认 v1；选它不会改变回答以外的任何东西，普通用户不需要动。',
-    ),
-
-  lazyEffort: z
+  actBeforePlan: z
     .boolean()
-    .default(true)
+    .default(false)
+    .volatile()
     .description(
-      'lazy 的思考强度半边 / Lazy effort step-down: 设为 false 时 lazy 只发提示文字，一个请求字段都不写。对照臂，用来分辨收益来自提示词还是 provider 真的更低档；默认 true。',
+      '先动手再解释 / Act first（面板「先动手再解释」）: 每轮第一步加一句「不复述任务、不重讲计划；第一个工具调用之前最多一行计划，动作已经清楚就直接做」。省的是每一步的输出字符（实测输出中位一万字符以上），对推理量不一定有效，所以它和另外两条是不同机制、分开开关。默认关闭。',
+    ),
+
+  repeatNudge: z
+    .boolean()
+    .default(false)
+    .volatile()
+    .description(
+      '重复无进展时提醒 / Evidence nudge（面板「重复无进展时提醒」）: 轮内检测两种「没有新信息还在想」的证据——同一个调用（工具名+参数）本轮已经出现 ≥2 次，或连续 ≥3 次工具结果的内容完全相同；命中时在下一步之前发一句带计数的提醒，每轮最多两次、同一证据不重复。它只读本轮已经发生的调用，不发请求、不写请求字段。按推理字符数触发只是「过度思考」的代理指标，短任务上会误触发，这条改用它本身的定义。默认关闭。',
     ),
 
   preferPatch: z

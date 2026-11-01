@@ -347,10 +347,10 @@ test('the chip copy promises only what the chip can promise: this conversation, 
   const { ctx } = await mount(fakeRemote())
   const dict = ctx.labels[0].dict
 
-  // The tooltip used to state "effort unchanged". `lazy` is a panel row that can
-  // step effort down, so the chip no longer makes that claim; it would otherwise
-  // be false for exactly the conversations that turned `lazy` on. The promise
-  // moved to the panel row and the docs, where it is conditional and testable.
+  // The tooltip used to state "effort unchanged", and when a panel row could
+  // step effort down the chip dropped the claim. 1.7.0 removed that row and the
+  // rewrite with it, but the chip still promises only what it can keep: which
+  // conversation, and what the click does. The depth promise lives in the docs.
   assert.equal(/思考强度/.test(dict.zh['chip.titleOn']), false, 'the chip makes no effort promise it cannot keep')
   assert.match(dict.zh['chip.titleOn'], /本会话/, 'the choice is scoped to the conversation')
   assert.match(dict.zh['chip.titleOn'], /点击关闭/, 'and what the click does')
@@ -780,7 +780,7 @@ test('the panel paints the shared defaults the shipped host resolves, not the bu
   const namespaces = (await remote.settings.describe()).value.namespaces
   assert.deepEqual(
     Object.keys(namespaces[0].value).sort(),
-    ['enabled', 'gear', 'lazy', 'outputDiscipline', 'sessions', 'stepBudget', 'workspaceMap'],
+    ['actBeforePlan', 'enabled', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'sessions', 'stepBudget', 'workspaceMap'],
     'describe() carries the shared defaults because they are volatile',
   )
 

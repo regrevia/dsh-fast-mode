@@ -122,3 +122,26 @@ export function findUsage(source) {
 export function readOutputTokens(source) {
   return readUsage(findUsage(source)).output
 }
+
+/**
+ * Reasoning characters in one assistant message, summed over its blocks.
+ *
+ * This is the *observed* size of the model's thinking, read from the transcript;
+ * it is never written back into a request. Routes that do not persist reasoning
+ * blocks return 0, and a switch that reads this stays silent there — the correct
+ * failure mode for something that is off by default.
+ *
+ * @param {any} source an assistant message, or an event carrying one under `message`
+ * @returns {number}
+ */
+export function readReasoningChars(source) {
+  const message = source && typeof source === 'object' ? (source.message ?? source) : undefined
+  const content = message && Array.isArray(message.content) ? message.content : []
+  let total = 0
+  for (const block of content) {
+    if (block && typeof block === 'object' && block.type === 'reasoning' && typeof block.text === 'string') {
+      total += block.text.length
+    }
+  }
+  return total
+}

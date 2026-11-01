@@ -104,8 +104,12 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
       'panel.batch': '一次读多个文件',
       'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
-      'panel.lazy': '过度思考时降档',
-      'panel.lazyTitle': '一步里推理超量时，下一个请求降一档；安全校验照旧',
+      'panel.probe': '不确定时先查一次',
+      'panel.probeTitle': '拿不准的事实读一次，别用推理猜',
+      'panel.act': '先动手再解释',
+      'panel.actTitle': '最多一行计划，动作清楚就直接做',
+      'panel.repeat': '重复无进展时提醒',
+      'panel.repeatTitle': '重跑同一个调用或连续无新信息时提醒',
     }
 
     const en = {
@@ -131,8 +135,12 @@ window.__ModuleLoader__.load({
       'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
       'panel.batch': 'Read several files at once',
       'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
-      'panel.lazy': 'Cap over-thinking',
-      'panel.lazyTitle': 'One rung lower on the next request when a step over-reasons; safety checks stay',
+      'panel.probe': 'Read before guessing',
+      'panel.probeTitle': 'Look up the fact you are unsure of once; a guess costs more; safety checks stay',
+      'panel.act': 'Act first',
+      'panel.actTitle': 'At most one line of plan before the first call; act when the next step is clear',
+      'panel.repeat': 'Nudge on repeats',
+      'panel.repeatTitle': 'One line when a call runs again or several steps bring nothing new; safety checks stay',
     }
 
     const CSS = [
@@ -196,8 +204,12 @@ window.__ModuleLoader__.load({
       inventory: false,
       /** Batches independent reads into one call for this conversation. */
       batch: false,
-      /** The lazy switch: this conversation may be reasoned at a lower effort when it over-thinks. */
-      lazy: false,
+      /**
+       * The three deliberation switches: read the missing fact, one line of plan,
+       * one evidence line when the turn stops learning. All off unless this
+       * conversation turned them on.
+       */
+      probe: false, act: false, repeat: false,
       /** This conversation's step cap; 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
@@ -327,7 +339,9 @@ window.__ModuleLoader__.load({
         if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
         if (typeof entry.map === 'boolean') clean.map = entry.map
         if (typeof entry.batch === 'boolean') clean.batch = entry.batch
-        if (typeof entry.lazy === 'boolean') clean.lazy = entry.lazy
+        if (typeof entry.probeFirst === 'boolean') clean.probeFirst = entry.probeFirst
+        if (typeof entry.actBeforePlan === 'boolean') clean.actBeforePlan = entry.actBeforePlan
+        if (typeof entry.repeatNudge === 'boolean') clean.repeatNudge = entry.repeatNudge
         if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
         if (
           clean.enabled === undefined
@@ -336,7 +350,9 @@ window.__ModuleLoader__.load({
           && clean.stepBudget === undefined
           && clean.map === undefined
           && clean.batch === undefined
-          && clean.lazy === undefined
+          && clean.probeFirst === undefined
+          && clean.actBeforePlan === undefined
+          && clean.repeatNudge === undefined
         ) continue
         out[sessionId] = clean
       }
@@ -385,7 +401,7 @@ window.__ModuleLoader__.load({
      *
      * @param {Record<string, any>} map
      * @param {string|undefined} sessionId
-     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, lazy?: boolean}} patch
+     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean}} patch
      */
     function withOwn(map, sessionId, patch) {
       const next = { ...map }
@@ -399,7 +415,9 @@ window.__ModuleLoader__.load({
       if (Number.isFinite(patch.stepBudget) && patch.stepBudget >= 0) entry.stepBudget = Math.floor(Number(patch.stepBudget))
       if (typeof patch.map === 'boolean') entry.map = patch.map
       if (typeof patch.batch === 'boolean') entry.batch = patch.batch
-      if (typeof patch.lazy === 'boolean') entry.lazy = patch.lazy
+      if (typeof patch.probeFirst === 'boolean') entry.probeFirst = patch.probeFirst
+      if (typeof patch.actBeforePlan === 'boolean') entry.actBeforePlan = patch.actBeforePlan
+      if (typeof patch.repeatNudge === 'boolean') entry.repeatNudge = patch.repeatNudge
       next[sessionId] = entry
       return next
     }
@@ -546,9 +564,15 @@ window.__ModuleLoader__.load({
           const seenBatch = own !== undefined && typeof own.batch === 'boolean'
             ? own.batch
             : value.openBatch === true
-          const seenLazy = own !== undefined && typeof own.lazy === 'boolean'
-            ? own.lazy
-            : value.lazy === true
+          const seenProbe = own !== undefined && typeof own.probeFirst === 'boolean'
+            ? own.probeFirst
+            : value.probeFirst === true
+          const seenAct = own !== undefined && typeof own.actBeforePlan === 'boolean'
+            ? own.actBeforePlan
+            : value.actBeforePlan === true
+          const seenRepeat = own !== undefined && typeof own.repeatNudge === 'boolean'
+            ? own.repeatNudge
+            : value.repeatNudge === true
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
@@ -559,7 +583,9 @@ window.__ModuleLoader__.load({
           store.stepBudget = seenBudget
           store.inventory = seenMap
           store.batch = seenBatch
-          store.lazy = seenLazy
+          store.probe = seenProbe
+          store.act = seenAct
+          store.repeat = seenRepeat
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -613,7 +639,7 @@ window.__ModuleLoader__.load({
      *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
-     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, lazy?: boolean}}} [options]
+     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean}}} [options]
      * @returns {Promise<boolean>} whether the write was accepted
      */
     async function write(remote, patch, options = {}) {
@@ -637,7 +663,9 @@ window.__ModuleLoader__.load({
         if (typeof entry.stepBudget === 'number') store.stepBudget = entry.stepBudget
         if (typeof entry.map === 'boolean') store.inventory = entry.map
         if (typeof entry.batch === 'boolean') store.batch = entry.batch
-        if (typeof entry.lazy === 'boolean') store.lazy = entry.lazy
+        if (typeof entry.probeFirst === 'boolean') store.probe = entry.probeFirst
+        if (typeof entry.actBeforePlan === 'boolean') store.act = entry.actBeforePlan
+        if (typeof entry.repeatNudge === 'boolean') store.repeat = entry.repeatNudge
       }
       if (typeof shared.enabled === 'boolean') {
         store.enabled = shared.enabled
@@ -649,7 +677,9 @@ window.__ModuleLoader__.load({
       if (typeof shared.stepBudget === 'number') store.stepBudget = shared.stepBudget
       if (typeof shared.workspaceMap === 'boolean') store.inventory = shared.workspaceMap
       if (typeof shared.openBatch === 'boolean') store.batch = shared.openBatch
-      if (typeof shared.lazy === 'boolean') store.lazy = shared.lazy
+      if (typeof shared.probeFirst === 'boolean') store.probe = shared.probeFirst
+      if (typeof shared.actBeforePlan === 'boolean') store.act = shared.actBeforePlan
+      if (typeof shared.repeatNudge === 'boolean') store.repeat = shared.repeatNudge
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -666,7 +696,9 @@ window.__ModuleLoader__.load({
         store.stepBudget = before.stepBudget
         store.inventory = before.inventory
         store.batch = before.batch
-        store.lazy = before.lazy
+        store.probe = before.probe
+        store.act = before.act
+        store.repeat = before.repeat
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -882,12 +914,23 @@ window.__ModuleLoader__.load({
         emit()
       }
 
-      /**
-       * The one switch that changes how much this conversation thinks. It can
-       * change the answer, not only its timing, so the row names that first.
-       */
-      const toggleLazy = () => {
-        void write(remote, undefined, { entry: { lazy: !store.lazy } })
+      /** Read the fact instead of reasoning about it. */
+      const toggleProbe = () => {
+        void write(remote, undefined, { entry: { probeFirst: !store.probe } })
+        store.panelOpen = false
+        emit()
+      }
+
+      /** At most one line of plan before the first tool call. */
+      const toggleAct = () => {
+        void write(remote, undefined, { entry: { actBeforePlan: !store.act } })
+        store.panelOpen = false
+        emit()
+      }
+
+      /** One evidence line when the turn repeats a call or stops learning. */
+      const toggleRepeat = () => {
+        void write(remote, undefined, { entry: { repeatNudge: !store.repeat } })
         store.panelOpen = false
         emit()
       }
@@ -926,12 +969,30 @@ window.__ModuleLoader__.load({
         ),
         row(
           'menuitemcheckbox',
-          t('panel.lazy'),
-          t(store.lazy ? 'panel.on' : 'panel.off'),
+          t('panel.probe'),
+          t(store.probe ? 'panel.on' : 'panel.off'),
           canWrite,
-          toggleLazy,
-          store.lazy,
-          t('panel.lazyTitle'),
+          toggleProbe,
+          store.probe,
+          t('panel.probeTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.act'),
+          t(store.act ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleAct,
+          store.act,
+          t('panel.actTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.repeat'),
+          t(store.repeat ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleRepeat,
+          store.repeat,
+          t('panel.repeatTitle'),
         ),
         react.createElement('div', { className: 'fm-panel__scope' }, t('panel.scope')),
       )

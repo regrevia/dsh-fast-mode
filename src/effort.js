@@ -277,15 +277,14 @@ export function resolveConfig(raw, overrides) {
       ? Math.max(0, Math.floor(number(config.finishLineSteps, 0)))
       : 0,
     /**
-     * Lazy mode: the one switch that may cut deliberation instead of only round
-     * trips. Off by default, because it changes what the model thinks about and
-     * every other switch keeps the "same depth, sooner" promise. `lazyEffort:
-     * false` keeps the ladder text and the nudge but never rewrites effort, so
-     * the two halves can be measured apart.
+     * The three deliberation switches of 1.7.0, all prompt-side and all opt-in.
+     * They replaced the 1.6.x effort step-down, which could change an answer
+     * without being measurable on this route. `probeFirst` and `actBeforePlan`
+     * cost one notice at turn entry; `repeatNudge` reads the turn's own calls.
      */
-    lazy: gear.directive && config.lazy === true,
-    lazyEffort: gear.directive && config.lazy === true && config.lazyEffort !== false,
-    lazyVariant: String(config.lazyVariant || 'v1'),
+    probeFirst: gear.directive && config.probeFirst === true,
+    actBeforePlan: gear.directive && config.actBeforePlan === true,
+    repeatNudge: gear.directive && config.repeatNudge === true,
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative

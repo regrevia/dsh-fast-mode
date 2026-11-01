@@ -73,9 +73,12 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps', 'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear', 'guidance', 'lazy', 'lazyEffort', 'lazyVariant', 'mapEntries', 'metrics', 'metricsFile',
-    'openBatch', 'outputBudget', 'outputBudgetAfterSteps', 'outputDiscipline', 'parallel', 'preferPatch', 'reassertAfterCompaction', 'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard',
-    'stepBudget', 'toolTimeoutMs', 'workspaceMap',
+    'actBeforePlan', 'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps',
+    'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear',
+    'guidance', 'mapEntries', 'metrics', 'metricsFile', 'openBatch', 'outputBudget', 'outputBudgetAfterSteps',
+    'outputDiscipline', 'parallel', 'preferPatch', 'probeFirst', 'reassertAfterCompaction', 'repeatNudge',
+    'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard', 'stepBudget', 'toolTimeoutMs',
+    'workspaceMap',
   ])
 
   // The switch, the gear and the fan-out are the form. They must be volatile:
@@ -94,7 +97,7 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   // can never paint: it would show `late` / 0 / off no matter what
   // cordis.patch.yml says. test/client.test.js runs the host's own projection to
   // pin that read.
-  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap', 'lazy']) {
+  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap', 'probeFirst', 'actBeforePlan', 'repeatNudge']) {
     assert.equal(visit(root.dict[key]).meta.volatile, true, `${key} carries a panel row, so it must be in the form`)
   }
 
@@ -102,15 +105,16 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   // shipped defaults are still the measured ones.
   const defaults = parse({})
   assert.deepEqual(
-    [defaults.outputDiscipline, defaults.stepBudget, defaults.workspaceMap, defaults.lazy, defaults.lazyEffort],
-    ['late', 0, false, false, true],
-    'the panel fields kept their shipped defaults',
+    [defaults.outputDiscipline, defaults.stepBudget, defaults.workspaceMap,
+      defaults.probeFirst, defaults.actBeforePlan, defaults.repeatNudge],
+    ['late', 0, false, false, false, false],
+    'the panel fields kept their shipped defaults, and all three new switches are off',
   )
 
   // Everything else is a composition knob, like `debugFile`: read at load and
   // deliberately out of the form. Changing it is an edit in cordis.patch.yml,
   // not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction', 'lazyEffort', 'lazyVariant']) {
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

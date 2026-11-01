@@ -14,7 +14,7 @@
  *   has an entry of its own. Only an edit in `cordis.patch.yml` changes them;
  *   the chip and the panel never write them.
  * - The `sessions` field carries every per-session choice: `{ sessionId: {
- *   enabled, gear, discipline, stepBudget, map, batch, lazy, ts } }` as a compact JSON
+ *   enabled, gear, discipline, stepBudget, map, batch, probeFirst, actBeforePlan, repeatNudge, ts } }` as a compact JSON
  *   string. It is volatile, so a write lands in the running plugin without a
  *   remount.
  *
@@ -107,7 +107,9 @@ function sanitise(input) {
     if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
     if (typeof entry.map === 'boolean') clean.map = entry.map
     if (typeof entry.batch === 'boolean') clean.batch = entry.batch
-    if (typeof entry.lazy === 'boolean') clean.lazy = entry.lazy
+    if (typeof entry.probeFirst === 'boolean') clean.probeFirst = entry.probeFirst
+    if (typeof entry.actBeforePlan === 'boolean') clean.actBeforePlan = entry.actBeforePlan
+    if (typeof entry.repeatNudge === 'boolean') clean.repeatNudge = entry.repeatNudge
     if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
     if (
       clean.enabled === undefined
@@ -116,7 +118,9 @@ function sanitise(input) {
       && clean.stepBudget === undefined
       && clean.map === undefined
       && clean.batch === undefined
-      && clean.lazy === undefined
+      && clean.probeFirst === undefined
+      && clean.actBeforePlan === undefined
+      && clean.repeatNudge === undefined
     ) continue
     out[sessionId] = clean
   }
@@ -142,7 +146,9 @@ export function choiceFor(raw, sessionId) {
   if (entry.stepBudget !== undefined) choice.stepBudget = entry.stepBudget
   if (entry.map !== undefined) choice.map = entry.map
   if (entry.batch !== undefined) choice.batch = entry.batch
-  if (entry.lazy !== undefined) choice.lazy = entry.lazy
+  if (entry.probeFirst !== undefined) choice.probeFirst = entry.probeFirst
+  if (entry.actBeforePlan !== undefined) choice.actBeforePlan = entry.actBeforePlan
+  if (entry.repeatNudge !== undefined) choice.repeatNudge = entry.repeatNudge
   return choice
 }
 
@@ -168,7 +174,9 @@ export function configOverridesFor(raw, sessionId) {
   if (choice.stepBudget !== undefined) overrides.stepBudget = choice.stepBudget
   if (choice.map !== undefined) overrides.workspaceMap = choice.map
   if (choice.batch !== undefined) overrides.openBatch = choice.batch
-  if (choice.lazy !== undefined) overrides.lazy = choice.lazy
+  if (choice.probeFirst !== undefined) overrides.probeFirst = choice.probeFirst
+  if (choice.actBeforePlan !== undefined) overrides.actBeforePlan = choice.actBeforePlan
+  if (choice.repeatNudge !== undefined) overrides.repeatNudge = choice.repeatNudge
   return Object.keys(overrides).length === 0 ? undefined : overrides
 }
 
@@ -220,12 +228,14 @@ export function writeChoice(raw, sessionId, choice, now) {
   if (Number.isFinite(choice.stepBudget) && choice.stepBudget >= 0) next.stepBudget = Math.floor(Number(choice.stepBudget))
   if (typeof choice.map === 'boolean') next.map = choice.map
   if (typeof choice.batch === 'boolean') next.batch = choice.batch
-  if (typeof choice.lazy === 'boolean') next.lazy = choice.lazy
+  if (typeof choice.probeFirst === 'boolean') next.probeFirst = choice.probeFirst
+  if (typeof choice.actBeforePlan === 'boolean') next.actBeforePlan = choice.actBeforePlan
+  if (typeof choice.repeatNudge === 'boolean') next.repeatNudge = choice.repeatNudge
   map[sessionId] = next
   return { sessions: encodeChoices(map), map }
 }
 
-/** @typedef {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, lazy?: boolean, ts?: number}} SessionEntry */
+/** @typedef {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean, ts?: number}} SessionEntry */
 
 /**
  * Serialise the map, dropping the oldest entries beyond {@link SESSIONS_LIMIT}.

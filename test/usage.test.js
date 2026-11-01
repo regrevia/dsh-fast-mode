@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { findUsage, readOutputTokens, readUsage } from '../src/usage.js'
+import { findUsage, readOutputTokens, readReasoningChars, readUsage } from '../src/usage.js'
 
 test('the harness spelling is read as is', () => {
   const tokens = readUsage({
@@ -84,4 +84,15 @@ test('a gateway that reports nothing does not look like a zero-output step', () 
   // contract so a later reader does not invent a sentinel.
   assert.equal(readOutputTokens({ usage: {} }), 0)
   assert.equal(readOutputTokens({ usage: { output_tokens: 0 } }), 0)
+})
+
+test('reasoning characters are summed over reasoning blocks only', () => {
+  assert.equal(readReasoningChars({ message: { content: [
+    { type: 'reasoning', text: 'abc' }, { type: 'text', text: 'ignored' }, { type: 'reasoning', text: 'de' },
+  ] } }), 5)
+  assert.equal(readReasoningChars({ content: [{ type: 'reasoning', text: 'xy' }] }), 2, 'message given directly')
+  assert.equal(readReasoningChars({ message: { content: [{ type: 'text', text: 'abc' }] } }), 0)
+  assert.equal(readReasoningChars({ message: {} }), 0)
+  assert.equal(readReasoningChars({}), 0)
+  assert.equal(readReasoningChars(undefined), 0)
 })
