@@ -18,6 +18,9 @@
 
 `… [fast-mode: elided 61044 chars, lines 41–812; kept 2 matching lines 121:FAIL src/a.test.js: expected 1 got 2 | 400:error: 3 tests failed] …`
 
+1.7.8 没有单独发布：修完 Windows 上审计工具找 `/bin/sh` 的问题后直接发了 1.7.9，npm 上不存在
+`1.7.8` 这个版本。
+
 匹配的是 error / failed / fatal / panic / exception / traceback / denied / refused / timeout / cannot / unable / not found 这些词，以及 `✖`/`✗`/`FAIL`/`ERR!` 开头的行，默认最多 12 条、总量不超过压缩预算的四分之一，行号在行首，模型可以直接按行回读。非 shell 工具（read、grep）行为完全不变，开关仍默认关闭；`kind` 多了一个 `shell`。
 
 ## 1.7.7（闪电换到并排槽位 + 页脚读数修好）
