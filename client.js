@@ -114,6 +114,8 @@ window.__ModuleLoader__.load({
       'panel.map': '开局附文件清单',
       'panel.mapTitle': '开局附上文件清单，省掉先翻目录',
       'panel.batch': '批量读文件',
+      'panel.compact': '截短工具输出',
+      'panel.compactTitle': '只留头尾和报错行，长输出不再整段进上下文',
       'panel.batchTitle': '互不依赖的读取合成一次发出',
       'panel.probe': '不确定先查证',
       'panel.probeTitle': '拿不准就读一次，省的是猜错后的重来',
@@ -154,6 +156,8 @@ window.__ModuleLoader__.load({
       'panel.map': 'File inventory',
       'panel.mapTitle': 'Lists the folder up front; skips the lookup',
       'panel.batch': 'Batched reads',
+      'panel.compact': 'Trim tool output',
+      'panel.compactTitle': 'Keeps head, tail and matching error lines instead of the whole output',
       'panel.batchTitle': 'Sends independent reads as one batch',
       'panel.probe': 'Verify before guessing',
       'panel.probeTitle': 'Reads the fact once; a guess costs a retry',
@@ -248,6 +252,8 @@ window.__ModuleLoader__.load({
       inventory: false,
       /** Batches independent reads into one call for this conversation. */
       batch: false,
+      /** Trims long tool output for this conversation, keeping matching error lines. */
+      compact: false,
       /**
        * The three deliberation switches: read the missing fact, one line of plan,
        * one evidence line when the turn stops learning. All off unless this
@@ -518,6 +524,7 @@ window.__ModuleLoader__.load({
         if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
         if (typeof entry.map === 'boolean') clean.map = entry.map
         if (typeof entry.batch === 'boolean') clean.batch = entry.batch
+        if (typeof entry.compactResults === 'boolean') clean.compactResults = entry.compactResults
         if (typeof entry.probeFirst === 'boolean') clean.probeFirst = entry.probeFirst
         if (typeof entry.actBeforePlan === 'boolean') clean.actBeforePlan = entry.actBeforePlan
         if (typeof entry.repeatNudge === 'boolean') clean.repeatNudge = entry.repeatNudge
@@ -529,6 +536,7 @@ window.__ModuleLoader__.load({
           && clean.stepBudget === undefined
           && clean.map === undefined
           && clean.batch === undefined
+          && clean.compactResults === undefined
           && clean.probeFirst === undefined
           && clean.actBeforePlan === undefined
           && clean.repeatNudge === undefined
@@ -580,7 +588,7 @@ window.__ModuleLoader__.load({
      *
      * @param {Record<string, any>} map
      * @param {string|undefined} sessionId
-     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean}} patch
+     * @param {{enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, compactResults?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean}} patch
      */
     function withOwn(map, sessionId, patch) {
       const next = { ...map }
@@ -594,6 +602,7 @@ window.__ModuleLoader__.load({
       if (Number.isFinite(patch.stepBudget) && patch.stepBudget >= 0) entry.stepBudget = Math.floor(Number(patch.stepBudget))
       if (typeof patch.map === 'boolean') entry.map = patch.map
       if (typeof patch.batch === 'boolean') entry.batch = patch.batch
+      if (typeof patch.compactResults === 'boolean') entry.compactResults = patch.compactResults
       if (typeof patch.probeFirst === 'boolean') entry.probeFirst = patch.probeFirst
       if (typeof patch.actBeforePlan === 'boolean') entry.actBeforePlan = patch.actBeforePlan
       if (typeof patch.repeatNudge === 'boolean') entry.repeatNudge = patch.repeatNudge
@@ -743,6 +752,9 @@ window.__ModuleLoader__.load({
           const seenBatch = own !== undefined && typeof own.batch === 'boolean'
             ? own.batch
             : value.openBatch === true
+          const seenCompact = own !== undefined && typeof own.compactResults === 'boolean'
+            ? own.compactResults
+            : value.compactResults === true
           const seenProbe = own !== undefined && typeof own.probeFirst === 'boolean'
             ? own.probeFirst
             : value.probeFirst === true
@@ -762,6 +774,7 @@ window.__ModuleLoader__.load({
           store.stepBudget = seenBudget
           store.inventory = seenMap
           store.batch = seenBatch
+          store.compact = seenCompact
           store.probe = seenProbe
           store.act = seenAct
           store.repeat = seenRepeat
@@ -842,6 +855,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.stepBudget === 'number') store.stepBudget = entry.stepBudget
         if (typeof entry.map === 'boolean') store.inventory = entry.map
         if (typeof entry.batch === 'boolean') store.batch = entry.batch
+        if (typeof entry.compactResults === 'boolean') store.compact = entry.compactResults
         if (typeof entry.probeFirst === 'boolean') store.probe = entry.probeFirst
         if (typeof entry.actBeforePlan === 'boolean') store.act = entry.actBeforePlan
         if (typeof entry.repeatNudge === 'boolean') store.repeat = entry.repeatNudge
@@ -856,6 +870,7 @@ window.__ModuleLoader__.load({
       if (typeof shared.stepBudget === 'number') store.stepBudget = shared.stepBudget
       if (typeof shared.workspaceMap === 'boolean') store.inventory = shared.workspaceMap
       if (typeof shared.openBatch === 'boolean') store.batch = shared.openBatch
+      if (typeof shared.compactResults === 'boolean') store.compact = shared.compactResults
       if (typeof shared.probeFirst === 'boolean') store.probe = shared.probeFirst
       if (typeof shared.actBeforePlan === 'boolean') store.act = shared.actBeforePlan
       if (typeof shared.repeatNudge === 'boolean') store.repeat = shared.repeatNudge
@@ -875,6 +890,7 @@ window.__ModuleLoader__.load({
         store.stepBudget = before.stepBudget
         store.inventory = before.inventory
         store.batch = before.batch
+        store.compact = before.compact
         store.probe = before.probe
         store.act = before.act
         store.repeat = before.repeat
@@ -1155,6 +1171,13 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /** Trim long tool output, keeping the error lines. */
+      const toggleCompact = () => {
+        void write(remote, undefined, { entry: { compactResults: !store.compact } })
+        store.panelOpen = false
+        emit()
+      }
+
       /** Read the fact instead of reasoning about it. */
       const toggleProbe = () => {
         void write(remote, undefined, { entry: { probeFirst: !store.probe } })
@@ -1210,6 +1233,15 @@ window.__ModuleLoader__.load({
           toggleBatch,
           store.batch,
           t('panel.batchTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.compact'),
+          t(store.compact ? 'panel.on' : 'panel.off'),
+          canWrite,
+          toggleCompact,
+          store.compact,
+          t('panel.compactTitle'),
         ),
         row(
           'menuitemcheckbox',

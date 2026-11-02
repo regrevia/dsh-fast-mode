@@ -36,7 +36,7 @@
  * model selector, or from a composition patch — both write the same `enabled`
  * field, because the chip is this package's client half (`dsh.client` in
  * package.json) reading and writing through the `settings` service. The switch
- * is per conversation; the panel has one switch and no gear picker, because
+ * is per conversation; the panel's rows write the conversation's own entry, because
  * `auto` is the only behaviour left to choose.
  *
  * When it is off, nothing about a turn changes: the guidance section renders to
@@ -114,7 +114,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.11'
+export const VERSION = '1.7.12'
 const GLOBAL_AGENT = '__global__'
 
 /**

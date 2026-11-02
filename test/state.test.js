@@ -22,6 +22,7 @@ import {
   resolveChoice,
   writeChoice,
 } from '../src/state.js'
+import { resolveConfig } from '../src/effort.js'
 
 const SOURCE = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
@@ -143,6 +144,17 @@ test('the compact column is spelled as config fields for the policy', () => {
   assert.equal(configOverridesFor(column, 'session-b'), undefined, 'no entry means inherit')
   assert.equal(configOverridesFor(column, undefined), undefined)
   assert.equal(configOverridesFor(JSON.stringify({ 'x': { ts: 1 } }), 'x'), undefined, 'a timestamp is not a choice')
+})
+
+test('the output-compaction switch a panel click writes reaches the policy', () => {
+  const column = JSON.stringify({ 'session-a': { enabled: true, compactResults: true } })
+  assert.deepEqual(
+    configOverridesFor(column, 'session-a'),
+    { enabled: true, compactResults: true },
+    'the field keeps its config spelling all the way down',
+  )
+  assert.equal(resolveConfig(configOverridesFor(column, 'session-a')).compactResults, true)
+  assert.equal(resolveConfig(configOverridesFor(column, 'session-b')).compactResults, false, 'another conversation stays off')
 })
 
 test('the effective pair falls back field by field, and says whether it was scoped', () => {

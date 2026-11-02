@@ -107,6 +107,7 @@ function sanitise(input) {
     if (Number.isFinite(entry.stepBudget) && entry.stepBudget >= 0) clean.stepBudget = Math.floor(Number(entry.stepBudget))
     if (typeof entry.map === 'boolean') clean.map = entry.map
     if (typeof entry.batch === 'boolean') clean.batch = entry.batch
+    if (typeof entry.compactResults === 'boolean') clean.compactResults = entry.compactResults
     if (typeof entry.probeFirst === 'boolean') clean.probeFirst = entry.probeFirst
     if (typeof entry.actBeforePlan === 'boolean') clean.actBeforePlan = entry.actBeforePlan
     if (typeof entry.repeatNudge === 'boolean') clean.repeatNudge = entry.repeatNudge
@@ -118,6 +119,7 @@ function sanitise(input) {
       && clean.stepBudget === undefined
       && clean.map === undefined
       && clean.batch === undefined
+      && clean.compactResults === undefined
       && clean.probeFirst === undefined
       && clean.actBeforePlan === undefined
       && clean.repeatNudge === undefined
@@ -146,6 +148,7 @@ export function choiceFor(raw, sessionId) {
   if (entry.stepBudget !== undefined) choice.stepBudget = entry.stepBudget
   if (entry.map !== undefined) choice.map = entry.map
   if (entry.batch !== undefined) choice.batch = entry.batch
+  if (entry.compactResults !== undefined) choice.compactResults = entry.compactResults
   if (entry.probeFirst !== undefined) choice.probeFirst = entry.probeFirst
   if (entry.actBeforePlan !== undefined) choice.actBeforePlan = entry.actBeforePlan
   if (entry.repeatNudge !== undefined) choice.repeatNudge = entry.repeatNudge
@@ -174,6 +177,7 @@ export function configOverridesFor(raw, sessionId) {
   if (choice.stepBudget !== undefined) overrides.stepBudget = choice.stepBudget
   if (choice.map !== undefined) overrides.workspaceMap = choice.map
   if (choice.batch !== undefined) overrides.openBatch = choice.batch
+  if (choice.compactResults !== undefined) overrides.compactResults = choice.compactResults
   if (choice.probeFirst !== undefined) overrides.probeFirst = choice.probeFirst
   if (choice.actBeforePlan !== undefined) overrides.actBeforePlan = choice.actBeforePlan
   if (choice.repeatNudge !== undefined) overrides.repeatNudge = choice.repeatNudge

@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.7.7** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行（只数设置项；闪电本身就是开关，不占行），七行都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒；1.7.5 在标题行右侧加了三档并行宽度，行数仍为七行；1.7.6 让省略标记同时报出字符数与缺失的行区间；1.7.7 把闪电挪到模型选择器旁的 list 槽，并修正页脚计数的读取通道），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.7.12** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行、1.7.12 起为八行（只数设置项；闪电本身就是开关，不占行），这些都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒；1.7.5 在标题行右侧加了三档并行宽度，行数仍为七行；1.7.6 让省略标记同时报出字符数与缺失的行区间；1.7.7 把闪电挪到模型选择器旁的 list 槽并修正页脚计数的读取通道，1.7.12 把「截短工具输出」做成第八个面板开关），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **默认契约：Fast 模式不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort`、路由名记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -11,7 +11,7 @@
 ## 交互细节：闪电开关与会话归属
 
 - **左键是开关，右键是面板。** 会话输入区右侧的控制槽（`conversation.input.right`，list 槽，按 `id`/`order` 与别的控件并排）里有一个闪电按钮：关闭时空心，开启时实心。左键切换开关，再点一下切回；这一下只写当前会话。没用单值槽（`conversation.input.activity`）是因为它只渲染第一个注册者，会和计划按钮、语音麦克风互相顶掉。
-- **面板在右键里。** 右键闪电打开面板，标题是「更快」，标题行右侧是三档（保守 / 标准 / 激进），下面 7 行，7 行都只影响当前会话："精简输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"开局附文件清单"（`workspaceMap`）、"批量读文件"（`openBatch`）、"不确定先查证"（`probeFirst`）、"先执行后解释"（`actBeforePlan`）、"重复时换方法"（`repeatNudge`）。7 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准就读一次，省的是猜错后的重来」、`actBeforePlan`「最多一行计划，想清楚就直接做」、`repeatNudge`「同一调用重发、或连续三步结果一样时提醒换法」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **面板在右键里。** 右键闪电打开面板，标题是「更快」，标题行右侧是三档（保守 / 标准 / 激进），下面 8 行，8 行都只影响当前会话："精简输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"开局附文件清单"（`workspaceMap`）、"批量读文件"（`openBatch`）、"截短工具输出"（`compactResults`）、"不确定先查证"（`probeFirst`）、"先执行后解释"（`actBeforePlan`）、"重复时换方法"（`repeatNudge`）。8 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准就读一次，省的是猜错后的重来」、`actBeforePlan`「最多一行计划，想清楚就直接做」、`repeatNudge`「同一调用重发、或连续三步结果一样时提醒换法」、`compactResults`「只留头尾和报错行，长输出不再整段进上下文」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`compactResults`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
 - **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap`、`openBatch`、`probeFirst`、`actBeforePlan`、`repeatNudge` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 精简输出`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
 - **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 点击关闭 · 右键设置"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
@@ -142,7 +142,7 @@
 
 三条都只在提示侧：一个字都不写进请求，也不改调用。它们改变的是模型这一轮怎么开始（先读还是先想、先做还是先解释），以及在明显原地打转时被告知事实；面板逐会话打开，配置默认 `false`。
 
-1.7.1 之后 `actBeforePlan` 一个开关带两个同方向的行为：回合开始的计划压缩，以及回合中途的思考长度提醒（见本节末尾）。面板仍七行，没有为它新增配置键。
+1.7.1 之后 `actBeforePlan` 一个开关带两个同方向的行为：回合开始的计划压缩，以及回合中途的思考长度提醒（见本节末尾）。面板的行数随后只在 1.7.12 因压缩开关从七行变八行；`actBeforePlan` 本身没有新增配置键。
 
 **共用一条消息。** `probeFirst` 与 `actBeforePlan` 在本轮第一步合并成一条 notice，两个都关时不发；两个都开也只有一条消息、一句共同 GUARD（`src/deliberation.js` 的 `GUARD`）：`None of this cuts validation at trust boundaries, data-loss handling, security, or accessibility.`
 
@@ -195,7 +195,7 @@
 | `repeatNudge` | `false` | 逐会话提示开关：只在有证据时发一条轮中证据行——同一个调用（工具名 + 稳定参数）本轮已运行 ≥ 2 次，或连续 3 次结果内容相同；句子给出实际次数，每轮最多 2 次，同一证据只提醒一次，错误结果不算循环并重置连击。实现 `src/deliberation.js`，不写请求字段。1.7.0 起进面板（「重复时换方法」）。 |
 | `shapeGate` | `false` | 形状闸门：本轮累计调用 ≥ 4 且其中写入类（不在只读名单里的工具）占比 ≥ 60 % 时，**整轮不再注入任何提醒**，行为退回原生。判断只用已有的工具名，不发请求、不加请求体字段。它给的是「不适合就别管我」的退路：写密集型的任务没有可并行的调用，每条提醒都只是一次它用不上的往返。显式设了 `stepBudget` 时该收尾线优先于闸门——「别加速」不等于「无视我叫停」。默认关，因为它会同时关掉本可以救回长尾的收尾提醒。 |
 | `preferPatch` | `false` | 整文件写入之后提醒一次「改已有文件时只发改动的行（edit hunk），不要重发整个文件」。本步 `write` 的正文 ≥ 2000 字符才武装，之后一步发一次，每轮最多一次；文本明确要求结果与原文件逐字节相同，不限制写什么、也不影响何时结束。默认关闭：它只作用于模型的输出形式（工具调用参数），正确性由文件内容决定、与发送形式无关；实测是否真省墙钟见 `BENCHMARK.md` 的 `pp16` 臂。 |
-| `compactResults` | `false` | 工具结果截断：结果正文超过 `compactMaxChars` 时只留头尾两段并写明省略了多少字符与行区间（`… [fast-mode: elided 4210 chars, lines 88–412] …`）；shell 类输出还会把被省略区间里的报错行连同行号带进同一条标记（`; kept 2 matching lines 121:FAIL …`），默认最多 12 条。只改模型看到的文本，不改工具、不改文件、不改请求；错误结果与已含该标记的结果原样通过。默认关——它会改变模型所见，不能静默开启。实现 `src/compact.js`，开关在设置页。 |
+| `compactResults` | `false` | 工具结果截断：结果正文超过 `compactMaxChars` 时只留头尾两段并写明省略了多少字符与行区间（`… [fast-mode: elided 4210 chars, lines 88–412] …`）；shell 类输出还会把被省略区间里的报错行连同行号带进同一条标记（`; kept 2 matching lines 121:FAIL …`），默认最多 12 条。只改模型看到的文本，不改工具、不改文件、不改请求；错误结果与已含该标记的结果原样通过。默认关——它会改变模型所见，不能静默开启。实现 `src/compact.js`；配置里默认关，1.7.12 起面板也有逐会话的「截短工具输出」，两边写的是同一个键。 |
 | `compactMaxChars` | `8000` | `compactResults` 的阈值，200–200000。低于阈值的结果一字不改。 |
 | `readCache` | `false` | 读取缓存：同一文件在 `mtime`/大小/inode 三项都没变时，第二次整文件 `read` 直接返回上次结果的原文，省掉一次磁盘读与一次结果传输；带 `offset`/`limit` 的切片读、错误结果、超过 200000 字符的文件都不缓存也不命中。默认关，命中与未命中的文本逐字节相同。实现 `src/readcache.js`。 |
 | `compactRereadHint` | false | 压缩提醒里多一句「本回合写过的文件不要为确认整份重读」；不新增消息。实验旋钮，默认关 |
@@ -402,7 +402,7 @@ dsh-fast-mode-experiment stop         # 结束实验
 - `src/metrics.js`：JSONL 计量与汇总；
 - `src/benchmark.js`：按会话哈希分配；
 - `src/peers.js`：冲突插件探测；
-- `client.js`：闪电开关、右键面板（七行，按会话写入 `sessions` 列）。
+- `client.js`：闪电开关、右键面板（八行，按会话写入 `sessions` 列）。
 
 跑测试：
 
