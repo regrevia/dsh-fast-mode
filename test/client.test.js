@@ -521,6 +521,11 @@ function batchRowOf(panel) {
   return panel.children[4]
 }
 
+/** The output-compaction row: the fifth control in the panel. */
+function compactRowOf(panel) {
+  return panel.children[5]
+}
+
 test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote)
@@ -651,6 +656,44 @@ test('the batch row paints the host value, including a shared default', async ()
   const second = await mount(own, 'session-alpha')
   await rightClick(second.render)
   assert.equal(batchRowOf(panelOf(second.render())).props['aria-checked'], false, 'the conversation entry outranks it')
+})
+
+test('the compaction switch is off by default and rides the per-conversation column', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote, 'session-alpha')
+
+  await rightClick(render)
+  const row = compactRowOf(panelOf(render()))
+  assert.equal(row.props.disabled, false, 'the compaction row is live')
+  assert.equal(row.props['aria-checked'], false, 'off is the shipped default: it changes what the model reads')
+  assert.equal(row.children[1].children[0], 'panel.off')
+
+  await row.props.onClick()
+  await sleep(40)
+  const call = remote.calls[remote.calls.length - 1]
+  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'compaction is a per-conversation choice')
+  assert.equal(columnOf(call)['session-alpha'].compactResults, true)
+  assert.equal('compactResults' in call.patch, false, 'the shared default never moved')
+  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
+
+  await rightClick(render)
+  assert.equal(compactRowOf(panelOf(render())).props['aria-checked'], true, 'the panel paints the host value')
+  await compactRowOf(panelOf(render())).props.onClick()
+  await sleep(40)
+  assert.equal(columnOf(remote.calls[remote.calls.length - 1])['session-alpha'].compactResults, false, 'toggle back off')
+  assert.equal(remote.state.value.compactResults, undefined, 'the shared default never moved')
+})
+
+test('the compaction row shows a shared default and lets the conversation outrank it', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto', compactResults: true })
+  const { render } = await mount(remote, 'session-alpha')
+  await rightClick(render)
+  assert.equal(compactRowOf(panelOf(render())).props['aria-checked'], true, 'the shared field shows through')
+
+  const own = fakeRemote({ enabled: true, gear: 'auto', compactResults: true, sessions: JSON.stringify({ 'session-alpha': { compactResults: false, ts: 1 } }) })
+  const second = await mount(own, 'session-alpha')
+  await rightClick(second.render)
+  assert.equal(compactRowOf(panelOf(second.render())).props['aria-checked'], false, 'the conversation entry outranks it')
 })
 
 /* ------------------------------------------ the shipped Settings, transcribed
