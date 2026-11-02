@@ -32,7 +32,7 @@ const { text, changed, originalChars, compactedChars, kind } =
 规则：
 
 - **只压缩成功且超长的结果。** `isError: true` 的结果永不压缩——错误信息往往整段都关键。
-- **头尾保留，中间一行标记。** 保留头 `headRatio` + 尾 `tailRatio`，中间替换为 `… [fast-mode: elided N chars] …`。切点在换行处；没有换行时退到字符边界。
+- **头尾保留，中间一行标记。** 保留头 `headRatio` + 尾 `tailRatio`，中间替换为 `… [fast-mode: elided N chars, lines A–B] …`——行区间就是被省略的那一段，模型可以直接按行范围回读，不用整份重读；单行正文没有行号，标记里只给字符数。切点在换行处；没有换行时退到字符边界。
 - **多字节不切坏。** 中文等 BMP 字符不会被拆开；emoji 这类代理对（surrogate pair）会先退到配对边界，输出里不会出现孤立代理项，UTF-8 往返一致。
 - **grep 折叠。** 工具名含 `grep`，或正文形如 `path:line:` 时：同一文件超过 `maxPerFile` 条只留前几条，加一行 `… [fast-mode: M more matches in <file>] …`；折叠后总命中超过 `maxMatches` 再加一行 `… [fast-mode: K more matches elided] …`。
 - **read 类只做头尾。** 名字含 `read`/`view`/`open` 时不做 grep 折叠，避免把正文里的 `xx:12:` 误当命中。

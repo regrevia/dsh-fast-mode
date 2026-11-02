@@ -4,7 +4,7 @@ import test from 'node:test'
 import { compactResult } from '../src/compact.js'
 
 const ON = { enabled: true }
-const ELIDE = /^([\s\S]*?)… \[fast-mode: elided (\d+) chars\] …([\s\S]*)$/
+const ELIDE = /^([\s\S]*?)… \[fast-mode: elided (\d+) chars(?:, lines (\d+)–(\d+))?\] …([\s\S]*)$/
 const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
 const lines = (n, body = (i) => `line ${i} ${'x'.repeat(40)}`) =>
@@ -53,10 +53,16 @@ test('head and tail survive, the middle is replaced by one marker', () => {
 
   const m = ELIDE.exec(out.text)
   assert.ok(m, 'marker line present')
-  const [, head, elided, tail] = m
+  const [, head, elided, firstLine, lastLine, tail] = m
   assert.ok(text.startsWith(head), 'head is a prefix of the original')
   assert.ok(text.endsWith(tail), 'tail is a suffix of the original')
   assert.equal(head.length + tail.length + Number(elided), text.length)
+  const elidedBody = text.slice(head.length, text.length - tail.length)
+  assert.deepEqual(
+    text.split('\n').slice(Number(firstLine) - 1, Number(lastLine)),
+    elidedBody.split('\n').slice(0, -1),
+    'the line range names exactly the elided band',
+  )
   assert.ok(head.endsWith('\n'), 'head cuts on a line boundary')
   assert.ok(tail.startsWith('\n') || tail.startsWith('line'), 'tail starts on a line boundary')
 })
@@ -67,7 +73,7 @@ test('headRatio and tailRatio are honoured', () => {
     { name: 'bash', text },
     { ...ON, maxChars: 2000, headRatio: 0.6, tailRatio: 0.1 },
   )
-  const [, head, , tail] = ELIDE.exec(out.text)
+  const [, head, , , , tail] = ELIDE.exec(out.text)
   assert.ok(head.length > tail.length * 3, `head ${head.length} vs tail ${tail.length}`)
 })
 
@@ -87,7 +93,7 @@ test('chinese text is cut without producing broken characters', () => {
   assert.ok(out.text.length < text.length)
   assert.equal(LONE.test(out.text), false)
   assert.equal(Buffer.from(out.text, 'utf8').toString('utf8'), out.text)
-  const [, head, , tail] = ELIDE.exec(out.text)
+  const [, head, , , , tail] = ELIDE.exec(out.text)
   for (const ch of head + tail) {
     assert.ok(ch === '\n' || '中文测试行：结果稳定'.includes(ch), `unexpected char ${JSON.stringify(ch)}`)
   }

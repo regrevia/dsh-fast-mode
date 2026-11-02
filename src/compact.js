@@ -101,10 +101,25 @@ function headTail(text, maxChars, headRatio, tailRatio) {
   const elided = tailStart - headEnd
   if (headEnd <= 0 || tailStart <= headEnd || elided <= 0) return null
 
+  // Which lines went missing, so a model can re-read exactly that band instead
+  // of guessing or re-reading the whole result. Single-line text has no range.
+  const newlinesBefore = countNewlines(text, tailStart)
+  const firstElidedLine = countNewlines(text, headEnd) + 1
+  const range = newlinesBefore > 0 ? `, lines ${firstElidedLine}–${newlinesBefore}` : ''
   return {
-    text: `${text.slice(0, headEnd)}… [fast-mode: elided ${elided} chars] …${text.slice(tailStart)}`,
+    text: `${text.slice(0, headEnd)}… [fast-mode: elided ${elided} chars${range}] …${text.slice(tailStart)}`,
     elided,
   }
+}
+
+/**
+ * Newlines in `text` before `end`, i.e. the 1-based number of the last complete
+ * line that starts before `end`.
+ */
+function countNewlines(text, end) {
+  let count = 0
+  for (let i = 0; i < end; i += 1) if (text.charCodeAt(i) === 10) count += 1
+  return count
 }
 
 function isGrepLike(name, text) {
