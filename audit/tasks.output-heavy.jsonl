@@ -1,0 +1,3 @@
+# 输出很大但结论只在最后一行：压缩之后必须还能读到那行 FAIL。
+# 用法：node audit/run.mjs --tasks audit/tasks.output-heavy.jsonl --on-config compactResults=true --on-config compactMaxChars=2000
+{"id": "noisy-fail", "prompt": "跑 node audit/fixtures/noisy-fail.mjs，然后告诉我它的输出里唯一的 FAIL 行整行内容是什么、它说的是哪个文件、期望值是多少。不要读源码文件。", "check": "test -f audit/fixtures/noisy-fail.mjs"}

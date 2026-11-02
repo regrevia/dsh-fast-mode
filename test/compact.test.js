@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import test from 'node:test'
 
 import { compactResult } from '../src/compact.js'
@@ -218,4 +219,20 @@ test('a read result never gets the shell treatment', () => {
   const out = compactResult({ name: 'read', text: lines(500, body) }, { ...ON, maxChars: 4000 })
   assert.equal(out.kind, 'read')
   assert.equal(out.text.includes('kept'), false)
+})
+
+test('真实的失败输出被压缩后，那一行 FAIL 还在', () => {
+  let output = ''
+  try {
+    output = execFileSync(process.execPath, ['audit/fixtures/noisy-fail.mjs'], { encoding: 'utf8' })
+  } catch (err) {
+    output = err.stdout
+  }
+  const out = compactResult({ name: 'bash', text: output }, { enabled: true, maxChars: 2000 })
+  assert.equal(out.changed, true)
+  const text = out.text
+  // 失败行在正文中间，只有"把关键行带到 marker 里"这条路径能保住它。
+  assert.match(text, /kept 1 matching line 2000:FAIL src\/renameme\.test\.js: expected 1 got 2\]/)
+  assert.match(text, /… \[fast-mode: elided \d+ chars/)
+  assert.ok(text.length < output.length / 4, '压缩后不到原文的四分之一')
 })
