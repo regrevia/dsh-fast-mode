@@ -1,7 +1,7 @@
 {
   "name": "dsh-fast-mode",
-  "version": "1.7.3",
-  "description": "DeepSeek Harness fast mode: fewer round trips at the same thinking effort. Adaptive parallel tool fan-out, output discipline that never trims the answer, a cancellable stall guard, and three off-by-default switches that trim wasted deliberation (read the fact you are unsure of, act after one line of plan, stop when the evidence stops arriving). It never changes reasoning effort, the model, or the request body. Provider-agnostic, one dependency (@deepseek-ai/schemastery).",
+  "version": "1.7.4",
+  "description": "DeepSeek Harness’s own fast mode: the same model, half the output, up to twice as fast. Switches combine freely and stay prompt-side — never changes the model, reasoning effort, or the request body. Best measured 0.505x wall clock, −42% output tokens, 438/438 checks green; a few task shapes are slower, see BENCHMARK.md.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/regrevia/dsh-fast-mode.git"

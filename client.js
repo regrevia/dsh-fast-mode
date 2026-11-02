@@ -92,7 +92,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
       'panel.prose': '精简输出',
-      'panel.proseTitle': '少写解释与铺垫，直接给结论',
+      'panel.proseTitle': '少写过程，直接给结论',
       'panel.on': '开',
       'panel.off': '关',
       'panel.budget': '步数上限',
@@ -101,15 +101,15 @@ window.__ModuleLoader__.load({
       'panel.scope': '只影响本会话',
       'panel.budgetTitle': '到上限先汇报，不截断任务',
       'panel.map': '开局附文件清单',
-      'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
+      'panel.mapTitle': '开局附上文件清单，省掉先翻目录',
       'panel.batch': '批量读文件',
-      'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
+      'panel.batchTitle': '互不依赖的读取合成一次发出',
       'panel.probe': '不确定先查证',
-      'panel.probeTitle': '拿不准的事实读一次，别用推理猜',
+      'panel.probeTitle': '拿不准就读一次，省的是猜错后的重来',
       'panel.act': '先执行后解释',
-      'panel.actTitle': '最多一行计划，动作清楚就直接做',
+      'panel.actTitle': '最多一行计划，想清楚就直接做',
       'panel.repeat': '重复时换方法',
-      'panel.repeatTitle': '重跑同一个调用或连续无新信息时提醒',
+      'panel.repeatTitle': '同一调用重发、或连续三步结果一样时提醒换法',
     }
 
     const en = {
@@ -123,7 +123,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.prose': 'Concise output',
-      'panel.proseTitle': 'Drops explanations and setup; states the result',
+      'panel.proseTitle': 'States the result; skips the narration',
       'panel.on': 'On',
       'panel.off': 'Off',
       'panel.budget': 'Step cap',
@@ -132,15 +132,15 @@ window.__ModuleLoader__.load({
       'panel.scope': 'This conversation only',
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
       'panel.map': 'File inventory',
-      'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
+      'panel.mapTitle': 'Lists the folder up front; skips the lookup',
       'panel.batch': 'Batched reads',
-      'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
+      'panel.batchTitle': 'Sends independent reads as one batch',
       'panel.probe': 'Verify before guessing',
-      'panel.probeTitle': 'Look up the fact you are unsure of once; a guess costs more; safety checks stay',
+      'panel.probeTitle': 'Reads the fact once; a guess costs a retry',
       'panel.act': 'Act before explaining',
-      'panel.actTitle': 'At most one line of plan before the first call; act when the next step is clear',
+      'panel.actTitle': 'One line of plan, then act',
       'panel.repeat': 'Nudge on repeats',
-      'panel.repeatTitle': 'One line when a call runs again or several steps bring nothing new; safety checks stay',
+      'panel.repeatTitle': 'When a call repeats or three results match, switch approach',
     }
 
     const CSS = [
@@ -867,8 +867,8 @@ window.__ModuleLoader__.load({
       /**
        * One row: label on the left, current value on the right, and the
        * consequence of the setting on hover. A four-character label cannot say
-       * what "精简输出" costs, and the settings rows use a title for the
-       * same reason.
+       * what "不确定先查证" costs — the extra read, not a free win — so the
+       * hover carries it, in one clause each.
        *
        * Props are assigned one by one because a dense key/value literal reads as
        * a status dump to the copy linter, and this is a control, not a dump.

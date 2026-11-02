@@ -8,8 +8,9 @@
 <h1 align="center">dsh-fast-mode</h1>
 
 <p align="center">
-  <b>The same model, half the time.</b><br>
-  No model swap, no lower reasoning effort, no request field written — it changes <i>how</i> the work runs, and cuts the detours.
+  <b>DeepSeek Harness's own fast mode: the same model, half the output, up to twice as fast.</b><br>
+  Several switches you combine freely, all prompt-side: no model swap, no lower reasoning effort, no request field written.<br>
+  Best measured: <b>0.505x</b> wall clock, output tokens <b>−42%</b>, <b>438/438</b> checks green — <a href="BENCHMARK.md">benchmark and repro</a>.
 </p>
 
 <p align="center">
@@ -53,9 +54,9 @@ All seven are prompt-side: no request parameter, no model change, no change to c
 | **Step cap** | A hard cap; at the limit it reports status instead of truncating the task | No cap |
 | **File inventory** | Hands the model a directory listing up front, skipping the opening `ls`/`find` | Off |
 | **Batched reads** | Independent reads go out as one batch, fewer round trips | Off |
-| **Verify before guessing** | Read the uncertain fact once instead of reasoning about it — a wrong guess costs a retry | Off |
+| **Verify before guessing** | Read the uncertain fact once; not pure speed — it saves the retry a wrong guess costs | Off |
 | **Act before explaining** | At most one line of plan; past 4000 characters of reasoning, a nudge to act on evidence | Off |
-| **Nudge on repeats** | A call runs again, or results repeat: a line saying to change the approach | Off |
+| **Nudge on repeats** | The same call again, or three identical results: one line saying to change the approach | Off |
 
 The last five arrived in 1.7.0 and ship **off**; the reasons are under Limits below.
 
@@ -76,7 +77,7 @@ On the shipped build: steps 13.2 → 6.7, wall clock 464.9 s → 173.1 s. In eve
 
 A step costs roughly round-trip overhead × steps + decode time × output tokens + tool wait. The model is not in that equation, so this only moves programmatic quantities: fewer round trips, fewer re-reads, fewer repeated edits.
 
-- **Not every task wins.** 1–5 step repairs and data reshaping do not repay the hint cost (`perfrefactor` 1.18x, `csvpipe` 1.12x); implementation-shaped tasks occasionally take one extra step (one 1.04x pair in DP20).
+- **Some tasks get slower — do not expect a win everywhere.** 1–5 step repairs and data reshaping do not repay the hint cost (`perfrefactor` 1.18x, `csvpipe` 1.12x); implementation-shaped tasks occasionally take one extra step (one 1.04x pair in DP20).
 - **Quality first.** In every accepted batch both arms produced identical hidden assertions; safety checks, destructive operations and accessibility paths always run the full validation.
 - **The switch is yours.** Only concise output is on by default; the three newer switches stay off because their payoff varies by task shape.
 
