@@ -45,6 +45,7 @@ fast mode 只在**写给模型的那段话**上动手：先给结论、别复述
     --dsh-bin <path>        换 launcher；默认是探测到的那一个
     --arm-style override    强制覆盖形式（auto 会先 --dump-config 判断）
     --arm-style none        两臂同命令：量的是噪声底，不是加速
+    --on-config k=v         给 on 臂多开一个配置项，可重复（见下）
     --metrics-file <path>   换 metrics jsonl（默认 ~/.dsh/fast-mode-metrics.jsonl）
     --timeout-ms 900000     单次调用上限
 
@@ -57,6 +58,19 @@ fast mode 只在**写给模型的那段话**上动手：先给结论、别复述
       config:                        config:
         enabled: false                 enabled: true
         gear: auto                     gear: auto
+
+`--on-config` 只写进 on 臂，所以一次跑一个开关组合：
+
+    # 只量压缩：on = 开启 + compactResults
+    node audit/run.mjs --tasks tasks.jsonl --cwd . --profile bench \
+      --on-config compactResults=true --on-config compactMaxChars=4000
+
+    # 量"省 token"和"改齿轮"一起开：两个都没动 off 臂，比值仍是同一基线
+    node audit/run.mjs --tasks tasks.jsonl --cwd . --profile bench \
+      --on-config compactResults=true --on-config gear=aggressive
+
+值的写法保持类型：`true`/`false` 是布尔、纯数字是数字、其余按字符串。写错键名会在启动前报
+`--on-config 的键名不合法`，不会跑完一轮才发现 on 臂其实用的默认值。
 
 `--arm-style auto`（默认）先用 `dsh --profile <p> --dump-config` 看这个 profile 里
 有没有 `- id: fast-mode`：有就走 override，没有就走 insert。这一步不能省，因为两种错法都不响：

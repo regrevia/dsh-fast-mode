@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.10（审计工具能一次多开一个开关，量组合效果）
+
+`audit/run.mjs` 新增 `--on-config key=value`（可重复），只写进 on 臂的配置里，off 臂保持原样。以前 on 臂固定 `enabled: true` + `gear: auto`，想量「压缩和省 token 一起开」只能手改 patch 文件；现在一条命令就能跑一个组合，值按 YAML 原生类型写（`true` 是布尔、`4000` 是数字），键名写错在启动前就报错，不会跑完一轮才发现 on 臂用的是默认值。
+
 ## 1.7.9（Windows 上审计工具不再找 /bin/sh）
 
 `audit/run.mjs` 的校验命令一直写死 `/bin/sh -c`，在 Windows 上直接 `spawn /bin/sh ENOENT`，CI 的 windows 作业因此全红。现在按平台选 shell（Windows 走 `ComSpec /d /s /c`），dry-run 打印的命令行与实跑一致；测试里那句 `ls -A` 也换成 `readdirSync`，不再依赖 POSIX shell。macOS/Linux 行为不变。

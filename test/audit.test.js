@@ -26,6 +26,8 @@ import {
   formatCommand,
   geomean,
   parseArgs,
+  parseConfigPairs,
+  parseConfigValue,
   parseTasks,
   patchStyleFor,
   percentile,
@@ -234,6 +236,29 @@ test('armPatch 两个臂只差一个开关，且子键比 config 多缩两格', 
   for (const text of [off, inserted]) {
     assert.equal(indentOf(text, 'enabled:'), indentOf(text, 'config:') + 2, 'YAML 子键必须比父键深两格')
   }
+})
+
+test('--on-config 把值写成 YAML 原生类型，重复项合并成一个配置对象', () => {
+  assert.equal(parseConfigValue('true'), true)
+  assert.equal(parseConfigValue('false'), false)
+  assert.equal(parseConfigValue('4000'), 4000)
+  assert.equal(parseConfigValue('auto'), 'auto')
+  assert.deepEqual(
+    parseConfigPairs(['compactResults=true', 'compactMaxChars=4000', 'gear=auto']),
+    { compactResults: true, compactMaxChars: 4000, gear: 'auto' },
+  )
+  assert.throws(() => parseConfigPairs(['noequals']), /key=value/)
+  assert.throws(() => parseConfigPairs(['1bad=true']), /键名不合法/)
+
+  // 后写的键覆盖先写的，且只作用于 on 臂
+  const on = armPatch('override', true, { compactResults: true })
+  assert.match(on, /^    compactResults: true$/m)
+  assert.match(on, /^    enabled: true$/m)
+  assert.doesNotMatch(armPatch('override', false), /compactResults/)
+
+  const parsed = parseArgs(['--tasks', 't.jsonl', '--on-config', 'compactResults=true', '--on-config=gear=auto'])
+  assert.deepEqual(parsed.onConfig, ['compactResults=true', 'gear=auto'])
+  assert.deepEqual(parseArgs(['--tasks', 't.jsonl']).onConfig, [])
 })
 
 test('patchStyleFor 按 profile 自己 dump 出来的内容选覆盖形式', () => {

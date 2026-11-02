@@ -434,13 +434,48 @@ export function formatCommand(bin, argv, options = {}) {
  * plugin's own schema documents, and it is what keeps this a fair A/B: both runs
  * pay for loading the package.
  */
-export function armPatch(style, enabled) {
+/**
+ * `--on-config` values keep their JavaScript type: a bare `true` must land as a
+ * YAML boolean, not the string "true", or the plugin reads it as an override
+ * string and the arm silently measures the default instead of the setting.
+ */
+export function parseConfigValue(raw) {
+  const text = String(raw)
+  if (text === 'true') return true
+  if (text === 'false') return false
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text)
+  return text
+}
+
+/** Split repeated `--on-config` entries into one object, rejecting junk keys. */
+export function parseConfigPairs(values) {
+  const out = {}
+  for (const entry of values ?? []) {
+    const at = entry.indexOf('=')
+    if (at <= 0) throw new UsageError(`--on-config 要 key=value，收到 ${JSON.stringify(entry)}`)
+    const key = entry.slice(0, at).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new UsageError(`--on-config 的键名不合法：${JSON.stringify(key)}`)
+    out[key] = parseConfigValue(entry.slice(at + 1).trim())
+  }
+  return out
+}
+
+function yamlScalar(value) {
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value)
+  const text = String(value)
+  return /^[A-Za-z0-9_./-]+$/.test(text) ? text : JSON.stringify(text)
+}
+
+export function armPatch(style, enabled, extra = {}) {
   // `config:` sits at 4 spaces in the insert form and at 2 in the override form, so
   // its children have to follow it. YAML that indents a key's children level with
   // the key is at best a parse error and at worst a different tree that loads.
   const insert = style === 'insert'
   const indent = insert ? '      ' : '    '
   const config = [`${indent}enabled: ${enabled ? 'true' : 'false'}`, `${indent}gear: auto`]
+  for (const [key, value] of Object.entries(extra)) {
+    config.push(`${indent}${key}: ${yamlScalar(value)}`)
+  }
   if (insert) {
     return ['- insert:', '  - id: fast-mode', '    name: dsh-fast-mode', '    config:', ...config, ''].join('\n')
   }
@@ -544,6 +579,7 @@ const USAGE = `用法：node audit/run.mjs --tasks <tasks.jsonl> --cwd <repo> [�
   --arm-style <mode>    auto（默认）| insert | override | none
   --off-args <args>     覆盖 off 臂的启动参数（替换 --patch 方案）
   --on-args <args>      覆盖 on 臂的启动参数
+  --on-config <k=v>     给 on 臂加的配置项，可重复（例：--on-config compactResults=true）
   --metrics-file <path> fast-mode 指标 jsonl，默认 $DSH_FAST_MODE_METRICS_FILE 或 ~/.dsh/fast-mode-metrics.jsonl
   --timeout-ms <n>      单次运行超时，默认 900000
   --out <dir>           产物目录，默认 audit-out/<timestamp>
@@ -565,6 +601,7 @@ export function parseArgs(argv) {
     armStyle: 'auto',
     offArgs: null,
     onArgs: null,
+    onConfig: [],
     metricsFile: null,
     timeoutMs: TASK_TIMEOUT_MS,
     out: null,
@@ -593,6 +630,13 @@ export function parseArgs(argv) {
     }
     const split = token.indexOf('=')
     const flag = split === -1 ? token : token.slice(0, split)
+    if (flag === '--on-config') {
+      let entry = split === -1 ? argv[i + 1] : token.slice(split + 1)
+      if (split === -1) i += 1
+      if (entry === undefined) throw new UsageError('--on-config 缺少值')
+      options.onConfig.push(entry)
+      continue
+    }
     if (!takesValue.has(flag)) throw new UsageError(`未知参数 ${token}，用 --help 看可用选项`)
     const key = takesValue.get(flag)
     let value = split === -1 ? argv[i + 1] : token.slice(split + 1)
@@ -833,6 +877,7 @@ async function main(argv) {
     options.armStyle = 'override'
   }
   const patchStyle = style === 'patch' ? (options.armStyle === 'override' ? 'override' : 'insert') : null
+  const onConfig = options.onConfig.length > 0 ? parseConfigPairs(options.onConfig) : {}
 
   const patches = {
     off: join(outDir, 'arm-off.patch.yml'),
@@ -872,7 +917,7 @@ async function main(argv) {
       lines.push(`# ${patches.off}（实跑时才写盘）`)
       for (const line of armPatch(patchStyle, false).trimEnd().split('\n')) lines.push(`#   ${line}`)
       lines.push(`# ${patches.on}`)
-      for (const line of armPatch(patchStyle, true).trimEnd().split('\n')) lines.push(`#   ${line}`)
+      for (const line of armPatch(patchStyle, true, onConfig).trimEnd().split('\n')) lines.push(`#   ${line}`)
     }
     process.stdout.write(`${lines.join('\n')}\n`)
     return 0
@@ -881,7 +926,7 @@ async function main(argv) {
   mkdirSync(outDir, { recursive: true })
   if (style === 'patch') {
     writeFileSync(patches.off, armPatch(patchStyle, false))
-    writeFileSync(patches.on, armPatch(patchStyle, true))
+    writeFileSync(patches.on, armPatch(patchStyle, true, onConfig))
   }
 
   const startedAt = new Date().toISOString()
