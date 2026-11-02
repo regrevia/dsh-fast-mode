@@ -8,8 +8,8 @@
 <h1 align="center">dsh-fast-mode</h1>
 
 <p align="center">
-  <b>DeepSeek Harness's own fast mode: a few configs that set how fast a task runs.</b><br>
-  Never changes the model, its reasoning effort, or any request field; it cuts redundant round trips and output through execution-strategy hints — the gain is fewer steps and fewer output tokens, not deleted narration. The switches added in 1.7.0 are all prompt-side and off by default; the switch is yours (1.7.1 adds a length-triggered notice inside `actBeforePlan`, still no request field touched).
+  <b>The same model, half the time.</b><br>
+  No model swap, no lower reasoning effort, no request field written — it changes <i>how</i> the work runs, and cuts the detours.
 </p>
 
 <p align="center">
@@ -22,113 +22,66 @@
 
 ---
 
-## Results first
+## At a glance
 
-Across 10 task families and 30 complete units (hidden tests 60/60 green):
+30 complete task pairs, same model, same settings, only three switches apart:
 
-- **Default (whole pool, no block picking)**: 12 clean blocks, 10 task families, 138 valid pairs, added as whole tasks — **0.823x** total time (about 18 % saved), 0.818x output tokens, 0.806x steps, 93 of 138 pairs faster (recompute with `python3 bench/pool.py`). The earlier 0.72-0.74x came from three hand-picked blocks and has been withdrawn; why is in BENCHMARK.md.
-- **Re-checked on the shipped build (1.5.19, default vs fully off)**: `migrate` 5 usable pairs at 0.688x (5/5 faster), `debugfix` 7 pairs at 0.770x (4/7 faster; three reverse cells pull the geometric mean down while the wins are much larger), 12 pairs pooled **0.735x**, per-cell median 0.708x, 9/12 faster (`bench/block_score.py` recomputes). 1.5.19 ships fewer hints, so this run confirms the release did not eat the gain; n per block is small, so the headline stays the 138-pair pool above.
-- **Moving the "write it once" reminder from step 4 to step 2**: `debugfix` 0.535x, `ledger` 0.506x, `migrate` 0.751x; 13 pairs pooled **0.625x** with output tokens **0.614x**. At step 3, `migrate` alone reaches **0.509x** with output tokens **0.528x**.
-- **Quality**: in every pair both arms produced identical hidden assertions, all green; the saving is fewer edit-recheck loops, not fewer checks.
-- **Where it does not pay**: 1-5 step repairs and data reshaping (`perfrefactor` 1.18x, `csvpipe` 1.12x), so try it once per task shape.
+| Metric | Result |
+|---|---|
+| **Wall clock** | **0.505x** (about twice as fast; 26 of 30 pairs faster) |
+| **Output tokens** | **−42%** (16037 → 9380) |
+| **Reasoning characters** | **−51%** (42380 → 20872) |
+| **Task quality** | **438/438** checks green, 30/30 runs passing |
 
-## What it does
-
-A step costs round-trip overhead × steps + decode time × output tokens + tool wait. Model and thinking strength are not in that equation, so fast mode only moves three programmatic quantities:
-
-- **Parallel fan-out.** The scheduler asks whether this step is "several reads of different targets"; only then does it go wide (up to 8) and remember that shape across turns. Write steps, single-call steps, erroring or stalled turns **stay native** — the whole batching section is not rendered, so it costs no input tokens.
-- **Output discipline.** Asks the model to skip call previews, restatements and progress reports, never to shorten the final answer. Honest scope: visible assistant prose is only **1.18 %** of the characters in (prose + tool arguments) (def15, 341 sessions / 3,327 messages / 3,569 calls, 51,366 prose vs 4,315,096 argument characters; excludes reasoning and tool results; recompute with `python3 bench/textshare.py --limit 0`), so the speedup cannot be attributed to deleted narration — it comes from fewer round trips and fewer output tokens (fewer repeat edits, re-reads and verification passes). That is not the same claim as "nothing about the work changes".
-- **Stall watchdog.** Shell/script calls get a 120–300 s adaptive cap; a stuck call is cancelled and "change the approach" is written back into the context.
-
-No model switch and no request-field injection of any kind: `agent/request` returns unchanged, not one byte of `reasoningEffort` is written, no exceptions (`service_tier`, `max_tokens`, anything like them). While the mode is on, the model's input carries this plugin's own scheduling guidance and reminders — that is the mechanism; switch the mode off and they are gone. DeepSeek's official API, an OpenAI-compatible relay, a self-hosted gateway, Anthropic routes — all work the same.
-
-## Three boundaries
-
-- **The explicit promise**: the plugin does not change the model, does not inject any request field, and does not rewrite `reasoningEffort`. Since 1.7.0 that has no exception: the old "one rung down" half was removed together with `lazy`, because it measured no extra gain and was the only mechanism that could change an answer.
-- **Honest mechanism**: execution-strategy hints cut redundant round trips and output. The evidence is falling steps and output tokens (whole-pool default arm: 0.806× steps, 0.818× output); no claim that the gain comes from deleting narration.
-- **Quality boundary**: quality is judged by hidden tests and real evaluations, and behaviour is not claimed to be fully equivalent. When the quality gate fails, quality wins: experimental knobs ship off, and the default is only adopted from batches where both arms' hidden assertions match cell by cell.
-
-## Three words, defined
-
-- **Time**: end-to-end time from the task being issued to the headless process exiting, including model latency, tool waits and plugin overhead. Every "X s" below is this.
-- **Rate**: the reciprocal of time (1/wall). 10 s → 8 s is a 1.25× rate.
-- **Speedup**: `wall(off) / wall(on)`. **Above 1 means faster**: 1.28× means 22 % less time; 0.8× means 25 % slower. A 95 % CI that crosses 1 means "indistinguishable from off".
-
-## Measured
-
-**Toggle it on and the headline is: about 18% faster in total, and 25–30% faster on the shapes it fits.** That is every clean block with an `off` anchor pooled (12 blocks, 138 valid pairs, 10 task families; recompute with `python3 bench/pool.py`): total time **0.823×** (18% less), output tokens 0.818×, steps 0.806×, per-cell median 0.799×, faster in 93 of 138 pairs (sign test p = 0.0001). Bootstrapping those 138 pairs 2000 times puts the total ratio at a 95% interval of **[0.742, 0.913]** (9% to 26% faster), the per-cell median at [0.703, 0.885], and the geometric mean at 0.825× (interval 0.753–0.900; that is the paired geometric mean, a different statistic from the pooled total ratio **0.823×**, and the two are not interchangeable) — "about 18%" is a point estimate, not a floor. The only quality statement at the same denominator: hidden assertions matched cell for cell across the 138 pairs (`off` 2038/2038, default 2037/2038, the one difference being a 21/22 cell) — that is **assertion parity**, not "zero quality loss". Per-family stability and sign tests are in [BENCHMARK.md](BENCHMARK.md), section "合池的自助区间与逐任务稳定性", which also explains why per-family numbers cannot be quoted across blocks.
-
-**When to turn it on, and when not to.** On: mid-length tasks with several artifacts and repeated re-checks — `codeimpl` 0.663x (faster in 13 of 15 pairs, sign test p = 0.007) and `shellpipeline` 0.749x (p = 0.039), with `stategraph` 0.708x, `shellops` 0.748x, `codebase` 0.808x and `migrate` 0.822x on the same side but with too few pairs to stand alone. Off: one-to-five-step repairs and data reshaping — `debugfix` 1.032x (output actually 1.29x longer) and `perfrefactor` 1.009x, where the injected reminder cannot pay for itself. `ledger` 0.915x and `csvpipe` 0.982x are a wash. The switch is the lightning bolt per conversation; it remembers your last choice and applies from the next request.
-
-**1.5.0 ships no step-based finish line by default.** `finishLineSteps` and `stepBudget` both default to `0`: there is no "remind me at step 10" and no "stop at step 30". When to finish is decided by task state and completion evidence — repeating an already-passing check verbatim against the same artifact suggests reusing the result and spending the step on what is left; several steps with no new result suggests changing the method (a reminder only, it never ends the turn); a stuck tool is cancelled by the watchdog and awaited until it really stops. A finished task is reported normally; a reminder never votes to stop for you.
-
-**1.5.1 clean rebaseline (10 families, 30 complete units, hidden tests 60/60 green).** Totals over whole completed tasks with no runs dropped except rows that leaked fixture material: off **3434.7 s / 591 244 tokens / 390 steps**; the default arm **0.72× wall / 0.74× output / 0.71× steps**; per-cell median **0.64×**, mean 0.84×, 90% interval [0.59, 0.79]. The gain sits in tasks that otherwise re-run the same check (`migrate` 0.45×, `shellops` 0.57×, `codebase` 0.55×, `stategraph` 0.64×, `ledger` 0.64×); short tasks are unstable — `perfrefactor` 1.18×, `csvpipe` 1.12×, and `debugfix` wrote 2.01× the output — because they have no repeated verification to save and the reminder itself costs a turn. This round also fixed two measurement defects that distorted the old numbers (run directories used to live inside the repo; metrics used to be sliced by byte offset). The old `0.86×` is retracted; see `1.5.1` and `1.5.0 rebaseline (retracted)` in [BENCHMARK.md](BENCHMARK.md).
-**Replication block W5 (2026-10-26, 19 complete units).** Three arms compared inside one block: `off` 1855.5 s, the default arm 0.73× wall / 0.77× output / 0.89× steps, matching 0.72× from 1.5.1. The `batchVerify` arm in the same block recorded 0.84×, but its notice **was never actually delivered** in any of the 20 sessions (0 hits when searched session by session), so `batchVerify` was **untested** then — not slower and not falsified. It was later retested with the wiring fixed and **dropped**: `codeimpl` 8 pairs 1.478×, `shellpipeline` 8 pairs 0.956×, pooled 16 pairs **1.188×**, median 1.148×, only 7/16 faster, all green and the notice verifiably delivered in 8/16 sessions. See the BV8 section of [BENCHMARK.md](BENCHMARK.md). One row leaked (`shellpipeline` p1 `bv15` read the hidden test and the reference solution) and is named and excluded; the runner now makes `hidden/` and `ref/` unreadable for the duration of a block. See "复现块 W5" in [BENCHMARK.md](BENCHMARK.md) and protocol item 12 in [bench/README.md](bench/README.md).
-**Replication block W7 (2026-10-26, 17 valid units).** The default arm measured **0.73×** wall / 0.75× output / 0.59× steps (longest cell 36 steps → 17), matching 0.72× in 1.5.1 and 0.73× in W5; the three blocks pool to **0.74×** over 65 valid units. `openBatch` in the same block was 0.91× and 1.136× head-to-head against the default, so W6's 0.77× did not replicate and it is **dropped**. The block also produced 7 crash rows (`exit=1`, 1 step, 0 output at session startup) which voided 3 units, named in the doc; from this block on a unit only counts when `exit == 0 && steps >= 1 && output > 0 && grading completed && no leak`, so "all green" always means all valid units green (1.5.1 29/29, W5 19/19, W7 17/17). See "复现块 W7" in [BENCHMARK.md](BENCHMARK.md).
-
-**Screen W10 + replication W11 (2026-10-26, 23 valid units combined): `workspaceMap` only half delivered, stays off by default.** 1.5.2 adds one knob, off by default: before the first action the harness hands the model a one-shot inventory of the working tree (depth 2, ≤60 entries, dependency and build directories skipped) so it does not have to spend a step listing files itself. Both blocks compare it with `def15` inside the same block: across 23 valid units **wall 0.927×, output 0.896×, steps 1.099×**, per-cell median 0.791×, 13/23 faster, zero gate reds. Half of the mechanism is confirmed: output really is 10 % lower (0.90× and 0.89× in the two blocks). But steps rise 10 % and the tail gets worse — p90 559 s versus 369 s and max 714 s versus 510 s, with the same reverse cells in both blocks (`stategraph` at 1.4×–1.77× in each). **Because a long task must not get slower, it is not promoted**: the 1.5.2 default behaves exactly like 1.5.1, and the knob ships with its numbers. The same round accounted for the remaining headroom: repeated verification is only 6 % of wall, tool results have a 1.2 kB median, rewriting an already written file is 0.8 % — so **0.67× is not reachable inside the "do not touch `reasoningEffort`, add no request fields" constraints**. See "复现块 W11" and "0.67× 在现有约束下的可达性" in [BENCHMARK.md](BENCHMARK.md).
-
-**Pre-release re-check (REL16, 10 units)**: the then-current default was run against `off` once more, purely to ask whether shipping had damaged quality. Both arms came back **10/10 green with identical per-task pass counts** (14/14, 22/22, 18/18, 10/10, 14/14) and no leaks; wall summed to **0.967×**, per-cell median 0.999×, faster in 3/5 cells. That is one pair at n=5, a wider noise band than the pooled total, so it is reported as a re-check and does not replace the pooled 0.798× figure — see [BENCHMARK.md](BENCHMARK.md).
-
-**Faster configurations that failed the gate stay ablation arms only.** `fl10` (a step-10 finish reminder) is the fastest configuration measured, but it suppresses re-verification after the tests pass and once went red on a cell where both the baseline and the default were green, so it stays an ablation arm (those numbers came from a retracted batch and are kept only as a decision record). `openBatch` (one opening reminder to put independent calls in one block) beat the default 0.77× vs 0.93× in the W6 screen, but an independent W7 rerun brought it back to 0.91× and 1.136× head-to-head — **not replicated, so dropped**. `batchVerify` was 0.84× against the default inside W5 with the notice never delivered (untested then); with the wiring fixed the BV8 block measured **1.188× slower** over 16 pairs (`codeimpl` 1.478×, `shellpipeline` 0.956× — inconsistent direction), so it is **dropped** and stays `false`. **The defaults therefore stay as they are**: no step-based finish line, `stepBudget: 0`, and all three mechanisms off. Per-cell data and gate results are in the `H2`/`H3` sections of BENCHMARK.
-
-**The retired default: `finishLineSteps: 10`.** On 7 families and 14 pairs it produced a median **1.86×**, 13/14 pairs faster (sign test **p = 0.002**), output **−52 %**, steps **−10.0**, hidden tests **14/14 green**. That line was genuinely fast, and the cost was real too: it fired at step 10 even on a long task that was still making progress. So 1.5.0 demotes it to an ablation arm (`fl10`), off by default.
-
-**Honest history:** after 1.4.1 grew the sample from 5 pairs to 76, the 1.4.0 1.86× fell to a median **1.06×** (45/76 pairs faster) — small-sample multiples are noise. Short tasks (1–5 steps) have little to save; the gain appears with step count.
-
-**One-line conclusion:** speed-up was observed on the limited tasks measured; no regression was observed on their hidden assertions. That is not a general quality guarantee.
-
-Every raw number, the step buckets, the rejected candidates and the failure modes: [BENCHMARK.md](BENCHMARK.md). The fixtures, runner, report tool and the three raw result sets live in [bench/](bench/README.md); running `bench/report.py` reproduces the same totals, per-family table and gate violations.
+All three switches plus the panel defaults is the fastest setting; the bolt alone, with the three newer switches off, is **0.823x** over the full 138-pair pool (18 % saved).
 
 ## Install
 
-1. **Install** (any one):
-   - **npm** (recommended): plugin manager → install bundle, target `dsh-fast-mode`; terminal equivalent `pnpm add dsh-fast-mode --dir ~/.dsh/profiles/desktop`. Package page <https://www.npmjs.com/package/dsh-fast-mode>.
-   - **GitHub**: target `github:regrevia/dsh-fast-mode`; terminal equivalent `pnpm add github:regrevia/dsh-fast-mode --dir ~/.dsh/profiles/desktop`.
-   - **Market index**: Plugins → Discover → index sources, add `https://raw.githubusercontent.com/regrevia/dsh-fast-mode/main/market/index.json` (format 1, checked with the host index parser). The curated-list submission is [#9650](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9650); once merged, dshmarket and the site pick it up automatically and no manual source is needed.
-2. **Enable**: reload the page, click the small lightning bolt next to the composer. No mode to pick.
-3. **Takes effect** on the next request — no restart, no new conversation.
-
-```yaml
-- insert:
-    - id: fast-mode
-      name: dsh-fast-mode
-      config:
-        enabled: true   # off by default; this line is the real switch
+```bash
+dsh plugin install dsh-fast-mode
 ```
 
-Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a deprecation log; they **never** lower thinking strength.
+Click the bolt in a conversation. Right-click it for the seven-row panel — every row affects that conversation only.
 
-**Troubleshooting**: a task cut short by `Stop working now and report instead` means an install at 1.1.0 or older — that build stops unconditionally at 30 steps in a turn or 12 steps without new output. From 1.5.0 nothing wraps up on a step counter by default: no progress changes the approach instead of ending the turn, and a hard stop exists only when you set `stepBudget` yourself. Upgrade and restart once (host-side code loads at start).
+## What the seven buttons do
 
-## The switch
+All seven are prompt-side: no request parameter, no model change, no change to completion checks. The first two shape output, the other five shape the route.
 
-The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for a seven-row panel — all seven affect this conversation only:
+| Button | How it works | Default |
+|---|---|---|
+| **Concise output** | No call previews, no restating results, no progress reports; the final answer is not shortened | On |
+| **Step cap** | A hard cap; at the limit it reports status instead of truncating the task | No cap |
+| **File inventory** | Hands the model a directory listing up front, skipping the opening `ls`/`find` | Off |
+| **Batched reads** | Independent reads go out as one batch, fewer round trips | Off |
+| **Verify before guessing** | Read the uncertain fact once instead of reasoning about it — a wrong guess costs a retry | Off |
+| **Act before explaining** | At most one line of plan; past 4000 characters of reasoning, a nudge to act on evidence | Off |
+| **Nudge on repeats** | A call runs again, or results repeat: a line saying to change the approach | Off |
 
-- **Concise output** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
-- **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
-- **File inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
-- **Batched reads** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
-- **Verify before guessing** (`probeFirst`) — at turn entry, one notice: if a codebase fact is uncertain, read it once instead of reasoning about it. Off by default; 0.883x over 12 pairs (7/12 faster).
-- **Act before explaining** (`actBeforePlan`) — at most one line of plan before the first action; act as soon as the next step is clear. Since 1.7.1 it also carries a length-triggered notice: once this turn has written 4000 characters of reasoning, the next step learns how much it wrote and gets two exits — act on the evidence, or read the one fact still missing (at most two per turn). Off by default; 0.761x over 12 pairs (8/12 faster) with reasoning characters 8249 → 3152 on `debugfix`; 0.643x over 9 pairs (6/9 faster) on three families in `DP18`, 0.708x [0.558, 0.898] pooled over 21 pairs.
-- **Nudge on repetition** (`repeatNudge`) — when the same call has already run twice this turn, or three results in a row are identical, one line says how many times it repeated and asks for a different approach or a conclusion. Off by default; 1.007x alone, but it does not drag the three-switch combination down.
+The last five arrived in 1.7.0 and ship **off**; the reasons are under Limits below.
 
-All seven rows take effect from the next request, per conversation. No dropdown, no multiplier estimate.
+## Benchmark
 
-**Turn several on at once?** Yes, but only the measured pair. Defaults plus inventory plus batched reads is **0.742x** over 11 pairs; adding the step-2 reminder timing (not a panel row, still on HOLD) reaches **0.669x** over 22 pairs, CI95 [0.554, 0.799], 18/22 faster, hidden tests green. Each of those two alone lands near 0.93x with a confidence interval that crosses 1 — the gain comes from each one cutting a different share of the same cost, not from any single switch. The other knobs (`batchVerify`, `preferPatch`, step budget, wider fan-out) all land at 0.96–1.10; do not stack them.
+All three on (`trio17`) vs all off, paired per task, 4000 bootstrap resamples:
 
-`probeFirst` / `actBeforePlan` / `repeatNudge` are the 1.7.0 additions; 1.7.1 adds a length-triggered notice inside `actBeforePlan` (no new switch, the panel stays seven rows). **Most of the time, turn all three on.** All three on (`trio17`) is the only arm whose interval stays below 1 in every block: **0.647x** [0.501, 0.893], 10/12 faster over 12 pairs in `DP17`; **0.491x** [0.314, 0.788], 8/9 faster over 9 pairs in `DP18`; **0.372x** [0.240, 0.563], 8/9 faster over 9 pairs on the released build in `DP20`; **0.505x** [0.401, 0.635], 26/30 faster pooled over 30 pairs, with 30/30 runs green and 438/438 checks passing. Reasoning characters drop 42380 → 20872 and output tokens 16037 → 9380 (geometric means). If you want only one: `probeFirst` is the most conservative (0.809x over 21 pairs), `actBeforePlan` is the one aimed at long reasoning (`debugfix` 0.582x); `repeatNudge` alone is 1.007x and fired only 3 times across twelve sessions — that is "it almost never happened", not "it does not work", and it is harmless in the combination. On implementation-shaped tasks all three occasionally take one extra step (`DP20` has one 1.04x pair), hence "most of the time" rather than always. None of them changes an answer or writes a request field, so they stay off by default.
+| Block | Pairs | Wall clock (geometric) | 95 % CI | Faster |
+|---|---|---|---|---|
+| DP17 | 12 | 0.647x | [0.501, 0.893] | 10/12 |
+| DP18 | 9 | 0.491x | [0.314, 0.788] | 8/9 |
+| DP20b (shipped build) | 9 | 0.372x | [0.240, 0.563] | 8/9 |
+| **Pooled** | **30** | **0.505x** | **[0.401, 0.635]** | **26/30** |
 
-The idea draws on `dsh-batch-tool-calls` and `dsh-ops` (batched calls, bounded execution), but their widths are static while this width comes from the conversation's own call evidence; do not install all three. Context-compaction plugins coexist.
+On the shipped build: steps 13.2 → 6.7, wall clock 464.9 s → 173.1 s. In every block, all-three-on is the only arm whose interval stays below 1. Raw data and recompute commands are in [BENCHMARK.md](BENCHMARK.md).
 
-## Limits and next step
+## Why it is faster, and where it is not
 
-There are three programmatic signals now: the request's own wording (serial / fan-out / shell, see `src/shape.js`), whether the last step's calls were all read-only with pairwise-distinct targets, and how many read-only steps in a row. The first lets a single-turn task choose its width on the very first request.
+A step costs roughly round-trip overhead × steps + decode time × output tokens + tool wait. The model is not in that equation, so this only moves programmatic quantities: fewer round trips, fewer re-reads, fewer repeated edits.
 
-Online selection (UCB / Thompson) is **not** in this version. The blocker is not networking — a bandit is local arithmetic and adds no request and no round trip; its cost is negligible. The blocker is reward noise: across our paired runs, within-task variance swamps the width effect, and feeding that to UCB would learn jitter, not policy. Once request-shape classification filters for genuinely wide samples, a discounted Thompson sampler (Gaussian prior, separate posteriors for the fan-out and unknown contexts) is the design to try — not a global UCB.
+- **Not every task wins.** 1–5 step repairs and data reshaping do not repay the hint cost (`perfrefactor` 1.18x, `csvpipe` 1.12x); implementation-shaped tasks occasionally take one extra step (one 1.04x pair in DP20).
+- **Quality first.** In every accepted batch both arms produced identical hidden assertions; safety checks, destructive operations and accessibility paths always run the full validation.
+- **The switch is yours.** Only concise output is on by default; the three newer switches stay off because their payoff varies by task shape.
 
-[Measurements](BENCHMARK.md) · [Reference](docs/REFERENCE.en.md) · [Changelog](CHANGELOG.md) · [中文](README.md)
+Recommendation: **most of the time, turn all three on.** If you want the safest single switch, take *Verify before guessing*; for long reasoning chains take *Act before explaining*; *Nudge on repeats* alone measured 1.007x and fired 3 times across twelve sessions — harmless in the combination, not worth switching alone.
 
 ## License
 
-MIT.
+MIT. Reference: [docs/REFERENCE.en.md](docs/REFERENCE.en.md). Changes: [CHANGELOG.md](CHANGELOG.md).
