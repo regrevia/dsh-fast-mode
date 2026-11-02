@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.9（Windows 上审计工具不再找 /bin/sh）
+
+`audit/run.mjs` 的校验命令一直写死 `/bin/sh -c`，在 Windows 上直接 `spawn /bin/sh ENOENT`，CI 的 windows 作业因此全红。现在按平台选 shell（Windows 走 `ComSpec /d /s /c`），dry-run 打印的命令行与实跑一致；测试里那句 `ls -A` 也换成 `readdirSync`，不再依赖 POSIX shell。macOS/Linux 行为不变。
+
 ## 1.7.8（shell 输出被省略时，把报错行带出来）
 
 `compactResults` 对 shell 类工具（`bash` / `shell` / `exec` / `run` / `terminal` / `command`）换了一种省略方式。以前一个 8 万字符的构建日志被砍成头 40% + 尾 25%，`FAIL src/a.test.js` 那行如果正好落在中间，模型看到的就是「一切正常」的假象。现在标记会从被省略的区间里把匹配报错的行挑出来一起带走，仍是一行标记：

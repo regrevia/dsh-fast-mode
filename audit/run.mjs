@@ -494,12 +494,21 @@ export function runOne({ bin, argv, cwd, timeoutMs, node }) {
   })
 }
 
+/**
+ * The check command is written by the task author as a POSIX one-liner, so on
+ * Windows it goes through ComSpec instead of a shell that is not there.
+ */
+const IS_WIN = process.platform === 'win32'
+const CHECK_SHELL = IS_WIN ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh'
+const checkArgv = (command) => (IS_WIN ? ['/d', '/s', '/c', command] : ['-c', command])
+const checkShellLabel = IS_WIN ? `${CHECK_SHELL} /d /s /c` : '/bin/sh -c'
+
 /** Run a task's check in the target repo; exit code 0 is a pass. */
 async function runCheck({ command, cwd, timeoutMs }) {
   if (!command) return { status: 'none', code: null, wallMs: 0 }
   const started = process.hrtime.bigint()
   const result = await new Promise((resolvePromise) => {
-    const child = spawn('/bin/sh', ['-c', command], { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(CHECK_SHELL, checkArgv(command), { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
     let stderr = ''
     const timer = setTimeout(() => child.kill('SIGKILL'), Math.min(timeoutMs, TASK_TIMEOUT_MS))
     child.stderr.on('data', (chunk) => { stderr += chunk })
@@ -854,7 +863,7 @@ async function main(argv) {
         })
         lines.push(`${item.task.id} [${arm}] ${formatCommand(options.dshBin, argvForRun, { node: options.dshNode })}`)
         if (item.task.check) {
-          lines.push(`${item.task.id} [${arm}] check: /bin/sh -c ${shellQuote(item.task.check)}   (cwd=${cwd})`)
+          lines.push(`${item.task.id} [${arm}] check: ${checkShellLabel} ${shellQuote(item.task.check)}   (cwd=${cwd})`)
         }
       }
     }

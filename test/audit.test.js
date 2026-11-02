@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -380,11 +380,10 @@ test('CLI --dry-run 打印真实展开的命令，不跑任何东西', async () 
     assert.match(stdout, /enabled: false/)
     assert.match(stdout, /enabled: true/)
     assert.match(stdout, /one \[off\] .*'列目录'/)
-    assert.match(stdout, /one \[on\] check: \/bin\/sh -c 'test -f package\.json'/)
+    assert.match(stdout, /one \[on\] check: .* 'test -f package\.json'/)
     assert.match(stdout, /two \[on\] .*'读 README'/)
-    // dry-run 不该留下任何产物
-    assert.deepEqual((await run('/bin/sh', ['-c', `ls -A ${JSON.stringify(dir)}`], { timeout: 10000 }))
-      .stdout.trim().split('\n').sort(), ['tasks.jsonl'])
+    // dry-run 不该留下任何产物（用 fs 读，Windows 上没有 /bin/sh）
+    assert.deepEqual(readdirSync(dir).sort(), ['tasks.jsonl'])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
