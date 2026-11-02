@@ -67,7 +67,12 @@ fast mode 只在**写给模型的那段话**上动手：先给结论、别复述
 
     # 量"省 token"和"改齿轮"一起开：两个都没动 off 臂，比值仍是同一基线
     node audit/run.mjs --tasks tasks.jsonl --cwd . --profile bench \
-      --on-config compactResults=true --on-config gear=aggressive
+      --on-config compactResults=true --on-config gear=fast
+
+两个都开是本机实测过的组合（见下「本机实测」），结论是分不开；`gear` 写别的值同样能跑，
+但没量过就别在文档里当成结论。`enabled` 和 `gear` 这类基础键由 `--on-config` **覆盖**，
+不是追加——1.7.11 之前会写出两行 `gear:`，严格解析器直接报错（on 臂每次 70 毫秒就失败，
+报告里看着像"快得离谱"）。
 
 值的写法保持类型：`true`/`false` 是布尔、纯数字是数字、其余按字符串。写错键名会在启动前报
 `--on-config 的键名不合法`，不会跑完一轮才发现 on 臂其实用的默认值。
