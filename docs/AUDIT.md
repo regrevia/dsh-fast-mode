@@ -110,10 +110,9 @@ application`）或里面压根没有 fast-mode 条目，工具会直接停下并
 
 ## 已知限制（含本机未验证的点）
 
-- **凭据**：本机这个 shell 跑真调用会失败在 `MISSING_CREDENTIAL: llm-pi-ai: no credential for
-  provider route "company"`。CLI 入口、`--json` 事件结构、metrics 归集都已实测；**真实端到端
-  的墙钟数字在这里没有跑出来过**，第一次真跑要在有凭据的环境里做。跑到这种失败时工具会让你
-  看见 `turn_end.reason.error.code`，不会把它算成一次测量。
+- **凭据**：本机这个 shell 直接跑真调用会失败在 `MISSING_CREDENTIAL: llm-pi-ai: no credential
+  for provider route "company"`；补上 `COMPANY_LLM_TOKEN` 后才能跑（下面「本机实测」就是这么跑
+  的）。跑到凭据失败时工具会让你看见 `turn_end.reason.error.code`，不会把它算成一次测量。
 - **profile**：`headless` 的 node_modules 里没有 dsh-fast-mode，在那儿做 A/B 两臂都关着；
   `desktop` 由 Electron 独占，dump 不了。默认值 `bench` 是实测能 dump、且 `--patch` 真能把
   `enabled` 从 false 翻到 true 的那个（证据写在 `DETECTED.evidence`）。
@@ -122,6 +121,41 @@ application`）或里面压根没有 fast-mode 条目，工具会直接停下并
   精度重要。
 - 墙钟包含进程启动（约几百毫秒）。要更纯的对比得看 token 那一列，或者把 `--rounds` 加大让固定
   开销摊薄。
+
+## 本机实测（可复核的原始数字）
+
+同一台机器、`--profile bench`、串行跑、配对 bootstrap 4000 次、种子 20261102；任务是
+`audit/tasks.example.jsonl` 的 5 个（list-files / read-package / grep-geomean / run-tests /
+explain-config），目标仓库就是本仓库。
+
+| 日期 | on 臂比 off 臂多了什么 | 任务×轮 | 合池墙钟 | 合池输出 token | 校验 off/on |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-02 | 只有 `enabled: true`（`gear: auto`） | 5×3 | **0.781×** [0.656, 0.923]，省 21.9% | **0.667×** [0.547, 0.806]，省 33.3% | 12/12 / 12/12 |
+| 2026-11-03 | 再加 `compactResults=true, compactMaxChars=4000` | 5×3 | 0.900× [0.732, 1.152]，分不开 | 0.967× [0.766, 1.282]，分不开 | 12/12 / 12/12 |
+| 2026-11-03 | 再加 `gear=fast`（两个开关一起开） | 5×3 | 0.858× [0.640, 1.140]，分不开 | 0.858× [0.643, 1.136]，分不开 | 12/12 / 12/12 |
+| 2026-11-03 | 再加 `gear=aggressive`（开到最猛） | 5×3 | 0.980× [0.833, 1.141]，分不开 | 1.085× [0.872, 1.309]，甚至略多 | 12/12 / 12/12 |
+
+读法：
+
+- 第一行是"只开主开关"的基线，也是唯一一次区间整体落在 1 以下的组合。
+- 加压缩的两行区间都跨过 1：**这点样本分不开"压缩帮了忙"和"噪声"**，不能写成压缩有效。第一行
+  与"只开关主开关"的差别只有 15 对样本，同一台机器上模型侧缓存冷热就能吃掉这个幅度。
+- 加压缩那次 `list-files` 单任务是 1.927× 墙钟 / 2.245× token（CI 都不跨 1）：工具输出被截短后
+  模型多跑了几轮去补信息，这是压缩真实存在的代价，写在表里而不是藏起来。
+- 三个开关全开（压缩 + aggressive）既没有更快、token 还略多：**开关不是叠加的**，多开一个不等于
+  多省一点。这也说明"能开就全开"是错的做法，默认把几项关着是有依据的。
+- `--on-config gear=fast` 交接时踩过一次坑：1.7.10 会把 `gear:` 写两遍，on 臂 70 毫秒就失败，
+  报告里显示"快得离谱"。1.7.11 修好后才有上表第三行。
+
+复现（两个组合各跑一次，输出目录别覆盖）：
+
+    COMPANY_LLM_TOKEN=... node audit/run.mjs --tasks audit/tasks.example.jsonl --cwd . \
+      --rounds 3 --on-config compactResults=true --on-config compactMaxChars=4000 \
+      --out /tmp/fm-audit-comboA
+
+    COMPANY_LLM_TOKEN=... node audit/run.mjs --tasks audit/tasks.example.jsonl --cwd . \
+      --rounds 3 --on-config compactResults=true --on-config gear=fast \
+      --out /tmp/fm-audit-fast
 
 ## 一次完整的复核
 
