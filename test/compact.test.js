@@ -4,7 +4,7 @@ import test from 'node:test'
 import { compactResult } from '../src/compact.js'
 
 const ON = { enabled: true }
-const ELIDE = /^([\s\S]*?)… \[fast-mode: elided (\d+) chars(?:, lines (\d+)–(\d+))?\] …([\s\S]*)$/
+const ELIDE = /^([\s\S]*?)… \[fast-mode: elided (\d+) chars(?:, lines (\d+)–(\d+))?(; kept [^\]]*)?\] …([\s\S]*)$/
 const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
 const lines = (n, body = (i) => `line ${i} ${'x'.repeat(40)}`) =>
@@ -47,13 +47,14 @@ test('head and tail survive, the middle is replaced by one marker', () => {
   const text = lines(500)
   const out = compactResult({ name: 'bash', text }, { ...ON, maxChars: 4000 })
   assert.equal(out.changed, true)
-  assert.equal(out.kind, 'text')
+  assert.equal(out.kind, 'shell')
   assert.ok(out.compactedChars < out.originalChars)
   assert.ok(out.compactedChars <= 4000, `got ${out.compactedChars} chars`)
 
   const m = ELIDE.exec(out.text)
   assert.ok(m, 'marker line present')
-  const [, head, elided, firstLine, lastLine, tail] = m
+  const [, head, elided, firstLine, lastLine, keptBand, tail] = m
+  assert.equal(keptBand, undefined, 'no failure line in this text, so nothing is carried')
   assert.ok(text.startsWith(head), 'head is a prefix of the original')
   assert.ok(text.endsWith(tail), 'tail is a suffix of the original')
   assert.equal(head.length + tail.length + Number(elided), text.length)
@@ -73,7 +74,7 @@ test('headRatio and tailRatio are honoured', () => {
     { name: 'bash', text },
     { ...ON, maxChars: 2000, headRatio: 0.6, tailRatio: 0.1 },
   )
-  const [, head, , , , tail] = ELIDE.exec(out.text)
+  const [, head, , , , , tail] = ELIDE.exec(out.text)
   assert.ok(head.length > tail.length * 3, `head ${head.length} vs tail ${tail.length}`)
 })
 
@@ -93,7 +94,7 @@ test('chinese text is cut without producing broken characters', () => {
   assert.ok(out.text.length < text.length)
   assert.equal(LONE.test(out.text), false)
   assert.equal(Buffer.from(out.text, 'utf8').toString('utf8'), out.text)
-  const [, head, , , , tail] = ELIDE.exec(out.text)
+  const [, head, , , , , tail] = ELIDE.exec(out.text)
   for (const ch of head + tail) {
     assert.ok(ch === '\n' || '中文测试行：结果稳定'.includes(ch), `unexpected char ${JSON.stringify(ch)}`)
   }
@@ -182,4 +183,39 @@ test('silly policy numbers fall back to usable values instead of corrupting outp
     assert.equal(typeof out.text, 'string')
     assert.equal(LONE.test(out.text), false)
   }
+})
+
+test('a shell failure line inside the elided band is carried out by the marker', () => {
+  const body = (i) => (i === 120 ? 'FAIL src/a.test.js: expected 1 got 2' : `line ${i} ${'x'.repeat(40)}`)
+  const text = lines(500, body)
+  const out = compactResult({ name: 'bash', text }, { ...ON, maxChars: 4000 })
+  assert.equal(out.changed, true)
+  assert.equal(out.kind, 'shell')
+  const m = ELIDE.exec(out.text)
+  assert.ok(m, 'one marker, nothing else replaced')
+  const [, , , firstLine, lastLine, keptBand] = m
+  assert.ok(Number(firstLine) <= 121 && Number(lastLine) >= 121, 'the failure line really was in the band')
+  assert.ok(keptBand && keptBand.includes('121:FAIL src/a.test.js'), String(keptBand))
+  assert.equal(out.text.split('[fast-mode:').length, 2, 'still a single marker')
+})
+
+test('shell output with nothing salient gets no carried band', () => {
+  const out = compactResult({ name: 'bash', text: lines(500) }, { ...ON, maxChars: 4000 })
+  assert.equal(out.kind, 'shell')
+  assert.equal(out.text.includes('kept'), false)
+})
+
+test('carried failure lines stay inside the char budget', () => {
+  const body = (i) => (i % 7 === 0 ? `error ${i} ${'e'.repeat(200)}` : `line ${i}`)
+  const out = compactResult({ name: 'bash', text: lines(2000, body) }, { ...ON, maxChars: 4000 })
+  assert.ok(out.compactedChars <= 4000 + 400, `got ${out.compactedChars} chars`)
+  const kept = ELIDE.exec(out.text)?.[5] ?? ''
+  assert.ok(kept.length <= 1000 + 400, `carried budget too big: ${kept.length}`)
+})
+
+test('a read result never gets the shell treatment', () => {
+  const body = (i) => (i === 120 ? 'error: this is source code, keep it' : `line ${i} ${'x'.repeat(40)}`)
+  const out = compactResult({ name: 'read', text: lines(500, body) }, { ...ON, maxChars: 4000 })
+  assert.equal(out.kind, 'read')
+  assert.equal(out.text.includes('kept'), false)
 })

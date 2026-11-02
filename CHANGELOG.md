@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.8（shell 输出被省略时，把报错行带出来）
+
+`compactResults` 对 shell 类工具（`bash` / `shell` / `exec` / `run` / `terminal` / `command`）换了一种省略方式。以前一个 8 万字符的构建日志被砍成头 40% + 尾 25%，`FAIL src/a.test.js` 那行如果正好落在中间，模型看到的就是「一切正常」的假象。现在标记会从被省略的区间里把匹配报错的行挑出来一起带走，仍是一行标记：
+
+`… [fast-mode: elided 61044 chars, lines 41–812; kept 2 matching lines 121:FAIL src/a.test.js: expected 1 got 2 | 400:error: 3 tests failed] …`
+
+匹配的是 error / failed / fatal / panic / exception / traceback / denied / refused / timeout / cannot / unable / not found 这些词，以及 `✖`/`✗`/`FAIL`/`ERR!` 开头的行，默认最多 12 条、总量不超过压缩预算的四分之一，行号在行首，模型可以直接按行回读。非 shell 工具（read、grep）行为完全不变，开关仍默认关闭；`kind` 多了一个 `shell`。
+
 ## 1.7.7（闪电换到并排槽位 + 页脚读数修好）
 
 闪电从会话输入区的单值槽换到模型选择器旁的 list 槽。单值槽只渲染第一个注册者，计划按钮和语音麦克风谁先注册谁占位，后到的被静默丢掉；list 槽按 `id`/`order` 并排，三件控件可以同时在场。落点、外观、左键开关、右键七行、三档控件全都没变，只是不再和别的控件抢同一个座位。

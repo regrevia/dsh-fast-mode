@@ -34,10 +34,11 @@ const { text, changed, originalChars, compactedChars, kind } =
 - **只压缩成功且超长的结果。** `isError: true` 的结果永不压缩——错误信息往往整段都关键。
 - **头尾保留，中间一行标记。** 保留头 `headRatio` + 尾 `tailRatio`，中间替换为 `… [fast-mode: elided N chars, lines A–B] …`——行区间就是被省略的那一段，模型可以直接按行范围回读，不用整份重读；单行正文没有行号，标记里只给字符数。切点在换行处；没有换行时退到字符边界。
 - **多字节不切坏。** 中文等 BMP 字符不会被拆开；emoji 这类代理对（surrogate pair）会先退到配对边界，输出里不会出现孤立代理项，UTF-8 往返一致。
+- **shell 输出保留报错行。** 工具名是 `bash`/`shell`/`exec`/`run`/`terminal`/`command` 时，被省略的区间里若有报错行（`error`/`failed`/`fatal`/`panic`/`exception`/`traceback`/`denied`/`refused`/`timeout`/`cannot`/`unable`/`not found`，或以 `✖`/`✗`/`FAIL`/`ERR!` 开头），会把它们连同行号塞进同一条标记：`… [fast-mode: elided 61044 chars, lines 41–812; kept 2 matching lines 121:FAIL … | 400:error: …] …`。默认最多 12 条，总长不超过压缩预算的四分之一；带出的行里的 `[` 与 `]` 换成 `)`，保证标记仍是单行、单标记。
 - **grep 折叠。** 工具名含 `grep`，或正文形如 `path:line:` 时：同一文件超过 `maxPerFile` 条只留前几条，加一行 `… [fast-mode: M more matches in <file>] …`；折叠后总命中超过 `maxMatches` 再加一行 `… [fast-mode: K more matches elided] …`。
 - **read 类只做头尾。** 名字含 `read`/`view`/`open` 时不做 grep 折叠，避免把正文里的 `xx:12:` 误当命中。
 - **幂等。** 输出里只要已经含 `[fast-mode: …]` 标记，再压缩一次返回 `changed: false`、文本不变。所以接线即使对同一结果多压一遍也不会二次截断。
-- `kind` 取值：`none`（未改）、`text`（普通头尾截断）、`read`（read 类头尾截断）、`grep`（发生了折叠）。
+- `kind` 取值：`none`（未改）、`text`（普通头尾截断）、`read`（read 类头尾截断）、`shell`（shell 输出头尾截断，可能带回报错行）、`grep`（发生了折叠）。
 
 ## 二、重复读去重 `createReadCache`
 

@@ -25,12 +25,50 @@ const MARK = /\[fast-mode: [^\]\n]*\]/
 /** `path:line: text` — the shape a recursive grep prints. */
 const GREP_LINE = /^(.+?):(\d+):/
 
+/**
+ * A shell result is not a document: the line that matters is often the single
+ * failure line in the middle of a thousand lines of build chatter. These are
+ * the lines worth carrying out of the elided band.
+ */
+const SALIENT = /(?:^|[^a-z])(?:error|errors|failed|failure|fatal|panic|exception|traceback|denied|refused|timeout|timed out|cannot|can't|unable|not found|no such file)\b|^\s*(?:✖|✗|×|FAIL|ERR!)/i
+
+/** Tool names whose output is line-oriented shell chatter. */
+const SHELL_LIKE = /^(?:bash|shell|sh|exec|run|terminal|command)$/i
+
+const KEEP_MAX_CHARS = 240
+
+/** Lines matching SALIENT whose whole line starts inside [from, to). */
+function salientLines(text, from, to, limit, budget) {
+  const kept = []
+  let used = 0
+  let start = from
+  let lineNo = countNewlines(text, from) + 1
+  while (start < to && kept.length < limit) {
+    let end = text.indexOf('\n', start)
+    if (end === -1 || end > to) end = to
+    const line = text.slice(start, end)
+    if (SALIENT.test(line)) {
+      const body = line.length > KEEP_MAX_CHARS ? `${line.slice(0, KEEP_MAX_CHARS)}…` : line
+      // `]` would end the marker early; `|` is already the separator.
+      const safe = body.trimStart().replace(/[\]|]/g, ')')
+      const entry = `${lineNo}:${safe}`
+      if (used + entry.length > budget) break
+      used += entry.length + 3
+      kept.push(entry)
+    }
+    start = end + 1
+    lineNo += 1
+  }
+  return kept
+}
+
 const DEFAULTS = {
   maxChars: 8000,
   headRatio: 0.4,
   tailRatio: 0.25,
   maxPerFile: 5,
   maxMatches: 120,
+  keepMatches: 12,
 }
 
 const isHigh = (c) => c >= 0xd800 && c <= 0xdbff
@@ -65,6 +103,7 @@ function normalize(policy) {
     headRatio: clampRatio(finite(p.headRatio, DEFAULTS.headRatio)),
     tailRatio: clampRatio(finite(p.tailRatio, DEFAULTS.tailRatio)),
     maxPerFile: Math.max(1, Math.floor(finite(p.maxPerFile, DEFAULTS.maxPerFile))),
+    keepMatches: Math.max(0, Math.floor(finite(p.keepMatches, DEFAULTS.keepMatches))),
     maxMatches: Math.max(1, Math.floor(finite(p.maxMatches, DEFAULTS.maxMatches))),
   }
 }
@@ -87,7 +126,7 @@ const unchanged = (text, kind = 'none') => ({
  * Budgets are shares of `maxChars`, not of the original: a 1 MB result must not
  * come back as a 650 KB one.
  */
-function headTail(text, maxChars, headRatio, tailRatio) {
+function headTail(text, maxChars, headRatio, tailRatio, keep = null) {
   const total = text.length
   const headAt = Math.min(total, Math.max(1, Math.floor(maxChars * headRatio)))
   const tailAt = Math.max(0, total - Math.max(1, Math.floor(maxChars * tailRatio)))
@@ -106,8 +145,19 @@ function headTail(text, maxChars, headRatio, tailRatio) {
   const newlinesBefore = countNewlines(text, tailStart)
   const firstElidedLine = countNewlines(text, headEnd) + 1
   const range = newlinesBefore > 0 ? `, lines ${firstElidedLine}–${newlinesBefore}` : ''
+
+  // Shell output: the one failure line usually sits inside the band being cut,
+  // so carry the matching lines inside the same marker instead of dropping
+  // them. Still exactly one marker, so the middle stays a single replacement.
+  const kept = Array.isArray(keep)
+    ? salientLines(text, headEnd, tailStart, keep[0], keep[1])
+    : []
+  const carried = kept.length > 0
+    ? `; kept ${kept.length} matching ${kept.length === 1 ? 'line' : 'lines'} ${kept.join(' | ')}`
+    : ''
+
   return {
-    text: `${text.slice(0, headEnd)}… [fast-mode: elided ${elided} chars${range}] …${text.slice(tailStart)}`,
+    text: `${text.slice(0, headEnd)}… [fast-mode: elided ${elided} chars${range}${carried}] …${text.slice(tailStart)}`,
     elided,
   }
 }
@@ -184,9 +234,10 @@ function foldGrep(text, maxPerFile, maxMatches) {
 /**
  * @param {{ name?: string, args?: unknown, text?: string, isError?: boolean }} result
  * @param {{ enabled?: boolean, maxChars?: number, headRatio?: number,
- *           tailRatio?: number, maxPerFile?: number, maxMatches?: number }} [policy]
+ *           tailRatio?: number, maxPerFile?: number, maxMatches?: number,
+ *           keepMatches?: number }} [policy]
  * @returns {{ text: string, changed: boolean, originalChars: number,
- *             compactedChars: number, kind: 'none' | 'grep' | 'read' | 'text' }}
+ *             compactedChars: number, kind: 'none' | 'grep' | 'read' | 'shell' | 'text' }}
  */
 export function compactResult(result, policy) {
   const { name, text, isError } = result ?? {}
@@ -198,7 +249,8 @@ export function compactResult(result, policy) {
   if (!p.enabled || text.length <= p.maxChars) return unchanged(text)
 
   const readLike = typeof name === 'string' && /read|view|open/i.test(name)
-  const grepLike = !readLike && isGrepLike(name, text)
+  const shellLike = typeof name === 'string' && SHELL_LIKE.test(name.trim())
+  const grepLike = !readLike && !shellLike && isGrepLike(name, text)
 
   let body = text
   let kind = readLike ? 'read' : 'text'
@@ -214,11 +266,14 @@ export function compactResult(result, policy) {
   }
 
   if (body.length > p.maxChars) {
-    const cut = headTail(body, p.maxChars, p.headRatio, p.tailRatio)
+    const keep = shellLike && p.keepMatches > 0
+      ? [p.keepMatches, Math.floor(p.maxChars * 0.25)]
+      : null
+    const cut = headTail(body, p.maxChars, p.headRatio, p.tailRatio, keep)
     if (cut) {
       body = cut.text
       changed = true
-      if (kind !== 'grep') kind = readLike ? 'read' : 'text'
+      if (kind !== 'grep') kind = shellLike ? 'shell' : readLike ? 'read' : 'text'
     }
   }
 
