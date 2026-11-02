@@ -110,8 +110,15 @@ function fakeRemote(initial = { enabled: false, gear: 'fast' }, { writable = tru
   }
 }
 
-/** A context shaped like the client root, capturing whatever the bundle registers. */
-function fakeContext(remote) {
+/**
+ * A context shaped like the client root, capturing whatever the bundle registers.
+ *
+ * `sessions` models the optional session-controller facade. Without it the
+ * bundle has no `ctx.inject`, which is the shipped-but-lighter case the footer
+ * has to survive; with it, `inject` hands back the real shape: the facade owns
+ * a `list` store and each listed session carries its projection values.
+ */
+function fakeContext(remote, sessions) {
   const registered = []
   const injected = []
   const labels = []
@@ -128,6 +135,14 @@ function fakeContext(remote) {
       register: (ns, dict) => { labels.push({ ns, dict }); return () => {} },
       bind: (ns) => (key, params) => `[${ns}] ${key}${params ? ` ${JSON.stringify(params)}` : ''}`,
     },
+    ...(sessions === undefined ? {} : {
+      inject(deps, callback) {
+        assert.deepEqual([...deps], ['sessions'])
+        const dispose = []
+        callback({ sessions, on: (event, fn) => { dispose.push(fn) } })
+        return () => { for (const fn of dispose) fn() }
+      },
+    }),
     slots: {
       inject(key, callback) {
         injected.push(key)
@@ -150,8 +165,8 @@ function fakeContext(remote) {
  * `undefined` to model a page that injects nothing, and pass props to `render` to
  * model the standard-prop spelling instead.
  */
-async function mount(remote, sessionId = 'session-alpha') {
-  const ctx = fakeContext(remote)
+async function mount(remote, sessionId = 'session-alpha', sessions) {
+  const ctx = fakeContext(remote, sessions)
   const { module } = loadClient(remote)
   module.apply(ctx)
   await sleep(5)
@@ -197,10 +212,13 @@ test('it registers one chip on the composer slot beside the model selector, neve
   module.apply(ctx)
   await sleep(5)
 
-  assert.deepEqual([...ctx.injected], ['conversation.input.activity'])
+  assert.deepEqual([...ctx.injected], ['conversation.input.right'])
   assert.equal(ctx.registered.length, 1)
   const { options } = ctx.registered[0]
-  assert.equal(options.name, 'conversation.input.activity')
+  assert.equal(options.name, 'conversation.input.right', 'a list slot, so it cannot be shadowed')
+  assert.equal(options.id, 'fast-mode', 'a list slot requires an id')
+  assert.equal(options.order, 70, 'lands just before the voice-mode mic at 80')
+  assert.notEqual(options.name, 'conversation.input.activity', 'that slot is single and would shadow')
   assert.equal(options.locale, 'fast-mode', 'the chip must own a dictionary namespace')
   assert.equal(options.inject().remote, remote, 'the component needs the settings remote')
   assert.equal(ctx.labels.length, 1, 'dictionaries are registered once')
@@ -851,4 +869,73 @@ test('all three panel writes pass the host gate and read back as the channel val
   assert.equal(remote.state.stored.workspaceMap, undefined, 'the shared default never moved')
   await rightClick(render)
   assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'and it reads back through describe()')
+})
+
+/**
+ * The session-controller facade as the client actually meets it: `list` is a
+ * store, and the projections hang off each listed session rather than off the
+ * facade. This is the shape that made an earlier footer read nothing.
+ */
+function fakeSessions(byId) {
+  const listeners = new Set()
+  const snapshot = { byId }
+  return {
+    list: {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    },
+    /** Push a new snapshot and notify, the way a projection tick does. */
+    set(next) {
+      snapshot.byId = next
+      for (const listener of [...listeners]) listener()
+    },
+    listeners,
+  }
+}
+
+test('the footer reads the counts off the session store, not off the facade', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const sessions = fakeSessions({
+    'session-alpha': {
+      projectionValues: { sessionStats: { steps: 12 }, tokenUsage: { outputTokens: 3200 } },
+    },
+  })
+  const { render } = await mount(remote, 'session-alpha', sessions)
+  await rightClick(render)
+  const footer = panelOf(render()).children.at(-1)
+  assert.equal(footer.props.className, 'fm-panel__scope')
+  assert.equal(footer.children[0], 'panel.saved {"steps":"12","tokens":"3.2k"}', 'both counts, compacted')
+  assert.equal(footer.props.title, 'panel.saved {"steps":"12","tokens":"3200"}', 'the tooltip keeps the raw number')
+  assert.equal(remote.calls.length, 0, 'reading a readout is not a write')
+})
+
+test('one changed readout repaints the footer once the projection ticks', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const sessions = fakeSessions({
+    'session-alpha': { projectionValues: { sessionStats: { steps: 3 } } },
+  })
+  const { render } = await mount(remote, 'session-alpha', sessions)
+  await rightClick(render)
+  assert.equal(panelOf(render()).children.at(-1).children[0], 'panel.savedSteps {"steps":"3"}')
+  sessions.set({ 'session-alpha': { projectionValues: { sessionStats: { steps: 4 } } } })
+  assert.equal(panelOf(render()).children.at(-1).children[0], 'panel.savedSteps {"steps":"4"}', 'the tick reached the footer')
+  sessions.set({ 'session-alpha': {} })
+  assert.equal(panelOf(render()).children.at(-1).children[0], 'panel.scope', 'and a session without projections falls back quietly')
+})
+
+test('a build without the session service still paints the chip and the scope line', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote, 'session-alpha')
+  await rightClick(render)
+  assert.equal(panelOf(render()).children.at(-1).children[0], 'panel.scope')
+  assert.equal(boltOf(render()).props['aria-pressed'], true, 'the switch itself never depended on the readout')
+})
+
+test('the slot injects the conversation id under both spellings', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { ctx } = await mount(remote, 'session-alpha')
+  const { options } = ctx.registered[0]
+  assert.equal(options.inject('session-alpha').chatId, 'session-alpha', 'the standard prop spelling')
+  assert.equal(options.inject('session-alpha').sessionId, undefined, 'and only that one is set')
+  assert.equal(options.inject(undefined).chatId, undefined, 'a page-level slot injects no conversation')
 })

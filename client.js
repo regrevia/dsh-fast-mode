@@ -8,10 +8,12 @@
  * click writes `{ enabled }` or `{ gear }` to this entry's user layer, the Loader
  * re-applies the settings half, and the policy changes on the next model call.
  *
- * Why the chip lives in `conversation.input.activity`: that slot is the one
- * place the composer renders *after* the standard controls and *before* the stop
- * button — beside the model selector, which is where a speed switch belongs.
- * Occupying `conversation.input.model` instead would shadow the shipped
+ * Why the chip lives in `conversation.input.right`: that slot is a *list* — every
+ * entry renders beside the others, keyed by `id` and ordered by `order` — so the
+ * chip can never be shadowed. The single slots nearby (`conversation.input.activity`,
+ * `conversation.input.model`) render only `entriesOfSlot(slotKey)[0]`, so a second
+ * registrant (the shipped plan chip, the voice-mode mic) silently replaces this
+ * one. Occupying `conversation.input.model` would also shadow the shipped
  * selector, so this bundle never does.
  *
  * ## Never a dead button
@@ -56,7 +58,7 @@ window.__ModuleLoader__.load({
     /** Dictionary namespace owned by this client half. */
     const NS = 'fast-mode'
     /** Composer slot: beside the model selector, left of the stop button. */
-    const SLOT = 'conversation.input.activity'
+    const SLOT = 'conversation.input.right'
     const STYLE_ID = 'dsh-fast-mode/chip.css'
     /**
      * Entry ids this plugin may be mounted under. The patch id in
@@ -1297,25 +1299,45 @@ window.__ModuleLoader__.load({
         ctx.inject(['sessions'], (scope) => {
           const sessions = scope.sessions
           if (sessions === null || typeof sessions !== 'object') return
+          // `sessions` here is the session-controller facade: it owns the list
+          // store and delegates the rest to `manager`. Projection values hang
+          // off each listed session, so the readout reads the store snapshot
+          // (the same source other client plugins use) instead of guessing a
+          // method name on the facade.
+          const source =
+            typeof sessions.projectionValues === 'function'
+              ? (sessionId) => sessions.projectionValues(sessionId)
+              : typeof sessions.manager?.projectionValues === 'function'
+                ? (sessionId) => sessions.manager.projectionValues(sessionId)
+                : typeof sessions.list?.getSnapshot === 'function'
+                  ? (sessionId) => sessions.list.getSnapshot()?.byId?.[sessionId]?.projectionValues
+                  : undefined
+          if (source === undefined) return
+          projectionSource = source
+
           let unsubscribe
           const cleanup = () => {
             projectionSource = undefined
             if (typeof unsubscribe === 'function') unsubscribe()
           }
           if (typeof scope.on === 'function') scope.on('dispose', cleanup)
-          if (typeof sessions.projectionValues === 'function') {
-            projectionSource = sessionId => sessions.projectionValues(sessionId)
-          }
-          if (typeof sessions.subscribe !== 'function') return
+
           // One re-render per changed readout, not one per projection tick:
           // `subscribe` fires for every projection of every conversation.
+          const subscribe =
+            typeof sessions.list?.subscribe === 'function'
+              ? listener => sessions.list.subscribe(listener)
+              : typeof sessions.subscribe === 'function'
+                ? listener => sessions.subscribe(listener)
+                : undefined
+          if (subscribe === undefined) return
           let seen = ''
           const signature = () => {
             const stats = readStats(store.sessionId)
             return stats === undefined ? '' : `${stats.steps}|${stats.tokens}`
           }
           seen = signature()
-          unsubscribe = sessions.subscribe(() => {
+          unsubscribe = subscribe(() => {
             const next = signature()
             if (next === seen) return
             seen = next
@@ -1339,6 +1361,10 @@ window.__ModuleLoader__.load({
       try {
         ctx.slots.inject(SLOT, () => ctx.slots.register({
           name: SLOT,
+          // A list slot rejects a registration without an id, and the order is
+          // what puts the chip before the voice-mode mic (order 80).
+          id: 'fast-mode',
+          order: 70,
           locale: NS,
           // The activity slot is session-scoped (`scope: "session"` in the
           // composer tree), and the kit calls this factory with the binding key

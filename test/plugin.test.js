@@ -457,8 +457,10 @@ test('the manifest ships everything a plugin manager reads before activation', a
   const client = await readFile(new URL('client.js', root), 'utf8')
   assert.match(client, /__ModuleLoader__\.load\(/)
   assert.match(client, /id: 'dsh-fast-mode'/)
-  assert.match(client, /const SLOT = 'conversation\.input\.activity'/)
+  assert.match(client, /const SLOT = 'conversation\.input\.right'/, 'the chip needs a list slot')
+  assert.match(client, /id: 'fast-mode',\s*\n\s*order: 70,/, 'a list registration carries id and order')
   assert.doesNotMatch(client, /const SLOT = 'conversation\.input\.model'/, 'never shadow the shipped model selector')
+  assert.doesNotMatch(client, /const SLOT = 'conversation\.input\.activity'/, 'that slot is single: a second registrant hides the chip')
 })
 
 test('an experiment assignment picks the gear and turns the mode on by itself', async () => {

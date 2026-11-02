@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.7.5** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行（只数设置项；闪电本身就是开关，不占行），七行都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒；1.7.5 在标题行右侧加了三档并行宽度，行数仍为七行），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.7.7** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行（只数设置项；闪电本身就是开关，不占行），七行都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒；1.7.5 在标题行右侧加了三档并行宽度，行数仍为七行；1.7.6 让省略标记同时报出字符数与缺失的行区间；1.7.7 把闪电挪到模型选择器旁的 list 槽，并修正页脚计数的读取通道），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **默认契约：Fast 模式不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort`、路由名记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -10,8 +10,8 @@
 
 ## 交互细节：闪电开关与会话归属
 
-- **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回；这一下只写当前会话。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
-- **右键是面板。** 右键闪电打开面板，标题是「更快」，下面是 7 行，7 行都只影响当前会话："精简输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"开局附文件清单"（`workspaceMap`）、"批量读文件"（`openBatch`）、"不确定先查证"（`probeFirst`）、"先执行后解释"（`actBeforePlan`）、"重复时换方法"（`repeatNudge`）。7 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准就读一次，省的是猜错后的重来」、`actBeforePlan`「最多一行计划，想清楚就直接做」、`repeatNudge`「同一调用重发、或连续三步结果一样时提醒换法」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **左键是开关，右键是面板。** 会话输入区右侧的控制槽（`conversation.input.right`，list 槽，按 `id`/`order` 与别的控件并排）里有一个闪电按钮：关闭时空心，开启时实心。左键切换开关，再点一下切回；这一下只写当前会话。没用单值槽（`conversation.input.activity`）是因为它只渲染第一个注册者，会和计划按钮、语音麦克风互相顶掉。
+- **面板在右键里。** 右键闪电打开面板，标题是「更快」，标题行右侧是三档（保守 / 标准 / 激进），下面 7 行，7 行都只影响当前会话："精简输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"开局附文件清单"（`workspaceMap`）、"批量读文件"（`openBatch`）、"不确定先查证"（`probeFirst`）、"先执行后解释"（`actBeforePlan`）、"重复时换方法"（`repeatNudge`）。7 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准就读一次，省的是猜错后的重来」、`actBeforePlan`「最多一行计划，想清楚就直接做」、`repeatNudge`「同一调用重发、或连续三步结果一样时提醒换法」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
 - **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap`、`openBatch`、`probeFirst`、`actBeforePlan`、`repeatNudge` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 精简输出`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
 - **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 点击关闭 · 右键设置"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
