@@ -472,10 +472,10 @@ export function armPatch(style, enabled, extra = {}) {
   // the key is at best a parse error and at worst a different tree that loads.
   const insert = style === 'insert'
   const indent = insert ? '      ' : '    '
-  const config = [`${indent}enabled: ${enabled ? 'true' : 'false'}`, `${indent}gear: auto`]
-  for (const [key, value] of Object.entries(extra)) {
-    config.push(`${indent}${key}: ${yamlScalar(value)}`)
-  }
+  // 覆盖来的键要顶掉同名的基础键：YAML 里同一个 key 写两遍，严格解析器会直接报错，
+  // 宽松的只会留最后一个——两种结果都不该由一条 --on-config 决定。
+  const merged = { enabled, gear: 'auto', ...extra }
+  const config = Object.entries(merged).map(([key, value]) => `${indent}${key}: ${yamlScalar(value)}`)
   if (insert) {
     return ['- insert:', '  - id: fast-mode', '    name: dsh-fast-mode', '    config:', ...config, ''].join('\n')
   }

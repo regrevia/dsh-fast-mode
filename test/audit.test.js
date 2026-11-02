@@ -251,6 +251,10 @@ test('--on-config 把值写成 YAML 原生类型，重复项合并成一个配�
   assert.throws(() => parseConfigPairs(['1bad=true']), /键名不合法/)
 
   // 后写的键覆盖先写的，且只作用于 on 臂
+  const gears = armPatch('override', true, { gear: 'fast' })
+  assert.equal(gears.split('\n').filter(l => l.trim().startsWith('gear:')).length, 1, 'gear 只能出现一次')
+  assert.match(gears, /^    gear: fast$/m)
+
   const on = armPatch('override', true, { compactResults: true })
   assert.match(on, /^    compactResults: true$/m)
   assert.match(on, /^    enabled: true$/m)
