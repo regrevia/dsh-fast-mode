@@ -1,0 +1,372 @@
+/**
+ * The two things the panel learned that this half cannot get from its own
+ * settings column: the three-way tier control on the title row, and the footer
+ * that reports the conversation's real steps and output.
+ *
+ * Same sandbox as `client.test.js` (the bundle is executed as shipped, with a
+ * fake `react` that returns data), plus a fake `sessions` service so the footer
+ * path is exercised against the projection shape the session controller really
+ * hands out: `projectionValues(id)` -> `{ sessionStats: { steps }, tokenUsage:
+ * { outputTokens } }`.
+ */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+import vm from 'node:vm'
+
+const SOURCE = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+
+const react = {
+  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+  useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+  useEffect: (effect) => { effect() },
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+function loadClient() {
+  const loaded = []
+  const sandbox = {
+    window: {
+      __ModuleLoader__: { load: (bundle) => loaded.push(bundle) },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    document: {
+      querySelector: () => null,
+      createElement: () => ({ dataset: {}, textContent: '', remove() {} }),
+      head: { appendChild: () => {} },
+    },
+    setTimeout,
+    clearTimeout,
+    console,
+  }
+  vm.runInNewContext(SOURCE, sandbox, { filename: 'client.js' })
+  assert.equal(loaded.length, 1)
+  return loaded[0].factory((name) => {
+    assert.equal(name, 'react', 'the bundle may only require react')
+    return react
+  })
+}
+
+function fakeRemote(initial = { enabled: true, gear: 'auto' }) {
+  const state = { value: { ...initial }, revision: 3 }
+  const calls = []
+  return {
+    calls,
+    state,
+    settings: {
+      async describe() {
+        return {
+          ok: true,
+          value: {
+            writable: true,
+            hasDocument: true,
+            namespaces: [{ ns: 'fast-mode', autoGenerate: true, schema: {}, value: { ...state.value }, applies: 'live', secrets: [], revision: state.revision }],
+          },
+        }
+      },
+      async update(ns, patch, revision) {
+        calls.push({ ns, patch, revision })
+        state.value = { ...state.value, ...patch }
+        state.revision += 1
+        return {
+          ok: true,
+          value: { ns, autoGenerate: true, schema: {}, value: { ...state.value }, applies: 'live', secrets: [], revision: state.revision },
+        }
+      },
+    },
+  }
+}
+
+/**
+ * A context with the sessions service:
+ * `values` is what `projectionValues` answers for any id it is asked about,
+ * `subscribe` records its listener so a test can push an update through it.
+ */
+function fakeContext(remote, { sessions } = {}) {
+  const registered = []
+  const labels = []
+  const disposes = []
+  const listeners = []
+  let disposed = false
+  const injectors = []
+  const ctx = {
+    registered,
+    labels,
+    listeners,
+    get disposed() { return disposed },
+    effect(fn) {
+      const dispose = fn()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+    logger: { warn: () => {}, info: () => {} },
+    locale: {
+      register: (ns, dict) => { labels.push({ ns, dict }); return () => {} },
+      bind: (ns) => (key, params) => (params === undefined ? key : `${key} ${JSON.stringify(params)}`),
+    },
+    slots: {
+      inject(key, callback) { callback() },
+      register(options, component) {
+        registered.push({ options, component })
+        return () => {}
+      },
+    },
+    remote,
+  }
+  if (sessions) {
+    ctx.inject = (names, callback) => {
+      injectors.push(names)
+      callback({
+        sessions,
+        on(name, fn) { if (name === 'dispose') disposes.push(fn) },
+      })
+    }
+  }
+  ctx.dispose = () => {
+    disposed = true
+    for (const fn of disposes) fn()
+  }
+  return ctx
+}
+
+function fakeSessions(values) {
+  const listeners = []
+  const api = {
+    values,
+    listeners,
+    projectionValues: () => api.values,
+    subscribe(listener) { listeners.push(listener); return () => { listeners.splice(listeners.indexOf(listener), 1) } },
+  }
+  return api
+}
+
+async function mount(remote, sessionId = 'session-alpha', options = {}) {
+  const ctx = fakeContext(remote, options)
+  const module = loadClient()
+  module.apply(ctx)
+  await sleep(5)
+  const { component, options: registration } = ctx.registered[0]
+  const t = (key, params) => (params === undefined ? key : `${key} ${JSON.stringify(params)}`)
+  const render = (extra = {}) => component({ t, ...registration.inject(sessionId), ...extra })
+  render()
+  await sleep(10)
+  return { ctx, module, render, t }
+}
+
+const boltOf = tree => tree.children[0]
+const panelOf = tree => tree.children[1]
+
+async function openPanel(render) {
+  let tree = render()
+  if (!panelOf(tree)) {
+    boltOf(tree).props.onContextMenu({ preventDefault() {} })
+    await sleep(10)
+    tree = render()
+  }
+  return panelOf(tree)
+}
+
+const titleRowOf = panel => panel.children[0]
+// `map` is handed to `createElement` as one child, which real react walks;
+// flatten it so a test can address a tier by index.
+const gearOf = (panel) => {
+  const group = titleRowOf(panel).children[1]
+  return { ...group, children: group.children.flat() }
+}
+const footerOf = panel => panel.children[panel.children.length - 1]
+
+const checkedOf = (control) => control.children.find(node => node.props['aria-checked'] === true)?.props.key
+
+/* ------------------------------------------------------------- three tiers */
+
+test('the title row keeps its words and grows a radiogroup of exactly three tiers', async () => {
+  const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
+  const row = titleRowOf(await openPanel(render))
+
+  assert.equal(row.children.length, 2, 'heading plus the control, nothing else')
+  assert.equal(row.children[0].props.className, 'fm-panel__heading')
+  assert.equal(row.children[0].children[0], 'panel.title', 'the frozen title text is untouched')
+
+  const gear = gearOf(await openPanel(render))
+  assert.equal(gear.props.role, 'radiogroup')
+  assert.equal(gear.props['aria-label'], 'panel.gear')
+  assert.equal(gear.props.title, 'panel.gearTitle', 'the group explains what the tiers do')
+  assert.equal(gear.children.length, 3, 'no fourth state creeps in')
+  for (const button of gear.children) {
+    assert.equal(button.props.role, 'radio')
+    assert.equal(button.props.type, 'button', 'a plain button, so Enter and Space both work')
+    assert.equal(button.props.className, 'fm-panel__gear')
+  }
+})
+
+test('the seven frozen rows keep their labels and their order', async () => {
+  const { render } = await mount(fakeRemote())
+  const panel = await openPanel(render)
+  const labels = panel.children.slice(1, -1).map(node => node.children[0].children[0])
+  assert.deepEqual(labels, [
+    'panel.prose',
+    'panel.budget',
+    'panel.map',
+    'panel.batch',
+    'panel.probe',
+    'panel.act',
+    'panel.repeat',
+  ])
+})
+
+test('every read-back gear lands on one tier, including the retired ladder', async () => {
+  const cases = [
+    ['safe', 'safe'],
+    ['auto', 'auto'],
+    ['fast', 'aggressive'],
+    ['aggressive', 'aggressive'],
+    ['turbo', 'auto'],
+    ['max', 'auto'],
+    ['ludicrous', 'auto'],
+    ['nonsense', 'auto'],
+    [undefined, 'auto'],
+  ]
+  for (const [stored, tier] of cases) {
+    const { render } = await mount(fakeRemote({ enabled: true, gear: stored }))
+    const gear = gearOf(await openPanel(render))
+    assert.equal(checkedOf(gear), tier, `${String(stored)} reads as ${tier}`)
+    assert.equal(gear.children.filter(button => button.props['aria-checked'] === true).length, 1, 'exactly one tier is checked')
+  }
+})
+
+test('a tier click writes only the gear, into this conversation, at the revision it read', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+  const { render } = await mount(remote, 'session-alpha')
+  const gear = gearOf(await openPanel(render))
+
+  gear.children[0].props.onClick()
+  await sleep(20)
+
+  assert.equal(remote.calls.length, 1)
+  assert.equal(remote.calls[0].ns, 'fast-mode')
+  assert.deepEqual(Object.keys(remote.calls[0].patch), ['sessions'], 'nothing shared is written')
+  const entry = JSON.parse(remote.calls[0].patch.sessions)['session-alpha']
+  assert.equal(entry.gear, 'safe')
+  assert.equal(entry.enabled, undefined, 'other switches are left as they were')
+  assert.equal(remote.calls[0].revision, 3)
+
+  const after = gearOf(await openPanel(render))
+  assert.equal(checkedOf(after), 'safe', 'the panel shows the new tier after the echo')
+})
+
+test('clicking the tier that is already checked writes nothing', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'aggressive' })
+  const { render } = await mount(remote)
+  const gear = gearOf(await openPanel(render))
+  gear.children[2].props.onClick()
+  await sleep(20)
+  assert.equal(remote.calls.length, 0)
+})
+
+test('arrow keys move between tiers and wrap; the checked one holds the tab stop', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'aggressive' })
+  const { render } = await mount(remote, 'session-alpha')
+  let gear = gearOf(await openPanel(render))
+
+  assert.equal(gear.children[2].props.tabIndex, 0)
+  assert.equal(gear.children[0].props.tabIndex, -1, 'roving tabindex: one stop for the whole group')
+
+  gear.children[2].props.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
+  await sleep(20)
+  assert.equal(JSON.parse(remote.calls[0].patch.sessions)['session-alpha'].gear, 'safe', 'right wraps past the last tier')
+
+  gear = gearOf(await openPanel(render))
+  gear.children[0].props.onKeyDown({ key: 'ArrowLeft', preventDefault() {} })
+  await sleep(20)
+  assert.equal(JSON.parse(remote.calls[1].patch.sessions)['session-alpha'].gear, 'aggressive', 'left wraps past the first tier')
+
+  gear = gearOf(await openPanel(render))
+  gear.children[1].props.onKeyDown({ key: 'ArrowUp', preventDefault() {} })
+  await sleep(20)
+  assert.equal(JSON.parse(remote.calls[2].patch.sessions)['session-alpha'].gear, 'safe')
+})
+
+test('a readonly configuration disables the tiers instead of swallowing the click', async () => {
+  const remote = fakeRemote()
+  const describe = remote.settings.describe
+  remote.settings.describe = async () => {
+    const answer = await describe()
+    answer.value.writable = false
+    return answer
+  }
+  const { render } = await mount(remote)
+  const gear = gearOf(await openPanel(render))
+  for (const button of gear.children) assert.equal(button.props.disabled, true)
+})
+
+/* ------------------------------------------------------------------ footer */
+
+test('without the sessions service the footer keeps its scope line and says why', async () => {
+  const { render } = await mount(fakeRemote())
+  const footer = footerOf(await openPanel(render))
+  assert.equal(footer.props.className, 'fm-panel__scope')
+  assert.equal(footer.props.title, 'panel.scopeTitle', 'the tooltip explains the silence')
+  assert.equal(footer.children[0], 'panel.scope', 'the shipped line survives')
+  assert.equal(/\d/.test(String(footer.children[0])), false, 'no number is invented')
+})
+
+test('with the projections the footer reports the real steps and output', async () => {
+  const sessions = fakeSessions({ sessionStats: { steps: 12 }, tokenUsage: { outputTokens: 3218 } })
+  const { render } = await mount(fakeRemote(), 'session-alpha', { sessions })
+  const footer = footerOf(await openPanel(render))
+
+  assert.equal(footer.children[0], 'panel.saved {"steps":"12","tokens":"3.2k"}', 'compact numbers')
+  assert.equal(footer.props.title, 'panel.saved {"steps":"12","tokens":"3218"}', 'the exact count rides in the tooltip')
+  assert.equal(/只影响本会话/.test(String(footer.children[0])), false)
+})
+
+test('a missing projection is omitted, never rendered as zero', async () => {
+  const stepsOnly = fakeSessions({ sessionStats: { steps: 7 } })
+  const first = await mount(fakeRemote(), 'session-alpha', { sessions: stepsOnly })
+  let footer = footerOf(await openPanel(first.render))
+  assert.equal(footer.children[0], 'panel.savedSteps {"steps":"7"}', 'steps alone')
+  assert.equal(/0/.test(footer.children[0]), false)
+
+  const tokensOnly = fakeSessions({ tokenUsage: { outputTokens: 1200 } })
+  const second = await mount(fakeRemote(), 'session-alpha', { sessions: tokensOnly })
+  footer = footerOf(await openPanel(second.render))
+  assert.equal(footer.children[0], 'panel.savedTokens {"tokens":"1.2k"}', 'output alone')
+
+  const empty = fakeSessions({})
+  const third = await mount(fakeRemote(), 'session-alpha', { sessions: empty })
+  footer = footerOf(await openPanel(third.render))
+  assert.equal(footer.children[0], 'panel.scope', 'nothing to report keeps the scope line')
+})
+
+test('a projection push repaints the footer, and dispose unhooks it', async () => {
+  const sessions = fakeSessions({ sessionStats: { steps: 2 }, tokenUsage: { outputTokens: 40 } })
+  const { render, ctx } = await mount(fakeRemote(), 'session-alpha', { sessions })
+  assert.equal(footerOf(await openPanel(render)).children[0], 'panel.saved {"steps":"2","tokens":"40"}')
+  assert.equal(sessions.listeners.length, 1, 'one subscription for the whole panel')
+
+  sessions.values = { sessionStats: { steps: 9 }, tokenUsage: { outputTokens: 20480 } }
+  sessions.listeners[0]()
+  assert.equal(footerOf(await openPanel(render)).children[0], 'panel.saved {"steps":"9","tokens":"20.5k"}')
+
+  ctx.dispose()
+  assert.equal(sessions.listeners.length, 0, 'the listener goes with the plugin')
+  assert.equal(footerOf(await openPanel(render)).children[0], 'panel.scope', 'and the footer falls back')
+})
+
+test('a throwing projection does not take the panel down', async () => {
+  const sessions = fakeSessions({})
+  sessions.projectionValues = () => { throw new Error('not mounted') }
+  const { render } = await mount(fakeRemote(), 'session-alpha', { sessions })
+  const footer = footerOf(await openPanel(render))
+  assert.equal(footer.children[0], 'panel.scope')
+})
+
+test('the copy offers no benefit percentage anywhere, only counts', async () => {
+  const { ctx } = await mount(fakeRemote())
+  const dict = ctx.labels[0].dict
+  const text = JSON.stringify(dict)
+  assert.equal(/[×x]\s*\d|\d+\s*%|快\s*\d|省\s*\d/.test(text), false, 'no multiplier and no percentage claim')
+  assert.match(dict.zh['panel.saved'], /\{steps\}.*\{tokens\}/, 'the compact line is two counts')
+  assert.match(dict.en['panel.saved'], /\{steps\}.*\{tokens\}/)
+})

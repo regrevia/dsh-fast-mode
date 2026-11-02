@@ -551,7 +551,7 @@ test('two conversations, one settings column: each runs at its own entry', async
     benchmarkFile: '',
     sessions: JSON.stringify({
       'session-quiet': { enabled: false },
-      'session-pinned': { enabled: true, gear: 'fast' },
+      'session-pinned': { enabled: true, gear: 'aggressive' },
     }),
   })
 
@@ -565,7 +565,7 @@ test('two conversations, one settings column: each runs at its own entry', async
   }
 
   assert.equal(await run('session-quiet'), '', 'a conversation that turned the mode off is handed back untouched')
-  assert.match(await run('session-pinned'), /up to 4 independent calls/, 'the pinned entry sets its own width')
+  assert.match(await run('session-pinned'), /up to 8 independent calls/, 'the pinned entry sets its own width')
 
 
   // An entry is authoritative for its conversation and inapplicable to the

@@ -73,10 +73,11 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   const root = visit(json.uid)
   assert.equal(root.type, 'object')
   assert.deepEqual(Object.keys(root.dict).sort(), [
-    'actBeforePlan', 'batchVerify', 'benchmarkFile', 'compactRereadHint', 'disciplineAfterSteps',
+    'actBeforePlan', 'batchVerify', 'benchmarkFile', 'compactMaxChars', 'compactRereadHint', 'compactResults',
+    'disciplineAfterSteps',
     'disciplineEarlyCalls', 'disciplineRepeatAtSteps', 'enabled', 'fanoutWidth', 'finishLineSteps', 'gear',
     'guidance', 'mapEntries', 'metrics', 'metricsFile', 'openBatch', 'outputBudget', 'outputBudgetAfterSteps',
-    'outputDiscipline', 'parallel', 'preferPatch', 'probeFirst', 'reassertAfterCompaction', 'repeatNudge',
+    'outputDiscipline', 'parallel', 'preferPatch', 'probeFirst', 'readCache', 'reassertAfterCompaction', 'repeatNudge',
     'scheduler', 'sessions', 'shapeGate', 'shellParallel', 'stallGuard', 'stepBudget', 'toolTimeoutMs',
     'workspaceMap',
   ])

@@ -73,13 +73,17 @@ test('outputDiscipline: false keeps the fan-out and drops the prose rules', () =
   assert.doesNotMatch(text, /visible text is charged at the same rate/, 'the user asked for verbose answers')
 })
 
-test('the discipline can be light without touching the width', () => {
-  // `fast` survived only as an experiment arm; a patch naming it runs `auto`, so
-  // this assertion has to pin the arm explicitly.
-  const light = buildGuidance(resolveConfig(BASE, { enabled: true, gear: 'fast' }))
-  assert.match(light, /up to 4 independent calls per message/)
-  assert.match(light, /visible text is charged at the same rate/)
-  assert.doesNotMatch(light, /a bare call is cheaper than a narrated one/, 'fast keeps the light variant')
+test('a pinned `fast` is the panel\'s aggressive tier, not the retired level-2 id', () => {
+  // The first client bundle wrote `fast` for the tier now called `aggressive`.
+  // A per-session entry that still carries that id must get the aggressive width
+  // and discipline, not the old level-2 preset; a patch naming `fast` (unpinned)
+  // still degrades to `auto`, which test/effort.test.js pins.
+  const pinnedFast = resolveConfig(BASE, { enabled: true, gear: 'fast' })
+  const pinnedAggressive = resolveConfig(BASE, { enabled: true, gear: 'aggressive' })
+  assert.deepEqual(pinnedFast, pinnedAggressive, 'the alias resolves to one gear, not two')
+  assert.equal(pinnedFast.parallel, 8)
+  assert.equal(pinnedFast.discipline, 'full')
+  assert.match(buildGuidance(pinnedFast), /up to 8 independent calls per message/)
 })
 
 test('the guidance stays small in absolute terms', () => {

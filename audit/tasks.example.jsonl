@@ -1,0 +1,16 @@
+# audit 任务清单示例：每行一个 JSON 对象，{id, prompt, check?}。
+# 以 # 开头的行和空行会被跳过，可以当注释写。
+#
+# prompt  交给 dsh 的一次性任务；两个臂跑的是同一句话。
+# check   可选。在目标仓库里用 /bin/sh 执行，退出码 0 记为 pass。
+#         它不是"给答案打分"——自由文本答案没法自动判分。它守的是另一件事：
+#         这轮跑完仓库还是好的（能解析、测试还在、文件没被改坏），
+#         以及任务要读的东西确实存在。所以这里全是只读的便宜命令。
+#
+# 换成你自己仓库的任务时，优先选：真要花时间读多个文件、要跑一次测试、
+# 要跨文件追踪调用链的活。一句话就能答完的任务测出来的只会是启动开销。
+{"id": "list-files", "prompt": "列出仓库根目录下的所有文件和目录（一层即可），按名字排序，不要读任何文件内容。", "check": null}
+{"id": "read-package", "prompt": "读 package.json，回答三件事：包名、版本号、scripts 里有哪几个命令。", "check": "test -f package.json"}
+{"id": "grep-geomean", "prompt": "在 src/ 目录里找出所有做几何均值或对数求平均的代码位置，给出文件路径和行号，并说明各自算的是什么。", "check": "test -d src"}
+{"id": "run-tests", "prompt": "跑 node --test test/*.test.js，报告通过数和失败数；如果有失败，列出失败用例的名字。", "check": "test -d test"}
+{"id": "explain-config", "prompt": "读 src/effort.js，说明 resolveConfig 的判定顺序：哪些字段会回落到默认值，enabled 在什么情况下才算真。", "check": "test -f src/effort.js"}

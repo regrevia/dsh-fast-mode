@@ -63,6 +63,15 @@ export const GEARS = Object.freeze({
     discipline: 'full',
     adaptive: true,
   }),
+  // The user-facing "aggressive" level. Deliberately not a legacy id: it is
+  // resolved as a real fixed-width gear (no adaptive start) so picking it in the
+  // panel always means the same thing, and `resolveConfig` never rewrites it.
+  aggressive: Object.freeze({
+    level: 4,
+    parallel: 8,
+    directive: true,
+    discipline: 'full',
+  }),
   turbo: Object.freeze({
     level: 3,
     parallel: 6,
@@ -189,7 +198,12 @@ export function resolveConfig(raw, overrides) {
   // A legacy name in the user's own config becomes the scheduler; an explicit
   // override (experiment arm) is kept as written, including `off`.
   const legacyGear = !pinned && LEGACY_GEARS.includes(named) ? named : undefined
-  const gearName = legacyGear ? DEFAULT_GEAR : named
+  // The panel names its three tiers safe / auto / aggressive, but the first
+  // client bundle shipped writes `fast` for the aggressive tier. A *pinned*
+  // `fast` is therefore that tier, not the retired level-2 id: an experiment arm
+  // keeps whatever name it writes, and the panel keeps the width it asked for.
+  const pinnedAggressive = pinned && named === 'fast'
+  const gearName = legacyGear ? DEFAULT_GEAR : pinnedAggressive ? 'aggressive' : named
   const gear = GEARS[gearName] ?? GEARS[FALLBACK_GEAR]
 
   const number = (value, fallback, { positive = false } = {}) => {
@@ -285,6 +299,14 @@ export function resolveConfig(raw, overrides) {
     probeFirst: gear.directive && config.probeFirst === true,
     actBeforePlan: gear.directive && config.actBeforePlan === true,
     repeatNudge: gear.directive && config.repeatNudge === true,
+    /**
+     * Execution-layer levers, both opt-in and both off by default because they
+     * change what the model *sees* rather than how it is asked to work. The text
+     * they rewrite is the tool result the model would otherwise read in full.
+     */
+    compactResults: gear.directive && config.compactResults === true,
+    compactMaxChars: Math.max(200, Math.floor(number(config.compactMaxChars, 8000))),
+    readCache: gear.directive && config.readCache === true,
     /**
      * The stall guard, the one *hard* bound this plugin owns: it cancels a single
      * tool call at its deadline. On by default; `false` or a negative

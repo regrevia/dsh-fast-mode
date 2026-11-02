@@ -57,6 +57,7 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,6 +82,8 @@ import { buildWorkspaceMap } from './src/map.js'
 import { classifyEntry } from './src/shape.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
 import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
+import { compactResult } from './src/compact.js'
+import { createReadCache, statKey } from './src/readcache.js'
 import { createRecorder } from './src/metrics.js'
 import { readOutputTokens, readReasoningChars } from './src/usage.js'
 import { configOverridesFor } from './src/state.js'
@@ -111,7 +114,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.4'
+export const VERSION = '1.7.5'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -302,6 +305,56 @@ function contentDigest(content) {
     text = String(content)
   }
   return createHash('sha1').update(text).digest('hex').slice(0, 16)
+}
+
+/**
+ * The one text block a tool result carries, or `null` when the shape is anything
+ * else.
+ *
+ * Both execution-layer levers in 1.8 rewrite model-facing text, and rewriting a
+ * multi-block result would mean reconstructing its structure from a guess. A
+ * single-block result round-trips exactly: same shape, same keys, new text.
+ *
+ * @param {unknown} content - the tool result's content blocks.
+ * @returns {string | null}
+ */
+function singleTextContent(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content) || content.length !== 1) return null
+  const block = content[0]
+  if (!block || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return null
+  return block.text
+}
+
+/**
+ * The absolute path a call reads, when that read is safe to answer from cache.
+ *
+ * Only a whole-file `read` qualifies: a `read` with `offset`/`limit` (or the
+ * host's line-range aliases) returns a slice, and serving a slice from a cached
+ * whole file would be a different answer to the same call.
+ *
+ * @param {{ name?: unknown, arguments?: unknown, agent?: unknown }} exec
+ * @returns {string | null}
+ */
+function cacheableReadTarget(exec) {
+  if (!exec || exec.name !== 'read') return null
+  let args = exec.arguments
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args)
+    } catch {
+      return null
+    }
+  }
+  if (!args || typeof args !== 'object') return null
+  for (const field of ['offset', 'limit', 'start', 'end', 'lineStart', 'lineEnd', 'range']) {
+    if (args[field] !== undefined && args[field] !== null) return null
+  }
+  const raw = args.path ?? args.file_path ?? args.filePath ?? args.file
+  if (typeof raw !== 'string' || raw.length === 0) return null
+  if (raw.startsWith('/')) return raw
+  const cwd = exec.agent?.session?.header?.cwd
+  return typeof cwd === 'string' && cwd.length > 0 ? join(cwd, raw) : null
 }
 
 /**
@@ -526,6 +579,48 @@ export function apply(ctx, rawConfig) {
       }
     },
   })
+  // `readCache` (off by default, per session): a repeated whole-file read of a
+  // file whose `mtimeMs`/`size`/`inode` are unchanged is answered from the last
+  // result, so the second read costs one `stat` instead of a full read. A miss,
+  // a changed file, a slice read, or any error falls through to the real tool;
+  // a hit returns the exact text that tool returned last time.
+  const readCache = createReadCache({ maxEntries: 128, maxChars: 200000 })
+  ctx.on('tools/execute', async (exec, next) => {
+    let target = null
+    let cfg = null
+    try {
+      const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
+      cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      if (!cfg.enabled || !cfg.readCache) return next()
+      target = cacheableReadTarget(exec)
+    } catch {
+      return next()
+    }
+    if (target === null) return next()
+
+    let key = null
+    try {
+      key = statKey(await stat(target))
+    } catch {
+      key = null
+    }
+    if (key === null) return next()
+
+    const cached = readCache.lookup(target, key)
+    if (cached.hit) return { content: [{ type: 'text', text: cached.text }], isError: false }
+
+    const result = await next()
+    try {
+      if (result && result.isError !== true) {
+        const text = singleTextContent(result.content)
+        if (text !== null && text.length <= 200000) readCache.store(target, text, key)
+      }
+    } catch {
+      // Caching is best-effort; the result is already decided.
+    }
+    return result
+  })
+
   ctx.on('tools/execute', stallGuard)
 
   // The durable session feed carries no streaming tokens — `assistant/chunk` is
@@ -816,7 +911,42 @@ export function apply(ctx, rawConfig) {
       // result the caller is about to receive.
     }
 
-    return next()
+    // The result itself is transformed only after it exists: `tools/post-execute`
+    // is a waterfall, so the rewrite has to be returned rather than observed
+    // (`tools/result` is the observe-only point). Compaction is opt-in and
+    // off by default — it changes what the model reads, not what it is asked.
+    const final = await next()
+    try {
+      const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      if (cfg.enabled && cfg.compactResults && final && final.isError !== true) {
+        const text = singleTextContent(final.content)
+        if (text !== null) {
+          const compacted = compactResult(
+            {
+              name: typeof exec?.name === 'string' ? exec.name : '',
+              args: exec?.arguments,
+              text,
+              isError: false,
+            },
+            {
+              enabled: true,
+              maxChars: cfg.compactMaxChars,
+              headRatio: 0.40,
+              tailRatio: 0.25,
+              maxPerFile: 5,
+              maxMatches: 120,
+            },
+          )
+          if (compacted.changed) {
+            return { ...final, content: [{ ...final.content[0], text: compacted.text }] }
+          }
+        }
+      }
+    } catch {
+      // A rewrite that cannot be applied returns the real result unchanged.
+    }
+    return final
   })
 
   ctx.on('agent/request', async (payload, next) => {

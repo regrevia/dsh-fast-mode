@@ -186,6 +186,30 @@ export const Config = z.object({
       '重复时换方法 / Evidence nudge（面板「重复时换方法」）: 轮内检测两种「没有新信息还在想」的证据——同一个调用（工具名+参数）本轮已经出现 ≥2 次，或连续 ≥3 次工具结果的内容完全相同；命中时在下一步之前发一句带计数的提醒，每轮最多两次、同一证据不重复。它只读本轮已经发生的调用，不发请求、不写请求字段。按推理字符数触发只是「过度思考」的代理指标，短任务上会误触发，这条改用它本身的定义。默认关闭。',
     ),
 
+  compactResults: z
+    .boolean()
+    .default(false)
+    .description(
+      '压缩工具结果 / Compact tool results: 默认关闭。开启后，超过 `compactMaxChars` 的非错误工具结果只保留头 40 % 和尾 25 %，中间用一行标记代替；grep 类结果按文件与总量折叠。这改变的是模型读到的内容，不只是提示文字：省下来的是输入侧 token，代价是模型可能看不到被省略的中段并据此误判。错误结果、短结果、已压缩过的结果不动。关掉即恢复原文。',
+    ),
+
+  compactMaxChars: z
+    .number()
+    .step(100)
+    .min(200)
+    .max(200000)
+    .default(8000)
+    .description(
+      '压缩阈值 / Compaction threshold: 工具结果超过这么多字符才会被压缩（`compactResults` 开启时才有意义）。默认 8000：整文件读取与长 shell 输出通常远超它，而普通列表和短命令不会被动。',
+    ),
+
+  readCache: z
+    .boolean()
+    .default(false)
+    .description(
+      '读取去重 / Read dedupe: 默认关闭。开启后，同一会话里再次读同一个文件且 `mtimeMs`、`size`、`inode` 三项都没变时，直接返回上一次的结果，不再落盘读一次；文件有任何变化即失效并重新读。只对单文件读取生效，带 offset/limit 的分片读取不参与。它不改写结果内容，省的是重复读的墙钟。',
+    ),
+
   preferPatch: z
     .boolean()
     .default(false)

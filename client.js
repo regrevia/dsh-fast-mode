@@ -91,6 +91,11 @@ window.__ModuleLoader__.load({
       'chip.error': 'Fast 模式配置读取失败：{error}',
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
+      'panel.gear': '并行档位',
+      'panel.gearTitle': '三档只调并行宽度，机制不变',
+      'panel.gearSafe': '保守',
+      'panel.gearAuto': '标准',
+      'panel.gearFast': '激进',
       'panel.prose': '精简输出',
       'panel.proseTitle': '少写过程，直接给结论',
       'panel.on': '开',
@@ -99,6 +104,10 @@ window.__ModuleLoader__.load({
       'panel.budgetOff': '不限',
       'panel.budgetSteps': '{n} 步',
       'panel.scope': '只影响本会话',
+      'panel.scopeTitle': '未读到本会话的步数与输出',
+      'panel.saved': '{steps} 步 · 输出 {tokens}',
+      'panel.savedSteps': '{steps} 步',
+      'panel.savedTokens': '输出 {tokens}',
       'panel.budgetTitle': '到上限先汇报，不截断任务',
       'panel.map': '开局附文件清单',
       'panel.mapTitle': '开局附上文件清单，省掉先翻目录',
@@ -122,6 +131,11 @@ window.__ModuleLoader__.load({
       'chip.error': 'Fast mode configuration unavailable: {error}',
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
+      'panel.gear': 'Parallel width',
+      'panel.gearTitle': 'The tiers change only how many calls run in parallel, not the mechanism',
+      'panel.gearSafe': 'Cautious',
+      'panel.gearAuto': 'Standard',
+      'panel.gearFast': 'Aggressive',
       'panel.prose': 'Concise output',
       'panel.proseTitle': 'States the result; skips the narration',
       'panel.on': 'On',
@@ -130,6 +144,10 @@ window.__ModuleLoader__.load({
       'panel.budgetOff': 'No cap',
       'panel.budgetSteps': '{n} steps',
       'panel.scope': 'This conversation only',
+      'panel.scopeTitle': 'Session steps and output are unavailable here',
+      'panel.saved': '{steps} steps · {tokens} out',
+      'panel.savedSteps': '{steps} steps',
+      'panel.savedTokens': '{tokens} out',
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
       'panel.map': 'File inventory',
       'panel.mapTitle': 'Lists the folder up front; skips the lookup',
@@ -161,11 +179,26 @@ window.__ModuleLoader__.load({
       // The panel: anchored above the bolt, opens on right-click only, so the
       // left click stays the switch it has always been.
       '.fm-panel{position:absolute;bottom:calc(100% + 6px);right:0;z-index:60;min-width:196px;',
-      'padding:6px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.1));',
+      'max-width:min(264px,calc(100vw - 24px));padding:6px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.1));',
       'border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-elevated,#fff);',
       'box-shadow:0 6px 24px rgba(0,0,0,.14);text-align:left}',
-      '.fm-panel__title{padding:4px 8px 6px;color:var(--dsw-alias-label-tertiary,#8b8b8b);',
-      'font-size:12px;font-weight:500;line-height:1.2}',
+      // The title row carries the gear control on its right. Wrapping keeps the
+      // control off the title when the composer is narrow; the block never
+      // overflows the panel.
+      '.fm-panel__title{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:4px 8px 6px;',
+      'color:var(--dsw-alias-label-tertiary,#8b8b8b);font-size:12px;font-weight:500;line-height:1.2}',
+      '.fm-panel__heading{flex:0 0 auto}',
+      '.fm-panel__gears{display:inline-flex;align-items:center;flex:0 0 auto;gap:2px;margin-left:auto}',
+      '.fm-panel__gear{box-sizing:border-box;padding:2px 6px;margin:0;border:0;border-radius:var(--dsw-radius-sm,6px);',
+      'background:transparent;color:var(--dsw-alias-label-tertiary,#8b8b8b);font:inherit;font-size:12px;line-height:1.4;',
+      'cursor:pointer}',
+      '.fm-panel__gear:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));',
+      'color:var(--dsw-alias-label-secondary,#5c5c5c)}',
+      '.fm-panel__gear[aria-checked="true"]{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));',
+      'color:var(--dsw-alias-label-primary,#141414)}',
+      '.fm-panel__gear[disabled]{opacity:.55;cursor:default}',
+      '.fm-panel__gear:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
+      'var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:1px}',
       '.fm-panel__row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;',
       'padding:6px 8px;margin:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;',
       'color:var(--dsw-alias-label-primary,#141414);font:inherit;font-size:14px;line-height:1.5;cursor:pointer;',
@@ -174,7 +207,11 @@ window.__ModuleLoader__.load({
       '.fm-panel__row[disabled]{opacity:.55;cursor:default}',
       '.fm-panel__value{color:var(--dsw-alias-label-tertiary,#8b8b8b);font-variant-numeric:tabular-nums}',
       '.fm-panel__row[aria-checked="true"] .fm-panel__value{color:var(--dsw-alias-label-primary,#141414)}',
-      '.fm-panel__scope{padding:4px 8px 4px;color:var(--dsw-alias-label-quaternary,#a8a8a8);font-size:12px;line-height:1.45}',
+      // One line, with an ellipsis when the panel is too narrow: the full
+      // numbers ride in the `title`, so clamping never hides information.
+      '.fm-panel__scope{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;max-width:100%;',
+      'padding:4px 8px 4px;color:var(--dsw-alias-label-quaternary,#a8a8a8);',
+      'font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis}',
     ].join('')
 
     /** A bolt: outlined when off, filled when on. One path, two paint modes. */
@@ -192,8 +229,13 @@ window.__ModuleLoader__.load({
       phase: 'loading', // until the first read reports what this conversation has
       /** What this conversation runs at: on or off, never a shared default. */
       enabled: false, // painted on the first read, then follows every click
-      /** The slower profile this conversation picked, '' for none. */
-      gear: '', // only set when the conversation picked a slower profile
+      /**
+       * Which of the three tiers this conversation runs at: `safe`, `auto`
+       * (factory default), or `fast`. Older builds pinned `turbo` / `max` /
+       * `ludicrous`; a read-back collapses them onto `auto`, because the tier
+       * ladder is gone and the scheduler decides the width now.
+       */
+      gear: '', // normalized by refresh(); '' only before the first read
       /**
        * `outputDiscipline !== false` for this conversation. Resolved from its
        * own entry in the session column, falling back to the configured
@@ -246,6 +288,45 @@ window.__ModuleLoader__.load({
       sessions: {},
     }
 
+    /**
+     * The three tiers the panel offers, in reading order. The ids are the
+     * scheduler's own gear names, so the value travels unchanged through the
+     * settings column; only the read-back is normalized (see `gearTier`).
+     */
+    const GEAR_TIERS = ['safe', 'auto', 'aggressive']
+
+    /** Dictionary keys for the tier labels. */
+    const GEAR_LABELS = { safe: 'panel.gearSafe', auto: 'panel.gearAuto', aggressive: 'panel.gearFast' }
+
+    /**
+     * Collapse any gear name onto one of the three tiers the panel shows.
+     *
+     * `safe` and `aggressive` are live gear ids, so they survive. `fast` is the
+     * id the first bundle wrote for the aggressive tier; a per-session entry
+     * that still carries it is resolved as `aggressive` too. Everything else —
+     * the retired `turbo` / `max` / `ludicrous`, an empty field, a typo — reads
+     * as `auto`, the factory default. The scheduler degrades the same way, and a
+     * panel that displayed an id it cannot write would be showing a state it
+     * cannot produce.
+     *
+     * @param {unknown} gear
+     * @returns {'safe' | 'auto' | 'aggressive'}
+     */
+    function gearTier(gear) {
+      if (gear === 'safe') return 'safe'
+      if (gear === 'aggressive' || gear === 'fast') return 'aggressive'
+      return 'auto'
+    }
+
+    /**
+     * Reads one conversation's live counters from the session-controller store,
+     * or `undefined` when this build has no such source. Set from `apply`; the
+     * settings column this plugin owns says nothing about how the turn went.
+     *
+     * @type {undefined | ((sessionId: string) => any)}
+     */
+    let projectionSource
+
     /** @type {Set<() => void>} */
     const listeners = new Set()
 
@@ -273,6 +354,102 @@ window.__ModuleLoader__.load({
 
     /** @param {number} ms */
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+    /* ------------------------------------------------------------ live readout */
+
+    /**
+     * Projection keys the footer reads. Both belong to other plugins and are
+     * only present once a turn has been reported: `sessionStats` carries
+     * `steps`, `tokenUsage` carries the provider-reported `outputTokens`.
+     */
+    const STEPS_KEY = 'sessionStats'
+    const USAGE_KEY = 'tokenUsage'
+
+    /**
+     * This conversation's real counters, or `undefined` when nothing readable is
+     * there. Only reported numbers are taken, and each field stands alone: a
+     * projection that has not reported output yet must not paint a `0` the
+     * session never spent.
+     *
+     * @param {string | undefined} sessionId
+     * @returns {{steps?: number, tokens?: number} | undefined}
+     */
+    function readStats(sessionId) {
+      if (typeof projectionSource !== 'function') return undefined
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
+      let values
+      try {
+        values = projectionSource(sessionId)
+      } catch {
+        // A projection store that is not mounted yet is not worth surfacing;
+        // the footer keeps its scope line instead.
+        return undefined
+      }
+      if (values === null || typeof values !== 'object') return undefined
+      const stats = values[STEPS_KEY]
+      const usage = values[USAGE_KEY]
+      const steps = stats && typeof stats.steps === 'number' && Number.isFinite(stats.steps) && stats.steps >= 0
+        ? stats.steps : undefined
+      const tokens = usage && typeof usage.outputTokens === 'number' && Number.isFinite(usage.outputTokens)
+        && usage.outputTokens >= 0 ? usage.outputTokens : undefined
+      if (steps === undefined && tokens === undefined) return undefined
+      return { steps, tokens }
+    }
+
+    /**
+     * `3200` → `3.2k`, `12` → `12`. The full number travels in the tooltip
+     * (`savedFooter`), so the visible line only has to read at a glance.
+     *
+     * @param {number | undefined} value
+     */
+    function formatCount(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
+      if (value < 1000) return String(Math.round(value))
+      const million = value >= 1000000
+      const scaled = Math.round((value / (million ? 1000000 : 1000)) * 10) / 10
+      return `${scaled}${million ? 'M' : 'k'}`
+    }
+
+    /**
+     * The footer line from the fields that are actually there. Steps alone and
+     * output alone are both readable; neither means `undefined`, and the caller
+     * falls back to the scope line.
+     *
+     * @param {(key: string, params?: object) => string} t
+     * @param {{steps?: number, tokens?: number}} stats
+     * @param {boolean} [full] - use raw counts instead of the compact form
+     */
+    function savedLine(t, stats, full) {
+      const steps = typeof stats.steps === 'number' ? String(stats.steps) : undefined
+      const tokens = full === true
+        ? typeof stats.tokens === 'number' ? String(stats.tokens) : undefined
+        : formatCount(stats.tokens)
+      if (steps !== undefined && tokens !== undefined) return t('panel.saved', { steps, tokens })
+      if (steps !== undefined) return t('panel.savedSteps', { steps })
+      if (tokens !== undefined) return t('panel.savedTokens', { tokens })
+      return undefined
+    }
+
+    /**
+     * The panel footer: this conversation's real step count and output tokens
+     * when the session store has them, and the scoping sentence when it does
+     * not. The readout is the report; there is no promised saving here, because
+     * nothing on this side could measure one.
+     *
+     * @param {(key: string, params?: object) => string} t
+     */
+    function savedFooter(t) {
+      const stats = readStats(store.sessionId)
+      const compact = stats === undefined ? undefined : savedLine(t, stats)
+      if (compact === undefined) {
+        return react.createElement('div', {
+          className: 'fm-panel__scope',
+          title: t('panel.scopeTitle'),
+        }, t('panel.scope'))
+      }
+      const full = savedLine(t, stats, true) ?? compact
+      return react.createElement('div', { className: 'fm-panel__scope', title: full }, compact)
+    }
 
     /* ------------------------------------------------- per-session bookkeeping */
 
@@ -578,7 +755,7 @@ window.__ModuleLoader__.load({
           store.ns = view.ns
           store.revision = typeof view.revision === 'number' ? view.revision : undefined
           store.writable = !(result && result.writable === false)
-          store.gear = seenGear
+          store.gear = gearTier(seenGear)
           store.discipline = seenDiscipline
           store.stepBudget = seenBudget
           store.inventory = seenMap
@@ -748,6 +925,21 @@ window.__ModuleLoader__.load({
       await write(remote, undefined, { entry: { discipline: on ? 'late' : false } })
     }
 
+    /**
+     * Set the tier this conversation runs at. It is written into the session
+     * row, like every other switch on the panel, so one conversation picking
+     * 保守 never narrows another's. Only the three live gear ids travel: the
+     * retired ladder names are read as 标准 and never written back.
+     *
+     * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
+     * @param {'safe' | 'auto' | 'aggressive'} value
+     */
+    async function setGear(remote, value) {
+      if (store.busy || store.phase !== 'ready' || !store.writable) return
+      if (store.gear === value) return
+      await write(remote, undefined, { entry: { gear: value } })
+    }
+
     /* -------------------------------------------------------------- component */
 
     /**
@@ -847,6 +1039,53 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The three-way tier control that sits at the right of the panel title.
+     *
+     * Plain buttons in a `radiogroup`: a real `input[type=radio]` cannot be
+     * styled down to the panel's 12px scale without its own native chrome, and
+     * the panel already labels everything else with buttons. Tab reaches the
+     * checked tier, arrows move between tiers (the radio convention), Enter and
+     * Space pick. The tooltip on the group states what the tiers do and do not
+     * change.
+     *
+     * @param {(key: string, params?: object) => string} t
+     * @param {any} remote
+     * @param {boolean} writable
+     */
+    function gearControl(t, remote, writable) {
+      const current = gearTier(store.gear)
+      const onKeyDown = (event, index) => {
+        if (!event || typeof event.key !== 'string') return
+        const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+        if (step === 0) return
+        if (typeof event.preventDefault === 'function') event.preventDefault()
+        const next = GEAR_TIERS[(index + step + GEAR_TIERS.length) % GEAR_TIERS.length]
+        void setGear(remote, next)
+      }
+      const tierButton = (value, index) => {
+        const checked = current === value
+        const props = {}
+        props.key = value
+        props.type = 'button'
+        props.role = 'radio'
+        props['aria-checked'] = checked
+        props.className = 'fm-panel__gear'
+        props.disabled = !writable
+        props.tabIndex = checked ? 0 : -1
+        props.onClick = () => void setGear(remote, value)
+        props.onKeyDown = event => onKeyDown(event, index)
+        return react.createElement('button', props, t(GEAR_LABELS[value]))
+      }
+      const group = {}
+      group.className = 'fm-panel__gears'
+      group.role = 'radiogroup'
+      group['aria-label'] = t('panel.gear')
+      group.title = t('panel.gearTitle')
+      return react.createElement('div', group, GEAR_TIERS.map(tierButton))
+    }
+
+    /**
      * The right-click panel: one preference, stated with its scope.
      *
      * It writes the shared `outputDiscipline` field, so the last line says "all
@@ -938,7 +1177,10 @@ window.__ModuleLoader__.load({
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
-        react.createElement('div', { className: 'fm-panel__title' }, t('panel.title')),
+        react.createElement('div', { className: 'fm-panel__title' },
+          react.createElement('span', { className: 'fm-panel__heading' }, t('panel.title')),
+          gearControl(t, remote, canWrite),
+        ),
         row(
           'menuitemcheckbox',
           t('panel.prose'),
@@ -994,7 +1236,7 @@ window.__ModuleLoader__.load({
           store.repeat,
           t('panel.repeatTitle'),
         ),
-        react.createElement('div', { className: 'fm-panel__scope' }, t('panel.scope')),
+        savedFooter(t),
       )
     }
 
@@ -1043,6 +1285,46 @@ window.__ModuleLoader__.load({
       }, 'fast-mode: chip styles')
 
       const remote = ctx.remote
+
+      // The footer readout comes from the session-controller store, not from
+      // this plugin's settings column: `sessionStats` and `tokenUsage` are
+      // projections other plugins fill in as the turn runs. `sessions` is a
+      // client service, and it is optional here — when it or its projections are
+      // missing, `readStats` returns undefined and the footer keeps its scope
+      // line. The whole wiring is one call, so a build without the service
+      // cannot stop the chip from registering.
+      try {
+        ctx.inject(['sessions'], (scope) => {
+          const sessions = scope.sessions
+          if (sessions === null || typeof sessions !== 'object') return
+          let unsubscribe
+          const cleanup = () => {
+            projectionSource = undefined
+            if (typeof unsubscribe === 'function') unsubscribe()
+          }
+          if (typeof scope.on === 'function') scope.on('dispose', cleanup)
+          if (typeof sessions.projectionValues === 'function') {
+            projectionSource = sessionId => sessions.projectionValues(sessionId)
+          }
+          if (typeof sessions.subscribe !== 'function') return
+          // One re-render per changed readout, not one per projection tick:
+          // `subscribe` fires for every projection of every conversation.
+          let seen = ''
+          const signature = () => {
+            const stats = readStats(store.sessionId)
+            return stats === undefined ? '' : `${stats.steps}|${stats.tokens}`
+          }
+          seen = signature()
+          unsubscribe = sessions.subscribe(() => {
+            const next = signature()
+            if (next === seen) return
+            seen = next
+            emit()
+          })
+        })
+      } catch (error) {
+        ctx.logger?.warn?.('fast-mode: session readout unavailable: %s', describeError(error))
+      }
 
       // The first read may race the remote connection; retry a few times rather
       // than leaving the chip stuck on "unavailable" for the whole page life.

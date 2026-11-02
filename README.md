@@ -83,6 +83,12 @@ dsh plugin install dsh-fast-mode
 
 推荐：**大多数时候三个全开**。想稳一点只开「不确定先查证」；最在意思考链过长就开「先执行后解释」；「重复时换方法」单开实测等于没变（1.007×，十二个会话只触发 3 次），放在组合里无害。
 
+## 自己量一遍
+
+上面的数字都来自本仓库的 bench，换到你的机器和你的任务上未必一样。先 `node audit/run.mjs --dry-run --cwd <仓库> --tasks <清单>` 看它要展开成什么命令，去掉 `--dry-run` 就是配对真跑（每任务每臂 3 轮），产物落在 `audit-out/<时间戳>/`：原始读数 `pairs.jsonl` 和带几何均值比与区间的人看报告 `report.md`。配对数不足 6 时报告只写「样本不足，不做结论」。
+
+方法与结论边界见 [docs/AUDIT.md](docs/AUDIT.md)，清单怎么写见 [audit/tasks.example.jsonl](audit/tasks.example.jsonl)，agent 操作手册见 [skills/fast-mode-audit/SKILL.md](skills/fast-mode-audit/SKILL.md)。
+
 ## 许可
 
 MIT。参考手册见 [docs/REFERENCE.md](docs/REFERENCE.md)，逐版改动见 [CHANGELOG.md](CHANGELOG.md)。
