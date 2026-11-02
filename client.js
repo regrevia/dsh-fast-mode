@@ -91,24 +91,24 @@ window.__ModuleLoader__.load({
       'chip.error': 'Fast 模式配置读取失败：{error}',
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
-      'panel.prose': '少写过程',
-      'panel.proseTitle': '模型少解释，只在结论处落笔',
+      'panel.prose': '精简输出',
+      'panel.proseTitle': '少写解释与铺垫，直接给结论',
       'panel.on': '开',
       'panel.off': '关',
-      'panel.budget': '最多几步',
+      'panel.budget': '步数上限',
       'panel.budgetOff': '不限',
       'panel.budgetSteps': '{n} 步',
       'panel.scope': '只影响本会话',
       'panel.budgetTitle': '到上限先汇报，不截断任务',
-      'panel.map': '先列文件清单',
+      'panel.map': '开局附文件清单',
       'panel.mapTitle': '开局把目录里的文件交给模型，省掉先翻一遍目录',
-      'panel.batch': '一次读多个文件',
+      'panel.batch': '批量读文件',
       'panel.batchTitle': '把互不依赖的读取合成一批发出，少几个来回',
-      'panel.probe': '不确定时先查一次',
+      'panel.probe': '不确定先查证',
       'panel.probeTitle': '拿不准的事实读一次，别用推理猜',
-      'panel.act': '先动手再解释',
+      'panel.act': '先执行后解释',
       'panel.actTitle': '最多一行计划，动作清楚就直接做',
-      'panel.repeat': '重复无进展时提醒',
+      'panel.repeat': '重复时换方法',
       'panel.repeatTitle': '重跑同一个调用或连续无新信息时提醒',
     }
 
@@ -122,22 +122,22 @@ window.__ModuleLoader__.load({
       'chip.error': 'Fast mode configuration unavailable: {error}',
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
-      'panel.prose': 'Less narration',
-      'panel.proseTitle': 'Skips explanations; writes the result only',
+      'panel.prose': 'Concise output',
+      'panel.proseTitle': 'Drops explanations and setup; states the result',
       'panel.on': 'On',
       'panel.off': 'Off',
-      'panel.budget': 'Max steps',
+      'panel.budget': 'Step cap',
       'panel.budgetOff': 'No cap',
       'panel.budgetSteps': '{n} steps',
       'panel.scope': 'This conversation only',
       'panel.budgetTitle': 'Reports at the cap; never truncates the task',
-      'panel.map': 'File list first',
+      'panel.map': 'File inventory',
       'panel.mapTitle': 'Hands the directory listing to the model up front, skipping a lookup',
-      'panel.batch': 'Read several files at once',
+      'panel.batch': 'Batched reads',
       'panel.batchTitle': 'Batches independent reads into one call, fewer round trips',
-      'panel.probe': 'Read before guessing',
+      'panel.probe': 'Verify before guessing',
       'panel.probeTitle': 'Look up the fact you are unsure of once; a guess costs more; safety checks stay',
-      'panel.act': 'Act first',
+      'panel.act': 'Act before explaining',
       'panel.actTitle': 'At most one line of plan before the first call; act when the next step is clear',
       'panel.repeat': 'Nudge on repeats',
       'panel.repeatTitle': 'One line when a call runs again or several steps bring nothing new; safety checks stay',
@@ -866,8 +866,8 @@ window.__ModuleLoader__.load({
 
       /**
        * One row: label on the left, current value on the right, and the
-       * consequence of the setting on hover. The label alone cannot say what
-       * "少写过程" costs, and the settings rows use a title for the
+       * consequence of the setting on hover. A four-character label cannot say
+       * what "精简输出" costs, and the settings rows use a title for the
        * same reason.
        *
        * Props are assigned one by one because a dense key/value literal reads as

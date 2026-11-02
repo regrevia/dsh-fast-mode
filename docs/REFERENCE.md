@@ -1,6 +1,6 @@
 # 参考手册：原理、配置与边界
 
-本手册描述 **dsh-fast-mode 1.7.1** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行（只数设置项；闪电本身就是开关，不占行），七行都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒，行数不变），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
+本手册描述 **dsh-fast-mode 1.7.2** 的实际行为（默认配置下的注入行为与 1.5.0 一致；1.5.14 起多了右键面板，1.7.0 起为七行（只数设置项；闪电本身就是开关，不占行），七行都只影响本会话；1.7.1 给其中一行加了一条按思考长度的提醒，行数不变），对应仓库里的 `index.js`、`src/` 与 `client.js`。它不是宣传页：凡是能测量的地方给出数字，凡是没测量的地方直接说没测量。
 
 **默认契约：Fast 模式不改变思考强度、thinking 预算或模型。** `agent/request` 钩子只做一件事——`await next()`，读一下请求携带的 `reasoningEffort`、路由名记进测量，然后原样返回。用户选的是哪一档（会话里的 UI 选择，或者 profile 里 agent-default-model 固定下来的那一档），每个请求就用哪一档。
 
@@ -11,8 +11,8 @@
 ## 交互细节：闪电开关与会话归属
 
 - **一个图标就是开关。** 会话输入区的活动槽（`conversation.input.activity`）里只有一个闪电按钮：关闭时空心，开启时实心。点一下切换，再点一下切回；这一下只写当前会话。没有档位选择器，没有箭头，没有"选择 gear"的二级菜单。
-- **右键是面板。** 右键闪电打开面板，标题是「更快」，下面是 7 行，7 行都只影响当前会话："少写过程"（`outputDiscipline`）、"最多几步"（`stepBudget`，循环 0/15/30）、"先列文件清单"（`workspaceMap`）、"一次读多个文件"（`openBatch`）、"不确定时先查一次"（`probeFirst`）、"先动手再解释"（`actBeforePlan`）、"重复无进展时提醒"（`repeatNudge`）。7 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准的事实读一次，别用推理猜」、`actBeforePlan`「最多一行计划，动作清楚就直接做」、`repeatNudge`「重跑同一个调用或连续无新信息时提醒」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
-- **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap`、`openBatch`、`probeFirst`、`actBeforePlan`、`repeatNudge` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 少写过程`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
+- **右键是面板。** 右键闪电打开面板，标题是「更快」，下面是 7 行，7 行都只影响当前会话："精简输出"（`outputDiscipline`）、"步数上限"（`stepBudget`，循环 0/15/30）、"开局附文件清单"（`workspaceMap`）、"批量读文件"（`openBatch`）、"不确定先查证"（`probeFirst`）、"先执行后解释"（`actBeforePlan`）、"重复时换方法"（`repeatNudge`）。7 行都把选择写进 `sessions` 列里本会话的条目，不碰共享默认值，下一个回合生效；只读或写入中时整块禁用，写失败回滚。行内 tooltip：`probeFirst`「拿不准的事实读一次，别用推理猜」、`actBeforePlan`「最多一行计划，动作清楚就直接做」、`repeatNudge`「重跑同一个调用或连续无新信息时提醒」。没有条目的会话沿用配置里的默认值（`outputDiscipline`/`stepBudget`/`workspaceMap`/`openBatch`/`probeFirst`/`actBeforePlan`/`repeatNudge`）。面板不暴露 `disciplineAfterSteps`、`disciplineEarlyCalls`、`shapeGate`、`finishLineSteps`、`shellParallel`、`disciplineRepeatAtSteps` 这些未证实或已判 HOLD 的旋钮。
+- **会话之间互不影响，这是硬约束。** 每个会话的 `enabled`、`gear`、`outputDiscipline`、`stepBudget`、`workspaceMap`、`openBatch`、`probeFirst`、`actBeforePlan`、`repeatNudge` 都从 `sessions` 列里自己那一条解析：A 会话 `更快 + 精简输出`、B 会话 `更快 + 不写过程` 同时成立，C 会话没点过就沿用配置默认值。面板和闪电只写本会话的条目，从不写共享默认值；条目最多保留 200 个，按 `ts` 淘汰最旧的，被淘汰的会话回到默认值。
 - **按钮只表达一个问题：这个会话开不开。** `aria-pressed` 就是状态，tooltip 写清"仅本会话 · 点击关闭 · 右键设置"。为什么快、快在哪里、单次调用上限这类说明放在插件介绍（`meta.description` 与配置项描述）里，不再占用输入区。
 - **实时行引用的是被执行的数字**，而不是产品形容词：
   - 开启、看门狗有上限：`自动调度 · 并行 2–8 · 单次调用 ≤ 2 分`
@@ -33,7 +33,7 @@
 2. 读 `resolved.reasoningEffort`、路由名，写进测量标签；
 3. `return resolved`——同一个对象、同一个字段集合，不构造新对象，也不写回任何档位。
 
-它不写 thinking 预算，不换模型，也不添加任何 provider 专用字段。因此常备的"更快"杠杆仍是三个：并行扇出（减少往返）、输出纪律（减少过程文字）、卡顿看门狗（减少工具等待）。1.7.0 起另有三条**纯提示**的逐会话开关（先查一次、先动手再解释、重复时提醒），它们只往会话里加文字，同样不碰请求；见"六、三个逐会话可点的提示开关"。思考深度和解码速度不在常备杠杆里——前者是用户的契约，后者任何提示词都做不到。
+它不写 thinking 预算，不换模型，也不添加任何 provider 专用字段。因此常备的"更快"杠杆仍是三个：并行扇出（减少往返）、输出纪律（减少过程文字）、卡顿看门狗（减少工具等待）。1.7.0 起另有三条**纯提示**的逐会话开关（先查一次、先执行后解释、重复时提醒），它们只往会话里加文字，同样不碰请求；见"六、三个逐会话可点的提示开关"。思考深度和解码速度不在常备杠杆里——前者是用户的契约，后者任何提示词都做不到。
 
 ### 二、自适应调度器：`gear: auto`
 
@@ -146,11 +146,11 @@
 
 **共用一条消息。** `probeFirst` 与 `actBeforePlan` 在本轮第一步合并成一条 notice，两个都关时不发；两个都开也只有一条消息、一句共同 GUARD（`src/deliberation.js` 的 `GUARD`）：`None of this cuts validation at trust boundaries, data-loss handling, security, or accessibility.`
 
-**`probeFirst`「不确定时先查一次」。** 何时发：打开的回合，第一步，一次。文本（`PROBE_TEXT`，逐字）：``When you are unsure of a fact about the codebase — a file's contents, a signature, a test's expectation — read it once instead of reasoning about it. One call, the cheapest that answers the question: `grep` before `read`, a range before the whole file. Guessing costs a step and is usually wrong; looking costs the same step and settles it. Read again when a result surprises you, before theorising about why it surprised you.`` 它不指定查哪个文件、不替代判断，也不强制任何调用。
+**`probeFirst`「不确定先查证」。** 何时发：打开的回合，第一步，一次。文本（`PROBE_TEXT`，逐字）：``When you are unsure of a fact about the codebase — a file's contents, a signature, a test's expectation — read it once instead of reasoning about it. One call, the cheapest that answers the question: `grep` before `read`, a range before the whole file. Guessing costs a step and is usually wrong; looking costs the same step and settles it. Read again when a result surprises you, before theorising about why it surprised you.`` 它不指定查哪个文件、不替代判断，也不强制任何调用。
 
-**`actBeforePlan`「先动手再解释」。** 何时发：同一个回合第一步、同一条消息里。文本（`ACT_TEXT`）：`Do not restate the task and do not re-explain the plan: the reader already has it. Before your first tool call, one line of plan is enough; when the next action is already clear, take it now and explain afterwards only if the result is not self-evident.` "最多一行计划"是建议措辞，不是机器截断：插件不数行数、不拦截调用。
+**`actBeforePlan`「先执行后解释」。** 何时发：同一个回合第一步、同一条消息里。文本（`ACT_TEXT`）：`Do not restate the task and do not re-explain the plan: the reader already has it. Before your first tool call, one line of plan is enough; when the next action is already clear, take it now and explain afterwards only if the result is not self-evident.` "最多一行计划"是建议措辞，不是机器截断：插件不数行数、不拦截调用。
 
-**`repeatNudge`「重复无进展时提醒」。** 何时发：轮中，只在有证据时。触发二选一——同一个调用（工具名 + 稳定参数，即 `signature`）本轮已运行 ≥ `REPEAT_CALLS`（2）次；或连续结果内容相同，即连续第 3 次相同（`STALE_RESULTS` = 2，比较结果 `digest`）。文本随实际次数走：`The call you are about to reason about has already run N times in this turn and returned what you have. If the answer did not change, a different call is what changes it — not more thinking about this one.`；或 `The last N calls returned the same content. Nothing new is arriving from that direction: decide with what you have, or ask a different question.` 上限：每轮最多 `MAX_REPEAT_NUDGES`（2）次；同一证据（`signature` + `digest`）只提醒一次；错误结果**不算**循环，并且重置「结果没变」的连击——报错是需要多想一会儿的情形。实现 `src/deliberation.js`（`createProgressWatch` / `beginTurn` / `noteCall` / `planRepeatNudge`），观察表上限 `RUN_MAX` = 64 个会话、每会话保留最近 `HISTORY_MAX` = 8 次调用；全部在既有 `catch` 内，异常不会改变工具结果。
+**`repeatNudge`「重复时换方法」。** 何时发：轮中，只在有证据时。触发二选一——同一个调用（工具名 + 稳定参数，即 `signature`）本轮已运行 ≥ `REPEAT_CALLS`（2）次；或连续结果内容相同，即连续第 3 次相同（`STALE_RESULTS` = 2，比较结果 `digest`）。文本随实际次数走：`The call you are about to reason about has already run N times in this turn and returned what you have. If the answer did not change, a different call is what changes it — not more thinking about this one.`；或 `The last N calls returned the same content. Nothing new is arriving from that direction: decide with what you have, or ask a different question.` 上限：每轮最多 `MAX_REPEAT_NUDGES`（2）次；同一证据（`signature` + `digest`）只提醒一次；错误结果**不算**循环，并且重置「结果没变」的连击——报错是需要多想一会儿的情形。实现 `src/deliberation.js`（`createProgressWatch` / `beginTurn` / `noteCall` / `planRepeatNudge`），观察表上限 `RUN_MAX` = 64 个会话、每会话保留最近 `HISTORY_MAX` = 8 次调用；全部在既有 `catch` 内，异常不会改变工具结果。
 
 **`actBeforePlan` 的第二个信号：思考长度（1.7.1）。** 触发不看工具调用，只看这一回合已经写了多少字符的思考。读数来自 `assistant/message` 事件里的 `reasoning` 块，由 `src/usage.js` 的 `readReasoningChars` 求和（块缺失或没有 `text` 就是 0——路由不吐思考块时这个开关保持沉默），按回合累加进 `noteReasoning` 的 `reasonChars`；`beginTurn` 在新用户消息时清零。阈值 `REASONING_CHARS`（4000）字符，第 n 次提醒的门槛是 `REASONING_CHARS × (n + 1)`，每回合上限 `MAX_REASONING_NUDGES`（2）。文本逐字：``You have written about N characters of reasoning in this turn. Past that length, more thinking about facts you already have rarely changes the next action: take the action the evidence supports, or read the one fact that is still missing.`` 因为触发条件只是长度，这段文本**不说**「没有新信息」——它给的是「按已有证据动手」或「去读那一个还缺的事实」两个出口。它不写任何请求字段，也不改变 `agent/request` 的返回值。
 
@@ -189,10 +189,10 @@
 | `parallel` | 由档位推导，`auto` 下为 4 | 并行上限的初始值，1–8。`auto` 只把它当起点；设为 1 表示不注入批量提示段。 |
 | `sessions` | `''` | 插件自动维护的会话级覆盖，见上一节。**不要手改。** |
 | `outputDiscipline` | `'late'` | 输出纪律。`late`（默认）前 4 步不写任何输出约束，第 4 步起由调度器提醒一次；`true` 全程生效；`false` 关闭输出纪律，仍注入并行与有界调用规则。 |
-| `openBatch` | `false` | 开局批量：每轮第一步发一次「把已知要做的独立调用放进同一块、shell 命令用 `&&` 串起来」。短任务的钱几乎全是每步固定成本（首字延迟 ~0.5 s/次），少一次往返就省一次；只影响第一轮第一步，长任务可忽略。旧批次里它不优于默认，但那些数字已因测量缺陷撤回（运行目录在仓库内、指标按字节偏移切片），尚无干净重测。保持在 `false`，但 1.5.33 起进面板（「一次读多个文件」），逐会话可开；和 `workspaceMap` 一起开 11 对 0.742×，再加 `disciplineAfterSteps: 2` 三开 22 对 0.669×〔CI 0.554–0.799〕，单独开仍测不到显著。 |
-| `probeFirst` | `false` | 逐会话提示开关：拿不准的代码事实（文件内容、签名、测试期望）先读一次，而不是用推理猜；`grep` 先于 `read`，先读范围再读整文件。本轮第一步发一条 notice，一句，且只在打开时发。不指定读哪个文件、不强制调用、不改请求。1.7.0 起进面板（「不确定时先查一次」）。 |
-| `actBeforePlan` | `false` | 逐会话提示开关：不复述任务、不重讲计划；第一个工具调用之前最多一行计划，下一步已经清楚就直接做。与 `probeFirst` 共用同一条 notice 与同一句 GUARD，两个都开也只有一条消息。"最多一行"是建议措辞，不做机器截断。1.7.0 起进面板（「先动手再解释」）。 |
-| `repeatNudge` | `false` | 逐会话提示开关：只在有证据时发一条轮中证据行——同一个调用（工具名 + 稳定参数）本轮已运行 ≥ 2 次，或连续 3 次结果内容相同；句子给出实际次数，每轮最多 2 次，同一证据只提醒一次，错误结果不算循环并重置连击。实现 `src/deliberation.js`，不写请求字段。1.7.0 起进面板（「重复无进展时提醒」）。 |
+| `openBatch` | `false` | 开局批量：每轮第一步发一次「把已知要做的独立调用放进同一块、shell 命令用 `&&` 串起来」。短任务的钱几乎全是每步固定成本（首字延迟 ~0.5 s/次），少一次往返就省一次；只影响第一轮第一步，长任务可忽略。旧批次里它不优于默认，但那些数字已因测量缺陷撤回（运行目录在仓库内、指标按字节偏移切片），尚无干净重测。保持在 `false`，但 1.5.33 起进面板（「批量读文件」），逐会话可开；和 `workspaceMap` 一起开 11 对 0.742×，再加 `disciplineAfterSteps: 2` 三开 22 对 0.669×〔CI 0.554–0.799〕，单独开仍测不到显著。 |
+| `probeFirst` | `false` | 逐会话提示开关：拿不准的代码事实（文件内容、签名、测试期望）先读一次，而不是用推理猜；`grep` 先于 `read`，先读范围再读整文件。本轮第一步发一条 notice，一句，且只在打开时发。不指定读哪个文件、不强制调用、不改请求。1.7.0 起进面板（「不确定先查证」）。 |
+| `actBeforePlan` | `false` | 逐会话提示开关：不复述任务、不重讲计划；第一个工具调用之前最多一行计划，下一步已经清楚就直接做。与 `probeFirst` 共用同一条 notice 与同一句 GUARD，两个都开也只有一条消息。"最多一行"是建议措辞，不做机器截断。1.7.0 起进面板（「先执行后解释」）。 |
+| `repeatNudge` | `false` | 逐会话提示开关：只在有证据时发一条轮中证据行——同一个调用（工具名 + 稳定参数）本轮已运行 ≥ 2 次，或连续 3 次结果内容相同；句子给出实际次数，每轮最多 2 次，同一证据只提醒一次，错误结果不算循环并重置连击。实现 `src/deliberation.js`，不写请求字段。1.7.0 起进面板（「重复时换方法」）。 |
 | `shapeGate` | `false` | 形状闸门：本轮累计调用 ≥ 4 且其中写入类（不在只读名单里的工具）占比 ≥ 60 % 时，**整轮不再注入任何提醒**，行为退回原生。判断只用已有的工具名，不发请求、不加请求体字段。它给的是「不适合就别管我」的退路：写密集型的任务没有可并行的调用，每条提醒都只是一次它用不上的往返。显式设了 `stepBudget` 时该收尾线优先于闸门——「别加速」不等于「无视我叫停」。默认关，因为它会同时关掉本可以救回长尾的收尾提醒。 |
 | `preferPatch` | `false` | 整文件写入之后提醒一次「改已有文件时只发改动的行（edit hunk），不要重发整个文件」。本步 `write` 的正文 ≥ 2000 字符才武装，之后一步发一次，每轮最多一次；文本明确要求结果与原文件逐字节相同，不限制写什么、也不影响何时结束。默认关闭：它只作用于模型的输出形式（工具调用参数），正确性由文件内容决定、与发送形式无关；实测是否真省墙钟见 `BENCHMARK.md` 的 `pp16` 臂。 |
 | `compactRereadHint` | false | 压缩提醒里多一句「本回合写过的文件不要为确认整份重读」；不新增消息。实验旋钮，默认关 |

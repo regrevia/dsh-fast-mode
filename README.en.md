@@ -105,11 +105,11 @@ Legacy `fast` / `turbo` / `max` / `ludicrous` values are read as `auto` with a d
 
 The bolt is the switch: one click writes on/off, per conversation, restored on reload. Right-click it for a seven-row panel — all seven affect this conversation only:
 
-- **Less narration** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
+- **Concise output** — master switch for the step-4 reminder; with it off, long tasks take about 2.7x longer and write about twice as much. On by default.
 - **Step cap** — `15` / `30` / off, off by default. At the cap it reports instead of truncating the task.
-- **Workspace inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
-- **Read several files at once** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
-- **Read one uncertain fact first** (`probeFirst`) — at turn entry, one notice: if a codebase fact is uncertain, read it once instead of reasoning about it. Off by default; 0.883x over 12 pairs (7/12 faster).
+- **File inventory** — before the turn's first tool call, one inventory notice (relative paths + byte sizes + visible test entry points) so the turn does not open with `ls`/`find`. Off by default; over 23 pairs it measured 0.927x geometric with a slower tail and 10% more steps, so it stays a switch to try rather than a default.
+- **Batched reads** — batches independent reads into one call. Off by default; the measured gain shows up when it is stacked with the inventory switch (below), not alone.
+- **Verify before guessing** (`probeFirst`) — at turn entry, one notice: if a codebase fact is uncertain, read it once instead of reasoning about it. Off by default; 0.883x over 12 pairs (7/12 faster).
 - **Act before explaining** (`actBeforePlan`) — at most one line of plan before the first action; act as soon as the next step is clear. Since 1.7.1 it also carries a length-triggered notice: once this turn has written 4000 characters of reasoning, the next step learns how much it wrote and gets two exits — act on the evidence, or read the one fact still missing (at most two per turn). Off by default; 0.761x over 12 pairs (8/12 faster) with reasoning characters 8249 → 3152 on `debugfix`; 0.643x over 9 pairs (6/9 faster) on three families in `DP18`, 0.708x [0.558, 0.898] pooled over 21 pairs.
 - **Nudge on repetition** (`repeatNudge`) — when the same call has already run twice this turn, or three results in a row are identical, one line says how many times it repeated and asks for a different approach or a conclusion. Off by default; 1.007x alone, but it does not drag the three-switch combination down.
 

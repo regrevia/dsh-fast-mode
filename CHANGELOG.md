@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.2（面板七行改名：说清「开关做什么」，行为与数字一概不动）
+
+用户看到的是七行标签，不是文档。旧标签里「少写过程」「先列文件清单」「重复无进展时提醒」说的是内部术语或半句话，不看 README 猜不出效果；这一版只改文案，不改任何机制、阈值、默认值或注入文本。
+
+- **`panel.prose`：少写过程 → 精简输出。** 它控制的是输出纪律（少解释、直接给结论），「过程」容易被读成推理过程。
+- **`panel.budget`：最多几步 → 步数上限。** 与右侧取值（`不限` / `15 步` / `30 步`）构成一个字段，而不是一个问句。
+- **`panel.map`：先列文件清单 → 开局附文件清单。** 清单是插件在开局附上的，不是模型自己列，旧名把主体说反了。
+- **`panel.batch`：一次读多个文件 → 批量读文件。** 四个字，与相邻行同一语法层级。
+- **`panel.probe`：不确定时先查一次 → 不确定先查证。** 「查一次」会被误读成次数限制；它要求的是先取证再推理。
+- **`panel.act`：先动手再解释 → 先执行后解释。** 与英文 `Act before explaining` 对齐，动词统一为「执行」。
+- **`panel.repeat`：重复无进展时提醒 → 重复时换方法。** 旧名只说触发条件，不说该做什么；新名给出动作。
+- 英文侧同步：`Concise output` / `Step cap` / `File inventory` / `Batched reads` / `Verify before guessing` / `Act before explaining` / `Nudge on repeats`。行内 tooltip 保持原样（它本来就是解释后果的地方），仍是七行。
+- 面板行数、`sessions` 列的写入路径、`outputDiscipline` / `stepBudget` / `workspaceMap` / `openBatch` / `probeFirst` / `actBeforePlan` / `repeatNudge` 七个字段一个都没动；`src/config.js` 里七条描述的面板名与英文摘要同步改名。
+- 校验：`node --test test/*.test.js` 337/337 通过；`ui-copy-lint` 干净、`zh-lint` 0 error、`style-lint` 通过。
+
 ## 1.7.1（`actBeforePlan` 补上第二个信号：本回合思考已写多长；仍然只改提示词，不加面板行）
 
 1.7.0 用 `repeatNudge` 去抓「没新信息还在想」，但本语料里模型很少把同一个调用原样重发第三遍：`DP17` 十二个会话只发出 3 条提醒，全部来自「连续结果相同」那条分支，「同调用 ≥2 次」一次都没满足。所以第二个信号换成本来就记在会话里的东西——**这一回合已经写了多少字符的思考**。
