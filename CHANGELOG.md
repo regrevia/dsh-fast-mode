@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.15（修 1.7.12–1.7.14 的版本号）
+
+发 1.7.13 / 1.7.14 时只改了 `package.json`，忘了 `index.js` 里导出的 `VERSION`，于是这两版的 trace 行还写着 v1.7.12——日志上的版本号和装的东西对不上，正是这条测试要防的事（`the traced version is the version the package ships` 在 1.7.14 的上传里是红的）。这一版把 `VERSION` 对齐到 1.7.15，行为和 1.7.14 一致。
+
 ## 1.7.14（真实 PR 的 18 对，量不出快慢）
 
 `docs/AUDIT.md` 补上真实 PR 那一节：本地重建的 3 个 `pallets/click` PR，每轮先 `setup` 把仓库放回原样，`compactResults=true` + `gear=fast` 跑 6 轮共 18 对——合池墙钟 `0.796×`（CI 0.587–1.065）、token `0.888×`（CI 0.774–1.024），都跨过 1。能读出的只有质量没掉：on 臂校验 18/18、off 臂 17/18。文档同时写明为什么这里跑不了官方 SWE-bench / Terminal-Bench（Docker Hub 与 HuggingFace 都连不上），以及这批任务是手挑的小子集、不能和任何排行榜对齐。运行时行为不变。
