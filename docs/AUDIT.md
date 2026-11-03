@@ -243,6 +243,42 @@ src/renameme.test.js: expected 1 got 2` 在第 2000 行，既不在开头也不�
       --rounds 3 --on-config compactResults=true --on-config gear=fast \
       --out /tmp/fm-audit-fast
 
+### 真实 PR 任务：跑得通，但还量不出快慢
+
+自造任务只能说明「这个仓库变快了」，要说「真活也变快」得用真实 PR。做不了官方的 SWE-bench /
+Terminal-Bench 跑分：这台机器拉不到 Docker Hub（`docker pull alpine:3.20` → `failed to resolve
+reference … EOF`），HuggingFace 的数据集服务也连不上（SSL EOF），两边的实例元数据和官方 harness
+都拿不到。所以这里的「真实 PR」是本地重建的：取 PR 的 `base_commit`，只保留它的测试改动，源码退回
+base，prompt 用它自己的标题和描述，依赖按仓库自己的配置装好，校验直接跑仓库原生 `pytest` 的一条
+命令。**没有跑过任何外部 benchmark**，下面这些数字不能和任何排行榜对齐。
+
+做法和代价：每个 PR 一个 checkout，任务行写 `"cwd"` 指过去、写 `"setup"` 每轮先
+`git reset -q --hard HEAD && git clean -qfd` 把仓库放回原样——不重置的话第二轮量的是模型上一轮
+已经修好的树，数字会凭空变快。只收了 3 个 `pallets/click` 的 PR（另外还试过 `psf/requests`、
+`encode/httpx`、`tox-dev/filelock`、`python-humanize/humanize`、`pallets/itsdangerous`：requests 的
+环境装不起来，filelock 和 humanize 的 PR 在 base 上测试本来就能过（`before == after`），
+itsdangerous 那个的测试补丁引用 PR 才引入的 `_lazy_sha1`，base 上连收集都过不去，都剔掉）。
+每个 PR 只验了「base 上失败、打上补丁通过」这一步，写进清单的 3 条都过。
+
+| on 臂 | 任务×轮 | 合池墙钟 | 合池 token | 校验 off/on |
+| --- | --- | --- | --- | --- |
+| `compactResults=true` + `gear=fast` | 3×6 | 0.796× [0.587, 1.065]，分不开 | 0.888× [0.774, 1.024]，分不开 | 17/18 / 18/18 |
+
+逐任务：`click-3884` 0.660× [0.345, 1.328] / token 0.764× [0.576, 1.090]、`click-3865` 0.756×
+[0.431, 1.157] / 0.982×、`click-3860` 1.010× [0.827, 1.334] / 0.933× [0.817, 1.101]。三个都分不开。
+更早一次单轮 3 对（同配置）里同一个任务的两臂能差 3.9 倍并且方向相反，所以这里只认 6 轮；即便 18 对，
+墙钟分辨率仍只有 ±11% 量级，而真实任务的单次耗时本来就比自造任务散得多。
+
+能读出的只有两件事：**18 对里 on 臂校验 18/18、off 臂 17/18**，说明截短输出没有把真实改动弄坏，
+质量没掉；以及真实 PR 上这套测法的噪声比自造任务大（三个任务的方向互相抵消，合池 CI 0.587–1.065）。
+**不能**说「对真实任务也变快了」——这批样本不够，而且被剔到只剩 3 个 PR，属于手挑的小子集。
+
+复现：
+
+    COMPANY_LLM_TOKEN=... node audit/run.mjs --tasks /tmp/swe/tasks.real3.setup.jsonl \
+      --cwd /tmp/swe --rounds 6 --on-config compactResults=true --on-config gear=fast \
+      --out /tmp/fm-real-6r --timeout-ms 900000
+
 ## 一次完整的复核
 
     node audit/run.mjs --dry-run --cwd . --tasks my-tasks.jsonl   # 先确认命令行
