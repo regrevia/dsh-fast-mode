@@ -42,11 +42,11 @@ All three switches plus the panel defaults is the fastest setting; the bolt alon
 dsh plugin install dsh-fast-mode
 ```
 
-Click the bolt in a conversation. Right-click it for the seven-row panel — every row affects that conversation only.
+Click the bolt in a conversation. Right-click it for the eight-row panel — every row affects that conversation only.
 
-## What the seven buttons do
+## What the eight buttons do
 
-All seven are prompt-side: no request parameter, no model change, no change to completion checks. The first two shape output, the other five shape the route.
+All eight are prompt-side: no request parameter, no model change, no change to completion checks. The first two shape output, the last one shapes how much context arrives, the five in between shape the route.
 
 | Button | How it works | Default |
 |---|---|---|
@@ -54,11 +54,12 @@ All seven are prompt-side: no request parameter, no model change, no change to c
 | **Step cap** | A hard cap; at the limit it reports status instead of truncating the task | No cap |
 | **File inventory** | Hands the model a directory listing up front, skipping the opening `ls`/`find` | Off |
 | **Batched reads** | Independent reads go out as one batch, fewer round trips | Off |
+| **Trim tool output** | Keeps head, tail and matching error lines instead of the whole output | Off |
 | **Verify before guessing** | Read the uncertain fact once; not pure speed — it saves the retry a wrong guess costs | Off |
 | **Act before explaining** | At most one line of plan; past 4000 characters of reasoning, a nudge to act on evidence | Off |
 | **Nudge on repeats** | The same call again, or three identical results: one line saying to change the approach | Off |
 
-The last five arrived in 1.7.0 and ship **off**; the reasons are under Limits below.
+The middle five arrived in 1.7.0 and ship **off**; the reasons are under Limits below. Trim tool output reached the panel in 1.7.12 — it is the one switch that changes the evidence the model sees, so it ships off, and off means the original text.
 
 ## Benchmark
 
