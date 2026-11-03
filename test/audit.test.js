@@ -68,9 +68,24 @@ test('parseTasks 读得懂带注释的清单', () => {
     '{"id": "c", "prompt": "跑测试", "check": null}',
   ].join('\n'))
   assert.equal(tasks.length, 3)
-  assert.deepEqual(tasks[0], { id: 'a', prompt: '列文件', check: null })
+  assert.deepEqual(tasks[0], { id: 'a', prompt: '列文件', check: null, cwd: null, setup: null })
   assert.equal(tasks[1].check, 'test -f package.json')
   assert.equal(tasks[2].check, null)
+})
+
+test('parseTasks 允许单个任务带 setup，每轮先重置仓库', () => {
+  const tasks = parseTasks('{"id": "a", "prompt": "改代码", "setup": "git reset -q --hard HEAD"}')
+  assert.equal(tasks[0].setup, 'git reset -q --hard HEAD')
+  assert.throws(() => parseTasks('{"id": "b", "prompt": "改代码", "setup": 7}'), /setup 必须是字符串或 null/)
+})
+
+test('parseTasks 允许单个任务自带 cwd，便于一张清单混多个仓库', () => {
+  const tasks = parseTasks('{"id": "a", "prompt": "改代码", "cwd": "/tmp/repo-a"}')
+  assert.equal(tasks[0].cwd, '/tmp/repo-a')
+  assert.throws(
+    () => parseTasks('{"id": "b", "prompt": "改代码", "cwd": 42}'),
+    /cwd 必须是绝对路径字符串/,
+  )
 })
 
 test('parseTasks 空串或纯注释当没给任务', () => {

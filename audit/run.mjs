@@ -89,7 +89,7 @@ class UsageError extends Error {}
  * "invalid JSON" without a line is useless.
  *
  * @param {string} text
- * @returns {{id: string, prompt: string, check: string|null}[]}
+ * @returns {{id: string, prompt: string, check: string|null, cwd: string|null, setup: string|null}[]}
  */
 export function parseTasks(text) {
   const tasks = []
@@ -118,7 +118,15 @@ export function parseTasks(text) {
       throw new UsageError(`${where}（id=${id}）的 check 必须是字符串或 null`)
     }
     const check = typeof row.check === 'string' && row.check.trim() !== '' ? row.check : null
-    tasks.push({ id, prompt: row.prompt, check })
+    if (row.cwd !== undefined && row.cwd !== null && (typeof row.cwd !== 'string' || row.cwd.trim() === '')) {
+      throw new UsageError(`${where}（id=${id}）的 cwd 必须是绝对路径字符串`)
+    }
+    const taskCwd = typeof row.cwd === 'string' ? row.cwd.trim() : null
+    if (row.setup !== undefined && row.setup !== null && typeof row.setup !== 'string') {
+      throw new UsageError(`${where}（id=${id}）的 setup 必须是字符串或 null`)
+    }
+    const setup = typeof row.setup === 'string' && row.setup.trim() !== '' ? row.setup : null
+    tasks.push({ id, prompt: row.prompt, check, cwd: taskCwd, setup })
   })
   if (tasks.length === 0) throw new UsageError('任务清单里没有任何任务')
   return tasks
@@ -569,7 +577,7 @@ async function runCheck({ command, cwd, timeoutMs }) {
 const USAGE = `用法：node audit/run.mjs --tasks <tasks.jsonl> --cwd <repo> [选项]
 
 选项：
-  --tasks <file>        任务清单 JSONL（每行 {id, prompt, check?}），必填
+  --tasks <file>        任务清单 JSONL（每行 {id, prompt, check?, cwd?}），必填
   --cwd <dir>           目标仓库，两个臂都在这里执行，默认当前目录
   --rounds <n>          每臂轮数，默认 3
   --dsh-bin <path>      dsh 启动脚本，默认用本机探测到的真实入口
@@ -796,18 +804,32 @@ export function renderReport({ meta, tasks, pairs, summary }) {
 
 /** One arm's reading for one task round. */
 async function measureArm({ item, arm, style, options, cwd, metricsFile }) {
+  // A task may name its own checkout, so one task list can mix repositories.
+  const taskCwd = item.task.cwd ? resolve(item.task.cwd) : cwd
   const patch = style === 'patch' ? item.patches[arm] : undefined
+  const empty = {
+    wallMs: 0, tokens: null, tokenSource: 'none', steps: 0, exitCode: null, timedOut: false,
+    sessionId: null, ok: false, setupFail: true, check: null, checkCode: null, checkWallMs: 0, stderrTail: '',
+  }
+  if (item.task.setup) {
+    // Real-PR tasks mutate their checkout, so every round starts from the same tree.
+    // A setup that cannot restore it is reported, never silently measured.
+    const reset = await runCheck({ command: item.task.setup, cwd: taskCwd, timeoutMs: options.timeoutMs })
+    if (reset.status !== 'pass') {
+      return { ...empty, stderrTail: String(reset.stderr ?? '').slice(-600) }
+    }
+  }
   const argv = buildArgv({
     profile: options.profile,
     appArgs: options.appArgs,
     prompt: item.task.prompt,
     patch,
   })
-  const result = await runOne({ bin: options.dshBin, node: options.dshNode, argv, cwd, timeoutMs: options.timeoutMs })
+  const result = await runOne({ bin: options.dshBin, node: options.dshNode, argv, cwd: taskCwd, timeoutMs: options.timeoutMs })
   const events = usageFromEvents(result.stdout)
   const journal = tokensFromJournal(metricsFile, events.sessionId)
   const tokenInfo = resolveTokens({ events, journal })
-  const check = await runCheck({ command: item.task.check, cwd, timeoutMs: options.timeoutMs })
+  const check = await runCheck({ command: item.task.check, cwd: taskCwd, timeoutMs: options.timeoutMs })
   return {
     wallMs: Math.round(result.wallMs),
     tokens: tokenInfo.tokens,
@@ -840,6 +862,11 @@ async function main(argv) {
     throw new UsageError(`读不到任务清单 ${options.tasks}：${error.code ?? error.message}`)
   }
   const tasks = parseTasks(taskText)
+  for (const task of tasks) {
+    if (task.cwd && !existsSync(task.cwd)) {
+      throw new UsageError(`任务 ${task.id} 的 cwd 不存在：${task.cwd}`)
+    }
+  }
   const metricsFile = resolve(options.metricsFile
     ?? process.env.DSH_FAST_MODE_METRICS_FILE
     ?? join(homedir(), '.dsh', 'fast-mode-metrics.jsonl'))
@@ -938,11 +965,15 @@ async function main(argv) {
       for (const arm of ['off', 'on']) {
         const reading = await measureArm({ item, arm, style, options, cwd, metricsFile })
         record[arm] = reading
+        if (reading.setupFail) {
+          failures.push(`${item.task.id} [${arm}] round ${round}: setup 失败`)
+        }
         if (!reading.ok) {
           failures.push(`${item.task.id} [${arm}] round ${round}: exit ${reading.exitCode}${reading.timedOut ? '（超时）' : ''}`)
         }
         process.stderr.write(`[${round}/${options.rounds}] ${item.task.id} ${arm}: ${reading.wallMs} ms，token ${reading.tokens ?? 'N/A'}\n`)
       }
+      if (record.off?.setupFail || record.on?.setupFail) continue
       pairs.push(record)
       writeFileSync(join(outDir, 'pairs.jsonl'), `${pairs.map(p => JSON.stringify(p)).join('\n')}\n`)
     }
