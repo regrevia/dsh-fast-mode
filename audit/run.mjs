@@ -577,7 +577,7 @@ async function runCheck({ command, cwd, timeoutMs }) {
 const USAGE = `用法：node audit/run.mjs --tasks <tasks.jsonl> --cwd <repo> [选项]
 
 选项：
-  --tasks <file>        任务清单 JSONL（每行 {id, prompt, check?, cwd?}），必填
+  --tasks <file>        任务清单 JSONL（每行 {id, prompt, check?, cwd?, setup?}），必填
   --cwd <dir>           目标仓库，两个臂都在这里执行，默认当前目录
   --rounds <n>          每臂轮数，默认 3
   --dsh-bin <path>      dsh 启动脚本，默认用本机探测到的真实入口
@@ -960,9 +960,12 @@ async function main(argv) {
   const pairs = []
   const failures = []
   for (let round = 1; round <= options.rounds; round += 1) {
+    // 两个臂在同一台机器上串行跑，谁先谁后就可能带进顺序偏差（页面缓存、GC、机器变热）。
+    // 单数轮 off 先跑，双数轮 on 先跑，让顺序在两个臂之间对称。
+    const armOrder = round % 2 === 1 ? ['off', 'on'] : ['on', 'off']
     for (const item of items) {
       const record = { id: item.task.id, round, off: null, on: null }
-      for (const arm of ['off', 'on']) {
+      for (const arm of armOrder) {
         const reading = await measureArm({ item, arm, style, options, cwd, metricsFile })
         record[arm] = reading
         if (reading.setupFail) {
@@ -987,6 +990,7 @@ async function main(argv) {
     offLabel: style === 'patch' ? `--patch ${patches.off}（enabled: false）` : style === 'args' ? options.offArgs : '不加任何覆盖',
     onLabel: style === 'patch' ? `--patch ${patches.on}（enabled: true）` : style === 'args' ? options.onArgs : '不加任何覆盖',
     rounds: options.rounds,
+    armOrder: '单数轮 off→on，双数轮 on→off',
     tokenSource: pairs.some(p => p.off?.tokens || p.on?.tokens)
       ? 'metrics jsonl 按 session id 归集，缺失时回落到 --json 的 step_end.usage.outputTokens'
       : 'N/A（这次一个 token 字段都没拿到，只报墙钟）',

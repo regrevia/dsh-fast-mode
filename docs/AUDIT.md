@@ -247,10 +247,9 @@ src/renameme.test.js: expected 1 got 2` 在第 2000 行，既不在开头也不�
 
 ### 真实 PR 任务：跑得通，但还量不出快慢
 
-自造任务只能说明「这个仓库变快了」，要说「真活也变快」得用真实 PR。做不了官方的 SWE-bench /
-Terminal-Bench 跑分：这台机器拉不到 Docker Hub（`docker pull alpine:3.20` → `failed to resolve
-reference … EOF`），HuggingFace 的数据集服务也连不上（SSL EOF），两边的实例元数据和官方 harness
-都拿不到。所以这里的「真实 PR」是本地重建的：取 PR 的 `base_commit`，只保留它的测试改动，源码退回
+自造任务只能说明「这个仓库变快了」，要说「真活也变快」得用真实 PR。这一节用的是**本地重建的
+真实 PR**；官方 SWE-bench Lite 的题目定义后来接上了（走代理，见下一小节），但它也只到「题目是
+官方的」，不是排行榜成绩。所以这里的「真实 PR」仍是本地重建的：取 PR 的 `base_commit`，只保留它的测试改动，源码退回
 base，prompt 用它自己的标题和描述，依赖按仓库自己的配置装好，校验直接跑仓库原生 `pytest` 的一条
 命令。**没有跑过任何外部 benchmark**，下面这些数字不能和任何排行榜对齐。
 
@@ -289,6 +288,18 @@ token 的区间都在 1 以下，两边校验都全绿。它和自造任务上�
     COMPANY_LLM_TOKEN=... node audit/run.mjs --tasks /tmp/swe/tasks.real6.setup.jsonl \
       --cwd /tmp/swe --rounds 4 --on-config compactResults=true \
       --out /tmp/fm-real6pure-4r --timeout-ms 900000
+
+### 官方 SWE-bench Lite：跑得通，但量不出加速
+
+换了第三种证据：官方 `princeton-nlp/SWE-bench_Lite` 的 6 条题目定义、本机 `uv` 环境、按官方
+`FAIL_TO_PASS`/`PASS_TO_PASS` 差分判分。5 条跑了三轮两臂（共 30 对），两臂校验全绿，
+但**合池墙钟 1.016× [0.823, 1.261]、输出 token 1.055× [0.915, 1.229]，都跨 1**；只开
+`enabled: true` 的第三轮同样分不开（0.881× / 1.081×）。中间还发现**顺序偏差比效应大**：
+每轮固定 off 先跑时读出来是 token 1.208×（更差），逐轮换序后变成 0.922×——所以
+`audit/run.mjs` 现在单数轮 off→on、双数轮 on→off，报告头写明了。
+
+方法和逐题数字、以及"为什么这里没有收益（输出本来就短，没有可截的东西）"都在
+[`SWEBENCH.md`](./SWEBENCH.md)。
 
 ## 一次完整的复核
 
