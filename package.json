@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-mode",
-  "version": "1.7.22",
+  "version": "1.7.23",
   "description": "DeepSeek Harness’s own fast mode: the same model, half the output, up to twice as fast. Switches combine freely and stay prompt-side — never changes the model, reasoning effort, or the request body. Best measured 0.505x wall clock, −42% output tokens, 438/438 checks green; a few task shapes are slower, see BENCHMARK.md.",
   "repository": {
     "type": "git",
