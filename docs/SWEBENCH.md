@@ -1,7 +1,7 @@
 # 官方 SWE-bench Lite 上量一次：跑得通，量不出加速
 
 前面两份数字都是自造任务和手挑的真实 PR。这里换一种证据：**官方 SWE-bench Lite 的题目定义**
-（`princeton-nlp/SWE-bench_Lite`，300 条里的 6 条），用本机 `uv` 建环境、按官方
+（`princeton-nlp/SWE-bench_Lite`，300 条里的 8 条，先 6 条、后补 2 条），用本机 `uv` 建环境、按官方
 `FAIL_TO_PASS` / `PASS_TO_PASS` 的差分判分，再拿同一套 `audit/run.mjs` 掐两臂。
 
 先说清楚边界，免得被当成排行榜成绩：
@@ -9,7 +9,7 @@
 - **不是 leaderboard 提交**。官方评测用 `swebench/sweb.eval.x86_64.<instance>` 容器镜像和
   `swebench.harness.run_evaluation` 跑；这里是本机 venv + 直接 `pytest`，环境、依赖版本、
   判分脚本都和官方不同。这只能说明「在官方题目定义上」，不能和 60%+ 的解决率对比。
-- **6 条题**，不是 300 条。选的是几个便宜仓库（pytest / sphinx / sympy）的高版本实例，
+- **8 条题**，不是 300 条。选的是几个便宜仓库（pytest / sphinx / sympy）的高版本实例，
   能在一两分钟内建好环境、测试量级在几百个 node 的。
 - 每题都过了差分门（见下），**没过门的一律不用**，也不拿它凑数。
 
@@ -44,7 +44,7 @@
 
 门槛是**两道**：`f2p` 在 gold 之后必须全绿；`p2p` 不许出现 regression。base 上本来就红的
 `p2p` 节点算宿主噪声、排除并计数（允许排除，但排除数必须写出来）——7490 有 6 个这种节点，
-regression 是 0，所以收进来。过了门的 6 条：
+regression 是 0，所以收进来。后来又把池子补到 8 条（`sympy-24909` 走同一套门；`pytest-8906` 的 7 个排除也全是 base 上就红的节点、regression 为 0）。过了门的 8 条：
 
 | instance | 包版本 | Python | f2p | p2p | p2p 排除 | gold 后回归 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -54,6 +54,8 @@ regression 是 0，所以收进来。过了门的 6 条：
 | `sympy__sympy-24066` | 1.12 | 3.8 | 1 | 38 | 0 | 0 |
 | `pytest-dev__pytest-8365` | 6.3 | 3.9.6 | 1 | 32 | 0 | 0 |
 | `pytest-dev__pytest-7490` | 6.0 | 3.9.6 | 2 | 79 | 6 | 0 |
+| `sympy__sympy-24909` | 1.13 | 3.8 | 1 | 2 | 0 | 0 |
+| `pytest-dev__pytest-8906` | 7.0 | 3.11 | 1 | 85 | 7 | 0 |
 
 Python 版本是逐题试出来的，不是猜的：pytest 6.x 在 3.11 上做断言重写会挂
 （`TypeError: required field "lineno" missing from alias`），所以 8365/7490 用系统 3.9.6；
@@ -67,7 +69,7 @@ exit 0 才叫修好；它是 `audit/run.mjs` 里每题的 `check`。
 
 ## 量的是什么
 
-`audit/run.mjs`，5（后来 6）题 × 3 轮 × 2 臂：
+`audit/run.mjs`，5（后来 6、最后 8）题 × 3 轮 × 2 臂：
 
     COMPANY_LLM_TOKEN=... node audit/run.mjs \
       --tasks /Volumes/US202/swebench/tasks.swebench.jsonl \
@@ -88,6 +90,7 @@ exit 0 才叫修好；它是 `audit/run.mjs` 里每题的 `check`。
 | 第三轮：只开 `enabled: true`（不带截短） | 15 | 0.881× [0.660, 1.162]，分不开 | 1.081× [0.818, 1.447]，分不开 | 15/15 / 15/15 |
 | 第四轮：6 条题（含 7490） | 18 | 0.912× [0.676, 1.246]，分不开 | 1.007× [0.895, 1.136]，分不开 | 15/18 / 15/18 |
 | 同上，去掉两臂都没修好的 7490 | 15 | 0.993× [0.706, 1.422]，分不开 | 1.032× [0.914, 1.177]，分不开 | 15/15 / 15/15 |
+| 第五轮：池子扩到 8 条，两次独立跑再加合池 | 48 | 1.007× [0.808, 1.255]，分不开 | 0.905× [0.789, 1.040]，分不开 | 46/48 / 45/48 |
 
 第一轮和第二轮**方向相反、量级都是三成上下**，合池之后贴到 1.0。这不是"插件没用"，
 是**顺序偏差比效应大**：同一台机器上，第二个跑的臂天然吃亏或占便宜（页面缓存、GC、机器变热），
@@ -101,6 +104,13 @@ exit 0 才叫修好；它是 `audit/run.mjs` 里每题的 `check`。
 去掉它重算是 0.993× / 1.032×，还是跨 1；留着它是 0.912× / 1.007×，也跨 1。
 两臂失败集合完全一样，所以这不是"插件让模型变笨"，是那条题本身在这套 prompt 下太难。
 
+第五轮把池子扩到 8 条（补 `sympy-24909`、`pytest-8906`），每次 8×3=24 对、跑两次（1.109× 和
+0.914×），合池 48 对是 **1.007×** [0.808, 1.255]、token **0.905×** [0.789, 1.040]——涨到 48 对也
+还是分不开，方向落在 1.0 上。校验命令 off 46/48、on 45/48，差额来自 `sympy-24909` 一轮 on 臂没修好，其它失败是两侧同时没修好，
+不是插件造成的差异。**扩池没有推翻前四轮的结论，也没有把"量不出加速"变成"量出加速"。**
+（想再扩要付出的代价是每题一份 `uv` 环境和一次差分门；`sphinx-8713` 这个候选在 3.11 上撞
+`jinja2` 的 `environmentfilter` 已删，`sphinx` 只留 11445 一条。）
+
 ## 为什么这里没有收益（和工作负载有关，不是矛盾）
 
 - SWE-bench 的题是"看 issue、改源码、测试变绿"。工具输出普遍只有几百到几千字，
@@ -112,7 +122,7 @@ exit 0 才叫修好；它是 `audit/run.mjs` 里每题的 `check`。
 
 ## 复现
 
-    # 1) 准备（一次性的，环境在 /Volumes/US202/swebench/work/<iid>）
+    # 1) 准备（一次性的，环境在 /Volumes/US202/swebench/work/<iid>；tasks.swebench.jsonl 现在 8 条）
     python3 /tmp/swebench/pipeline.py <iid> ...        # clone + venv + 解析 nodeid + 差分门
     # 2) 量
     COMPANY_LLM_TOKEN=... node audit/run.mjs --tasks /Volumes/US202/swebench/tasks.swebench.jsonl \
