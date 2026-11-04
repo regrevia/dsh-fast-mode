@@ -1,0 +1,13 @@
+- id: fast-mode
+  config:
+    enabled: true
+    gear: auto
+    outputDiscipline: late
+    stepBudget: 0
+    workspaceMap: true
+    openBatch: true
+    compactResults: true
+    metrics: true
+    benchmarkFile: ''
+    sessions: ''
+    debug: false

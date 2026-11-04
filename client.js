@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
       'panel.gear': '并行档位',
-      'panel.gearTitle': '点一下载入这一档的开关：标准只开精简输出，激进再开截短工具输出与批量读文件；手动改过就不再属于任何一档',
+      'panel.gearTitle': '点一下载入这一档的开关：标准开精简输出与三条思考开关，激进再开文件清单、批量读文件与截短工具输出；手动改过就不再属于任何一档',
       'panel.gearSafe': '保守',
       'panel.gearAuto': '标准',
       'panel.gearFast': '激进',
@@ -136,7 +136,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.gear': 'Parallel width',
-      'panel.gearTitle': 'One click loads that tier\'s switches: Standard turns on prose trimming only, Aggressive adds output trimming and batched reads; a switch changed by hand leaves no tier selected',
+      'panel.gearTitle': 'One click loads that tier\'s switches: Standard turns on prose trimming and the three deliberation switches, Aggressive also adds the file inventory, batched reads and output trimming; a switch changed by hand leaves no tier selected',
       'panel.gearSafe': 'Cautious',
       'panel.gearAuto': 'Standard',
       'panel.gearFast': 'Aggressive',
@@ -323,9 +323,18 @@ window.__ModuleLoader__.load({
      * to `write` as is.
      */
     const GEAR_PRESETS = {
-      safe: { gear: 'safe', discipline: false, map: false, batch: false, compactResults: false },
-      auto: { gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false },
-      aggressive: { gear: 'aggressive', discipline: 'late', map: true, batch: true, compactResults: true },
+      safe: {
+        gear: 'safe', discipline: false, map: false, batch: false, compactResults: false,
+        probeFirst: false, actBeforePlan: false, repeatNudge: false,
+      },
+      auto: {
+        gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false,
+        probeFirst: true, actBeforePlan: true, repeatNudge: true,
+      },
+      aggressive: {
+        gear: 'aggressive', discipline: 'late', map: true, batch: true, compactResults: true,
+        probeFirst: true, actBeforePlan: true, repeatNudge: true,
+      },
     }
 
     /**
@@ -369,6 +378,9 @@ window.__ModuleLoader__.load({
         && store.inventory === preset.map
         && store.batch === preset.batch
         && store.compact === preset.compactResults
+        && store.probe === preset.probeFirst
+        && store.act === preset.actBeforePlan
+        && store.repeat === preset.repeatNudge
       return same ? tier : ''
     }
 
@@ -1237,6 +1249,30 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /**
+       * The three deliberation switches. All prompt-side and per-conversation;
+       * measured together at 0.526x wall clock over 15 pairs (reasoning chars
+       * 0.43x), which is why the two working tiers load them and the cautious
+       * one does not.
+       */
+      const toggleProbe = () => {
+        void write(remote, undefined, { entry: { probeFirst: !store.probe } })
+        store.panelOpen = false
+        emit()
+      }
+
+      const toggleAct = () => {
+        void write(remote, undefined, { entry: { actBeforePlan: !store.act } })
+        store.panelOpen = false
+        emit()
+      }
+
+      const toggleRepeat = () => {
+        void write(remote, undefined, { entry: { repeatNudge: !store.repeat } })
+        store.panelOpen = false
+        emit()
+      }
+
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
@@ -1280,6 +1316,33 @@ window.__ModuleLoader__.load({
           toggleCompact,
           !gated && store.compact,
           t('panel.compactTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.probe'),
+          t(!gated && store.probe ? 'panel.on' : 'panel.off'),
+          rowLive,
+          toggleProbe,
+          !gated && store.probe,
+          t('panel.probeTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.act'),
+          t(!gated && store.act ? 'panel.on' : 'panel.off'),
+          rowLive,
+          toggleAct,
+          !gated && store.act,
+          t('panel.actTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.repeat'),
+          t(!gated && store.repeat ? 'panel.on' : 'panel.off'),
+          rowLive,
+          toggleRepeat,
+          !gated && store.repeat,
+          t('panel.repeatTitle'),
         ),
         savedFooter(t),
       )

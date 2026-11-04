@@ -210,6 +210,9 @@ test('the five frozen rows keep their labels and their order', async () => {
     'panel.map',
     'panel.batch',
     'panel.compact',
+    'panel.probe',
+    'panel.act',
+    'panel.repeat',
   ])
 })
 
@@ -219,7 +222,7 @@ test('the cautious tier greys the four gated rows instead of leaving dead switch
   const panel = await openPanel(render)
   const rows = panel.children.slice(1, -1)
 
-  for (const index of [0, 3, 4]) {
+  for (const index of [0, 3, 4, 5, 6, 7]) {
     const row = rows[index]
     assert.equal(row.props.disabled, true, 'a row the cautious tier turns off refuses the click')
     assert.equal(row.children[1].children[0], 'panel.off', 'and reads off, because the mechanism is off')
@@ -245,14 +248,14 @@ test('leaving the cautious tier brings the gated rows back', async () => {
 test('a row that matches a tier highlights it, and its retired gear name still does', async () => {
   const cases = [
     ['safe', {}, 'safe'],
-    ['auto', {}, 'auto'],
-    ['fast', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true }, 'aggressive'],
-    ['aggressive', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true }, 'aggressive'],
-    ['turbo', {}, 'auto'],
-    ['max', {}, 'auto'],
-    ['ludicrous', {}, 'auto'],
-    ['nonsense', {}, 'auto'],
-    [undefined, {}, 'auto'],
+    ['auto', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    ['fast', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'aggressive'],
+    ['aggressive', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'aggressive'],
+    ['turbo', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    ['max', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    ['ludicrous', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    ['nonsense', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    [undefined, { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
   ]
   for (const [stored, switches, tier] of cases) {
     const { render } = await mount(fakeRemote({ enabled: true, gear: stored, ...switches }))
@@ -269,7 +272,8 @@ test('a bare gear name over switches the tier does not own highlights nothing', 
   const cases = [
     { gear: 'aggressive' },
     { gear: 'aggressive', outputDiscipline: true, workspaceMap: true, openBatch: true },
-    { gear: 'auto', compactResults: true },
+    { gear: 'auto', compactResults: true, probeFirst: true, actBeforePlan: true, repeatNudge: true },
+    { gear: 'auto', probeFirst: true, actBeforePlan: true },
   ]
   for (const stored of cases) {
     const { render } = await mount(fakeRemote({ enabled: true, ...stored }))
@@ -296,6 +300,9 @@ test('a tier click loads that tier into this conversation, at the revision it re
   assert.equal(entry.map, false)
   assert.equal(entry.batch, false)
   assert.equal(entry.compactResults, false)
+  assert.equal(entry.probeFirst, false, 'the cautious tier turns deliberation off too')
+  assert.equal(entry.actBeforePlan, false)
+  assert.equal(entry.repeatNudge, false)
   assert.equal(entry.enabled, undefined, 'the bolt is a separate switch')
   assert.equal(entry.stepBudget, undefined, 'a preset never touches the step cap')
   assert.equal(remote.calls[0].revision, 3)
@@ -308,7 +315,7 @@ test('the aggressive tier turns its three switches on in the same click, visibly
   const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote)
   let rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.off', 'panel.off', 'panel.off'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off'])
 
   const gear = gearOf(await openPanel(render))
   gear.children[2].props.onClick()
@@ -323,9 +330,12 @@ test('the aggressive tier turns its three switches on in the same click, visibly
     map: true,
     batch: true,
     compactResults: true,
+    probeFirst: true,
+    actBeforePlan: true,
+    repeatNudge: true,
   }, 'one patch carries the whole preset')
   rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.on', 'panel.on', 'panel.on'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on'])
 })
 
 test('clicking the tier this conversation already matches writes nothing', async () => {
@@ -336,6 +346,9 @@ test('clicking the tier this conversation already matches writes nothing', async
     workspaceMap: true,
     openBatch: true,
     compactResults: true,
+    probeFirst: true,
+    actBeforePlan: true,
+    repeatNudge: true,
   })
   const { render } = await mount(remote)
   const gear = gearOf(await openPanel(render))
@@ -353,6 +366,9 @@ test('editing one switch by hand drops the tier highlight instead of leaving a s
     workspaceMap: true,
     openBatch: true,
     compactResults: true,
+    probeFirst: true,
+    actBeforePlan: true,
+    repeatNudge: true,
   })
   const { render } = await mount(remote)
   let gear = gearOf(await openPanel(render))
