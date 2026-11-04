@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
       'panel.gear': '并行档位',
-      'panel.gearTitle': '三档只调并行宽度，机制不变',
+      'panel.gearTitle': '保守关掉整套机制，下面四行随之失效；标准与激进只差并行宽度',
       'panel.gearSafe': '保守',
       'panel.gearAuto': '标准',
       'panel.gearFast': '激进',
@@ -136,7 +136,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.gear': 'Parallel width',
-      'panel.gearTitle': 'The tiers change only how many calls run in parallel, not the mechanism',
+      'panel.gearTitle': 'Cautious turns the whole mechanism off, so the four rows below do nothing; Standard and Fast differ only in parallel width',
       'panel.gearSafe': 'Cautious',
       'panel.gearAuto': 'Standard',
       'panel.gearFast': 'Aggressive',
@@ -1106,10 +1106,9 @@ window.__ModuleLoader__.load({
     /**
      * The right-click panel: one preference, stated with its scope.
      *
-     * It writes the shared `outputDiscipline` field, so the last line says "all
-     * conversations" rather than implying a per-session switch this half cannot
-     * keep. A read-only or busy configuration disables the row instead of
-     * swallowing the click.
+     * Every row writes this conversation's own entry in `sessions`, so the footer
+     * names the conversation rather than implying a shared field. A read-only,
+     * busy or gated row is disabled instead of swallowing the click.
      *
      * @param {(key: string, params?: object) => string} t
      * @param {any} remote
@@ -1117,7 +1116,13 @@ window.__ModuleLoader__.load({
     function panelNode(t, remote) {
       const ready = store.phase === 'ready'
       const canWrite = ready && store.writable && !store.busy
-      const budgetText = store.stepBudget > 0
+      // The cautious tier turns the whole mechanism off in `resolveConfig`
+      // (`gear.directive` gates the prose rule, the batch tool, the truncator and
+      // the step cap), so leaving the four rows clickable there would be a dead
+      // switch: a click writes the per-session value and nothing changes.
+      const gated = gearTier(store.gear) === 'safe'
+      const rowLive = canWrite && !gated
+      const budgetText = !gated && store.stepBudget > 0
         ? t('panel.budgetSteps', { n: store.stepBudget })
         : t('panel.budgetOff')
 
@@ -1188,13 +1193,13 @@ window.__ModuleLoader__.load({
         row(
           'menuitemcheckbox',
           t('panel.prose'),
-          t(store.discipline ? 'panel.on' : 'panel.off'),
-          canWrite,
+          t(!gated && store.discipline ? 'panel.on' : 'panel.off'),
+          rowLive,
           toggleProse,
-          store.discipline,
+          !gated && store.discipline,
           t('panel.proseTitle'),
         ),
-        row('menuitem', t('panel.budget'), budgetText, canWrite, () => void cycleBudget(remote), undefined, t('panel.budgetTitle')),
+        row('menuitem', t('panel.budget'), budgetText, rowLive, () => void cycleBudget(remote), undefined, t('panel.budgetTitle')),
         row(
           'menuitemcheckbox',
           t('panel.map'),
@@ -1207,19 +1212,19 @@ window.__ModuleLoader__.load({
         row(
           'menuitemcheckbox',
           t('panel.batch'),
-          t(store.batch ? 'panel.on' : 'panel.off'),
-          canWrite,
+          t(!gated && store.batch ? 'panel.on' : 'panel.off'),
+          rowLive,
           toggleBatch,
-          store.batch,
+          !gated && store.batch,
           t('panel.batchTitle'),
         ),
         row(
           'menuitemcheckbox',
           t('panel.compact'),
-          t(store.compact ? 'panel.on' : 'panel.off'),
-          canWrite,
+          t(!gated && store.compact ? 'panel.on' : 'panel.off'),
+          rowLive,
           toggleCompact,
-          store.compact,
+          !gated && store.compact,
           t('panel.compactTitle'),
         ),
         savedFooter(t),

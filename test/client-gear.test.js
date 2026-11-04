@@ -213,6 +213,35 @@ test('the five frozen rows keep their labels and their order', async () => {
   ])
 })
 
+test('the cautious tier greys the four gated rows instead of leaving dead switches', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'safe' })
+  const { render } = await mount(remote)
+  const panel = await openPanel(render)
+  const rows = panel.children.slice(1, -1)
+
+  for (const index of [0, 3, 4]) {
+    const row = rows[index]
+    assert.equal(row.props.disabled, true, 'a row the cautious tier turns off refuses the click')
+    assert.equal(row.children[1].children[0], 'panel.off', 'and reads off, because the mechanism is off')
+  }
+  const budget = rows[1]
+  assert.equal(budget.props.disabled, true, 'the cap is gated too')
+  assert.equal(budget.children[1].children[0], 'panel.budgetOff', 'a gated cap reads no cap')
+  assert.equal(rows[2].props.disabled, false, 'the workspace map is not gated, so it stays live')
+  assert.equal(remote.calls.length, 0, 'rendering the gated state writes nothing')
+})
+
+test('leaving the cautious tier brings the gated rows back', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'safe' })
+  const { render } = await mount(remote)
+  const gear = gearOf(await openPanel(render))
+  gear.children[2].props.onClick()
+  await sleep(20)
+
+  const rows = (await openPanel(render)).children.slice(1, -1)
+  for (const row of rows) assert.equal(row.props.disabled, false, 'every row is live again')
+})
+
 test('every read-back gear lands on one tier, including the retired ladder', async () => {
   const cases = [
     ['safe', 'safe'],
