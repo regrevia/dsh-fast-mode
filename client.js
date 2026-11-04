@@ -1178,27 +1178,6 @@ window.__ModuleLoader__.load({
         emit()
       }
 
-      /** Read the fact instead of reasoning about it. */
-      const toggleProbe = () => {
-        void write(remote, undefined, { entry: { probeFirst: !store.probe } })
-        store.panelOpen = false
-        emit()
-      }
-
-      /** At most one line of plan before the first tool call. */
-      const toggleAct = () => {
-        void write(remote, undefined, { entry: { actBeforePlan: !store.act } })
-        store.panelOpen = false
-        emit()
-      }
-
-      /** One evidence line when the turn repeats a call or stops learning. */
-      const toggleRepeat = () => {
-        void write(remote, undefined, { entry: { repeatNudge: !store.repeat } })
-        store.panelOpen = false
-        emit()
-      }
-
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
@@ -1242,33 +1221,6 @@ window.__ModuleLoader__.load({
           toggleCompact,
           store.compact,
           t('panel.compactTitle'),
-        ),
-        row(
-          'menuitemcheckbox',
-          t('panel.probe'),
-          t(store.probe ? 'panel.on' : 'panel.off'),
-          canWrite,
-          toggleProbe,
-          store.probe,
-          t('panel.probeTitle'),
-        ),
-        row(
-          'menuitemcheckbox',
-          t('panel.act'),
-          t(store.act ? 'panel.on' : 'panel.off'),
-          canWrite,
-          toggleAct,
-          store.act,
-          t('panel.actTitle'),
-        ),
-        row(
-          'menuitemcheckbox',
-          t('panel.repeat'),
-          t(store.repeat ? 'panel.on' : 'panel.off'),
-          canWrite,
-          toggleRepeat,
-          store.repeat,
-          t('panel.repeatTitle'),
         ),
         savedFooter(t),
       )

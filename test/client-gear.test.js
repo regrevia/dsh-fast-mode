@@ -200,7 +200,7 @@ test('the title row keeps its words and grows a radiogroup of exactly three tier
   }
 })
 
-test('the eight frozen rows keep their labels and their order', async () => {
+test('the five frozen rows keep their labels and their order', async () => {
   const { render } = await mount(fakeRemote())
   const panel = await openPanel(render)
   const labels = panel.children.slice(1, -1).map(node => node.children[0].children[0])
@@ -210,9 +210,6 @@ test('the eight frozen rows keep their labels and their order', async () => {
     'panel.map',
     'panel.batch',
     'panel.compact',
-    'panel.probe',
-    'panel.act',
-    'panel.repeat',
   ])
 })
 
