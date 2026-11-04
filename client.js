@@ -319,9 +319,9 @@ window.__ModuleLoader__.load({
      * 0.786x), and batched reads paid off together with the workspace map
      * (0.742x, 11 pairs). The step cap is deliberately absent: it is a guardrail
      * the user set, not a speed knob, and a preset must not add or remove it.
+     * The keys are the session row's own field names, so a preset can be handed
+     * to `write` as is.
      */
-    // The keys are the session row's own field names, so one preset can be
-    // handed to `write` unchanged.
     const GEAR_PRESETS = {
       safe: { gear: 'safe', discipline: false, map: false, batch: false, compactResults: false },
       auto: { gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false },
