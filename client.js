@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
       'panel.gear': '并行档位',
-      'panel.gearTitle': '保守关掉整套机制，下面四行随之失效；标准与激进只差并行宽度',
+      'panel.gearTitle': '点一下载入这一档的开关：标准只开精简输出，激进再开截短工具输出与批量读文件；手动改过就不再属于任何一档',
       'panel.gearSafe': '保守',
       'panel.gearAuto': '标准',
       'panel.gearFast': '激进',
@@ -136,7 +136,7 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.gear': 'Parallel width',
-      'panel.gearTitle': 'Cautious turns the whole mechanism off, so the four rows below do nothing; Standard and Fast differ only in parallel width',
+      'panel.gearTitle': 'One click loads that tier\'s switches: Standard turns on prose trimming only, Aggressive adds output trimming and batched reads; a switch changed by hand leaves no tier selected',
       'panel.gearSafe': 'Cautious',
       'panel.gearAuto': 'Standard',
       'panel.gearFast': 'Aggressive',
@@ -307,6 +307,28 @@ window.__ModuleLoader__.load({
     const GEAR_LABELS = { safe: 'panel.gearSafe', auto: 'panel.gearAuto', aggressive: 'panel.gearFast' }
 
     /**
+     * What each tier loads when it is clicked. A tier is a preset, not a stored
+     * mode: the button writes these five values into the conversation's row, and
+     * the checked state is derived back from them (`activeTier`). Changing one
+     * switch by hand therefore drops the panel out of every tier instead of
+     * leaving a label that contradicts the rows below it.
+     *
+     * The width is the scheduler's own gear id. The three switches are the ones
+     * with evidence behind them: the prose rule is the measured mechanism, tool
+     * output trimming cut wall clock and tokens on every paired run (0.756x /
+     * 0.786x), and batched reads paid off together with the workspace map
+     * (0.742x, 11 pairs). The step cap is deliberately absent: it is a guardrail
+     * the user set, not a speed knob, and a preset must not add or remove it.
+     */
+    // The keys are the session row's own field names, so one preset can be
+    // handed to `write` unchanged.
+    const GEAR_PRESETS = {
+      safe: { gear: 'safe', discipline: false, map: false, batch: false, compactResults: false },
+      auto: { gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false },
+      aggressive: { gear: 'aggressive', discipline: 'late', map: true, batch: true, compactResults: true },
+    }
+
+    /**
      * Collapse any gear name onto one of the three tiers the panel shows.
      *
      * `safe` and `aggressive` are live gear ids, so they survive. `fast` is the
@@ -324,6 +346,30 @@ window.__ModuleLoader__.load({
       if (gear === 'safe') return 'safe'
       if (gear === 'aggressive' || gear === 'fast') return 'aggressive'
       return 'auto'
+    }
+
+    /**
+     * The tier this conversation currently matches, or `''` when its switches
+     * are a mix no preset describes — the state after a hand edit, which must
+     * not keep the old tier highlighted.
+     *
+     * The cautious tier matches on the gear alone: `gear.directive` turns all
+     * four channels off there, so whatever the stored switches say, the panel
+     * shows them off and the tier is the only honest answer.
+     *
+     * @returns {'safe' | 'auto' | 'aggressive' | ''}
+     */
+    function activeTier() {
+      const tier = gearTier(store.gear)
+      if (tier === 'safe') return 'safe'
+      const preset = GEAR_PRESETS[tier]
+      // The stored `discipline` may be 'late', so compare the resolved on/off
+      // rather than the literal. The panel itself only ever shows on or off.
+      const same = Boolean(store.discipline) === Boolean(preset.discipline)
+        && store.inventory === preset.map
+        && store.batch === preset.batch
+        && store.compact === preset.compactResults
+      return same ? tier : ''
     }
 
     /**
@@ -944,18 +990,22 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Set the tier this conversation runs at. It is written into the session
-     * row, like every other switch on the panel, so one conversation picking
-     * 保守 never narrows another's. Only the three live gear ids travel: the
-     * retired ladder names are read as 标准 and never written back.
+     * Load a tier: write its five values into this conversation's row in one
+     * patch, so the panel never shows half a preset. The tier is not remembered
+     * anywhere else — pressing it is the whole state change, and editing a
+     * switch afterwards is what the panel then reports.
+     *
+     * Per-session like every other switch, so one conversation picking 保守
+     * never narrows another's. Only the three live gear ids travel: the retired
+     * ladder names are read as 标准 and never written back.
      *
      * @param {{settings: {describe: () => Promise<any>, update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {'safe' | 'auto' | 'aggressive'} value
      */
-    async function setGear(remote, value) {
+    async function applyTier(remote, value) {
       if (store.busy || store.phase !== 'ready' || !store.writable) return
-      if (store.gear === value) return
-      await write(remote, undefined, { entry: { gear: value } })
+      if (activeTier() === value) return
+      await write(remote, undefined, { entry: { ...GEAR_PRESETS[value] } })
     }
 
     /* -------------------------------------------------------------- component */
@@ -1071,7 +1121,11 @@ window.__ModuleLoader__.load({
      * @param {boolean} writable
      */
     function gearControl(t, remote, writable) {
-      const current = gearTier(store.gear)
+      // The checked tier is derived from the switches, never from a stored mode:
+      // a hand-edited row highlights nothing, which is the only label that does
+      // not lie about what is running.
+      const current = activeTier()
+      const tabStop = current || gearTier(store.gear)
       const onKeyDown = (event, index) => {
         if (!event || typeof event.key !== 'string') return
         const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
@@ -1079,7 +1133,7 @@ window.__ModuleLoader__.load({
         if (step === 0) return
         if (typeof event.preventDefault === 'function') event.preventDefault()
         const next = GEAR_TIERS[(index + step + GEAR_TIERS.length) % GEAR_TIERS.length]
-        void setGear(remote, next)
+        void applyTier(remote, next)
       }
       const tierButton = (value, index) => {
         const checked = current === value
@@ -1090,8 +1144,8 @@ window.__ModuleLoader__.load({
         props['aria-checked'] = checked
         props.className = 'fm-panel__gear'
         props.disabled = !writable
-        props.tabIndex = checked ? 0 : -1
-        props.onClick = () => void setGear(remote, value)
+        props.tabIndex = value === tabStop ? 0 : -1
+        props.onClick = () => void applyTier(remote, value)
         props.onKeyDown = event => onKeyDown(event, index)
         return react.createElement('button', props, t(GEAR_LABELS[value]))
       }
