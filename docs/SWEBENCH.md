@@ -129,6 +129,18 @@ exit 0 才叫修好；它是 `audit/run.mjs` 里每题的 `check`。
 - 真实 PR 的 24 对能测出 0.805×，恰恰因为那些任务里有 `pytest`/`npm test` 的大段输出被截短
   （231 KB → 1.3 KB）。工作负载不同，结论就不同，这两组数字应该并排读，不能拿一组去否另一组。
 
+## 环境与资源账
+
+| 项 | 实测 |
+| --- | --- |
+| 题目定义 | HuggingFace `princeton-nlp/SWE-bench_Lite` parquet；本机**直连不通**，走 Clash mixed-port `127.0.0.1:7897` 可达（API 返回 401，TLS 正常；GitHub API 200 作对照） |
+| Docker Hub | 本机**直连 `registry-1.docker.io` 不通**（`curl` 000），但 `docker pull alpine:latest` 成功——拉镜像走守护进程自己的通路，不要用直连 curl 判可达 |
+| 宿主机 | macOS，12 核、24 GiB 内存；Docker Desktop VM 上限 12 核 / 9.7 GiB |
+| 时间成本 | 72 对 = 144 个臂，累计墙钟 **112.8 分钟**（均摊 47 s/臂，含校验）；三次跑串行，一次只起一个进程 |
+| token 成本 | 144 个臂合计输出 **554,819 token** |
+| 磁盘 | 8 条题的 `uv` 环境 + 工作树 **1.1 GB**（`/Volumes/US202/swebench`，约 65 MB/题）；Docker 数据 39 GB 在 `/Volumes/US202/Docker/data` |
+| 存储位置 | `/Volumes/US202` 挂的是外置 SSD（`diskutil` → `/dev/disk5s1`，APFS，1.8 TiB）；`docker info` 的 `root=/var/lib/docker` 是 VM 内路径，容器里 `df` 看到的 1.8 T overlay 与宿主同一个卷 ⇒ 镜像与容器层确实落在外置盘 |
+
 ## 复现
 
     # 1) 准备（一次性的，环境在 /Volumes/US202/swebench/work/<iid>；tasks.swebench.jsonl 现在 8 条）
