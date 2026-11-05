@@ -1,3 +1,11 @@
+## 1.7.30（深色模式下面板不可读：改用主题真实存在的 token）
+
+感谢 [@Bernardxu123](https://github.com/Bernardxu123) 的报告与补丁（#3）。
+
+面板背景与边框引用的是 `--dsw-alias-bg-elevated` / `--dsw-alias-border-subtle`，这两个 token 在 dsh 0.2.x 的主题里**不存在**，于是永远走硬编码回落：白底 + 主题色文字，深色模式下就是白底白字。改用语义正确的 `--dsw-alias-bg-overlay`（浮层背景，正是面板的身份）与 `--dsw-alias-border-l1`（细边框），回落值保留，浅色视觉不变。
+
+已在 dsh 0.2.2-rc.1 核对：`bg-elevated`/`border-subtle` 在 `dsh-client-*` 与主题包里定义数为 0，`bg-overlay` 与 `border-l1` 存在。新增回归测试断言注入的 CSS 里不再出现这两个未定义 token。测试 426 通过。
+
 # Changelog
 
 ## 1.7.29（三个思考开关回到面板，并随标准 / 激进一起载入）
