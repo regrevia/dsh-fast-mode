@@ -389,6 +389,20 @@ test('styles are injected once per page, not once per apply', () => {
   assert.equal(styles[0].dataset.pluginCss, 'dsh-fast-mode/chip.css')
 })
 
+test('the panel paints with tokens this DSH defines, so dark mode keeps its card dark', () => {
+  const remote = fakeRemote()
+  const { module, styles } = loadClient(remote)
+  module.apply(fakeContext(remote))
+  const css = styles[0].textContent
+  // `--dsw-alias-bg-elevated` and `--dsw-alias-border-subtle` are not in the
+  // theme token list dsh 0.2.x exposes, so their literal fallbacks always won:
+  // a white card with `label-primary` text, i.e. white on white in dark mode.
+  assert.equal(css.includes('--dsw-alias-bg-elevated'), false, 'no token dsh never defines')
+  assert.equal(css.includes('--dsw-alias-border-subtle'), false, 'no token dsh never defines')
+  assert.match(css, /\.fm-panel\{[^}]*background:var\(--dsw-alias-bg-overlay/, 'the card is the popover surface')
+  assert.match(css, /\.fm-panel\{[^}]*border:1px solid var\(--dsw-alias-border-l1/, 'the border is the themed hairline')
+})
+
 /* ------------------------------------------------- per-conversation state */
 
 test('a click records the choice in this conversation only, never as a shared default', async () => {

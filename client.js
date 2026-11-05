@@ -185,8 +185,8 @@ window.__ModuleLoader__.load({
       // The panel: anchored above the bolt, opens on right-click only, so the
       // left click stays the switch it has always been.
       '.fm-panel{position:absolute;bottom:calc(100% + 6px);right:0;z-index:60;min-width:196px;',
-      'max-width:min(264px,calc(100vw - 24px));padding:6px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.1));',
-      'border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-elevated,#fff);',
+      'max-width:min(264px,calc(100vw - 24px));padding:6px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));',
+      'border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-1,#fff));',
       'box-shadow:0 6px 24px rgba(0,0,0,.14);text-align:left}',
       // The title row carries the gear control on its right. Wrapping keeps the
       // control off the title when the composer is narrow; the block never
