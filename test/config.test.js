@@ -108,7 +108,7 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   assert.deepEqual(
     [defaults.outputDiscipline, defaults.stepBudget, defaults.workspaceMap,
       defaults.probeFirst, defaults.actBeforePlan, defaults.repeatNudge],
-    ['late', 0, false, false, false, false],
+    ['late', 0, true, false, false, false],
     'the panel fields kept their shipped defaults, and all three new switches are off',
   )
 

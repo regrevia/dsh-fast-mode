@@ -114,7 +114,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.31'
+export const VERSION = '1.7.32'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -751,7 +751,7 @@ export function apply(ctx, rawConfig) {
             + ` calls=${turn.calls.length} stale=${turn.stale}`)
         }
       }
-      if (cfg.workspaceMap === true) {
+      if (cfg.workspaceMap === true && cfg.directive === true) {
         // One inventory per session, before the model spends a step finding out
         // what is in the directory (35.7 % of the recorded calls were exactly
         // that). Bounded, and absent when the map cannot be built.

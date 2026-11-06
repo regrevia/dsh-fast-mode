@@ -34,7 +34,7 @@
 | **Reasoning characters** | **−51%** (42380 → 20872) |
 | **Task quality** | **438/438** checks green, 30/30 runs passing |
 
-Standard tier — Concise output plus the three deliberation switches — is the fastest setting; the bolt alone, with the three newer switches off, is **0.823x** over the full 138-pair pool (18 % saved).
+Standard tier — Concise output, the three deliberation switches, the opening file inventory and batched reads — is the fastest setting: **0.683x** wall clock over 16 pairs across four task families (32 % saved, CI95 [0.520, 0.893]), with hidden tests 32/32 green, output tokens 0.712x and a median step ratio of 1.000x. No single member stands on its own — the inventory alone is 0.927x, batched reads alone 1.136x — so neither is a panel switch; they ship only as part of the standard tier.
 
 ## Install
 

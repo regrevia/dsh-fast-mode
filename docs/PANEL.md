@@ -34,7 +34,8 @@ not three.
   back.
 - **The two tiers differ in behavior.** `safe` runs 2 parallel calls and turns
   the directive off (`directive: false`), `auto` runs 4 with the full discipline,
-  adaptive nudging and the three deliberation switches. `safe` is the only gate:
+  adaptive nudging, the three deliberation switches, and (since 1.7.32) the
+  opening file inventory and batched reads that only pay off as a bundle. `safe` is the only gate:
   under it the panel greys all four rows, reads them as off and writes nothing.
   Legacy folding applies only to *unpinned* gears (`const legacyGear = !pinned
   && LEGACY_GEARS.includes(named)`), and this plugin pins the gear per session,

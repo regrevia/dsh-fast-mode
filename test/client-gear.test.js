@@ -237,17 +237,21 @@ test('leaving the cautious tier brings the gated rows back', async () => {
 
 test('a row that matches a tier highlights it, and a retired name with a custom row does not', async () => {
   const trio = { probeFirst: true, actBeforePlan: true, repeatNudge: true }
+  // 1.7.32 made the two prompt-side hints part of the standard tier, so a row
+  // that matches it now carries them as well.
+  const standard = { outputDiscipline: 'late', workspaceMap: true, openBatch: true, ...trio }
+  const cautious = { outputDiscipline: false, map: false, batch: false, compactResults: false, probeFirst: false, actBeforePlan: false, repeatNudge: false }
   const legacy = { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, ...trio }
   const cases = [
-    ['safe', {}, 'safe'],
-    ['auto', trio, 'auto'],
+    ['safe', cautious, 'safe'],
+    ['auto', standard, 'auto'],
     ['fast', legacy, undefined],
     ['aggressive', legacy, undefined],
-    ['turbo', trio, 'auto'],
-    ['max', trio, 'auto'],
-    ['ludicrous', trio, 'auto'],
-    ['nonsense', trio, 'auto'],
-    [undefined, trio, 'auto'],
+    ['turbo', standard, 'auto'],
+    ['max', standard, 'auto'],
+    ['ludicrous', standard, 'auto'],
+    ['nonsense', standard, 'auto'],
+    [undefined, standard, 'auto'],
   ]
   for (const [stored, switches, tier] of cases) {
     const { render } = await mount(fakeRemote({ enabled: true, gear: stored, ...switches }))
@@ -319,8 +323,8 @@ test('the standard tier turns the prose rule and three deliberation switches on 
   assert.deepEqual(preset, {
     gear: 'auto',
     discipline: 'late',
-    map: false,
-    batch: false,
+    map: true,
+    batch: true,
     compactResults: false,
     probeFirst: true,
     actBeforePlan: true,
@@ -334,6 +338,9 @@ test('clicking the tier this conversation already matches writes nothing', async
   const remote = fakeRemote({
     enabled: true,
     gear: 'auto',
+    outputDiscipline: 'late',
+    workspaceMap: true,
+    openBatch: true,
     probeFirst: true,
     actBeforePlan: true,
     repeatNudge: true,
@@ -351,8 +358,8 @@ test('editing one switch by hand drops the tier highlight instead of leaving a s
     enabled: true,
     gear: 'auto',
     outputDiscipline: true,
-    map: false,
-    batch: false,
+    workspaceMap: true,
+    openBatch: true,
     compactResults: false,
     probeFirst: true,
     actBeforePlan: true,

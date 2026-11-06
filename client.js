@@ -307,7 +307,7 @@ window.__ModuleLoader__.load({
         probeFirst: false, actBeforePlan: false, repeatNudge: false,
       },
       auto: {
-        gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false,
+        gear: 'auto', discipline: 'late', map: true, batch: true, compactResults: false,
         probeFirst: true, actBeforePlan: true, repeatNudge: true,
       },
     }

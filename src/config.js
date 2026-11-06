@@ -157,9 +157,9 @@ export const Config = z.object({
     ),
   openBatch: z
     .boolean()
-    .default(false)
+    .default(true)
     .description(
-      '开局批量 / Opening batch（面板名「批量读文件」）: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。面板可逐会话开；和 `workspaceMap` 一起开时实测 0.742×（11 对），单独开测不到显著，所以默认仍是 false。',
+      '开局批量 / Opening batch（面板名「批量读文件」）: 每轮第一步提醒一次「把已知要做的独立调用放进同一块、shell 命令用 && 串起来」。短任务的钱几乎全花在每步固定成本（首字延迟 ~0.5 s/次）上，少一次往返就省一次；只发一次，不改后续调度。面板可逐会话开；和 `workspaceMap` 一起开时实测 0.742×（11 对），单独开测不到显著，所以它不再作面板开关；1.7.32 起随标准档默认开启——作为 `std + workspaceMap + openBatch` 成组，四族 16 对实测墙钟 0.683×〔0.520, 0.893〕、隐藏测试 32/32 绿（见 `BENCHMARK.md` 的 `QC1` 块）。',
     ),
 
   probeFirst: z
@@ -256,10 +256,10 @@ export const Config = z.object({
 
   workspaceMap: z
     .boolean()
-    .default(false)
+    .default(true)
     .volatile()
     .description(
-      '工作区清单 / Workspace inventory（面板「开局附文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。',
+      '工作区清单 / Workspace inventory（面板「开局附文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。单独开测不到显著（0.927×），1.7.32 起随标准档默认开启，成组证据见 `openBatch` 与 `BENCHMARK.md` 的 `QC1` 块；配置键 `false` 仍可单独关掉。',
     ),
 
   mapEntries: z
