@@ -34,7 +34,7 @@
 | **Reasoning characters** | **−51%** (42380 → 20872) |
 | **Task quality** | **438/438** checks green, 30/30 runs passing |
 
-All three switches plus the panel defaults is the fastest setting; the bolt alone, with the three newer switches off, is **0.823x** over the full 138-pair pool (18 % saved).
+Standard tier — Concise output plus the three deliberation switches — is the fastest setting; the bolt alone, with the three newer switches off, is **0.823x** over the full 138-pair pool (18 % saved).
 
 ## Install
 
@@ -42,24 +42,20 @@ All three switches plus the panel defaults is the fastest setting; the bolt alon
 dsh plugin install dsh-fast-mode
 ```
 
-Click the bolt in a conversation. Right-click it for the eight-row panel — every row affects that conversation only.
+Click the bolt in a conversation. Right-click it for the panel — four rows, two tiers, each affecting that conversation only.
 
-## What the eight buttons do
+## What the four switches do
 
-All eight are prompt-side: no request parameter, no model change, no change to completion checks. The first two shape output, the last one shapes how much context arrives, the five in between shape the route.
+All four are prompt-side: no request parameter, no model change, no change to completion checks. One shapes output, three shape how the turn is routed.
 
 | Button | How it works | Default |
 |---|---|---|
 | **Concise output** | No call previews, no restating results, no progress reports; the final answer is not shortened | On |
-| **Step cap** | A hard cap; at the limit it reports status instead of truncating the task | No cap |
-| **File inventory** | Hands the model a directory listing up front, skipping the opening `ls`/`find` | Off |
-| **Batched reads** | Independent reads go out as one batch, fewer round trips | Off |
-| **Trim tool output** | Keeps head, tail and matching error lines instead of the whole output | Off |
 | **Verify before guessing** | Read the uncertain fact once; not pure speed — it saves the retry a wrong guess costs | Off |
 | **Act before explaining** | At most one line of plan; past 4000 characters of reasoning, a nudge to act on evidence | Off |
 | **Nudge on repeats** | The same call again, or three identical results: one line saying to change the approach | Off |
 
-The middle five arrived in 1.7.0 and ship **off**; the reasons are under Limits below. Trim tool output reached the panel in 1.7.12 — it is the one switch that changes the evidence the model sees, so it ships off, and off means the original text.
+Only verified switches are here. Four more (step cap, file inventory, batched reads, trim tool output) had panel rows until 1.7.31; none showed a stable gain alone or in a measured bundle — the step cap came out at 1.021x with its notice firing in only 3/12 turns, file inventory 0.927x, batched reads 1.136x, and trim tool output was never A/B'd alone — so they are removed from the panel rather than defaulted off. The config keys still work. The three deliberation switches were added in 1.7.29 on top of Concise output (0.526x over 15 pairs) and are loaded by the Standard tier.
 
 ## Benchmark
 

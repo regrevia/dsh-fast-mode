@@ -198,10 +198,10 @@ export function resolveConfig(raw, overrides) {
   // A legacy name in the user's own config becomes the scheduler; an explicit
   // override (experiment arm) is kept as written, including `off`.
   const legacyGear = !pinned && LEGACY_GEARS.includes(named) ? named : undefined
-  // The panel names its three tiers safe / auto / aggressive, but the first
-  // client bundle shipped writes `fast` for the aggressive tier. A *pinned*
-  // `fast` is therefore that tier, not the retired level-2 id: an experiment arm
-  // keeps whatever name it writes, and the panel keeps the width it asked for.
+  // The panel offers two tiers (safe / auto) since 1.7.31; it used to offer
+  // safe / auto / aggressive, and the first client bundle shipped writes `fast`
+  // for that aggressive tier. A *pinned* `fast` is therefore that tier, not the
+  // retired level-2 id: an experiment arm keeps whatever name it writes.
   const pinnedAggressive = pinned && named === 'fast'
   const gearName = legacyGear ? DEFAULT_GEAR : pinnedAggressive ? 'aggressive' : named
   const gear = GEARS[gearName] ?? GEARS[FALLBACK_GEAR]

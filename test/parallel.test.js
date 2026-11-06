@@ -108,9 +108,15 @@ test('a failing job is reported without failing the call', async () => {
 })
 
 test('a hung job is killed at the timeout instead of hanging the turn', async () => {
+  // `sleep` is the wrong fixture on Windows. The command runs through Git bash,
+  // where `sleep` is an external MSYS binary: if that bash's PATH does not
+  // resolve it, the shell exits 127 at once instead of hanging, so the timeout
+  // never fires and the assertion reads as a kill bug that is not one. `node`
+  // is always on PATH here because the suite itself runs under it.
+  const hang = 'node -e "setTimeout(() => {}, 30000)"'
   const result = await tool.execute({
     jobs: [
-      { command: 'sleep 30', label: 'hang' },
+      { command: hang, label: 'hang' },
       { command: 'echo quick', label: 'quick' },
     ],
     timeoutSec: 1,

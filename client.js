@@ -94,29 +94,18 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast 模式未在此配置中声明，点击重试',
       'panel.title': '更快',
       'panel.gear': '并行档位',
-      'panel.gearTitle': '点一下载入这一档的开关：标准开精简输出与三条思考开关，激进再开文件清单、批量读文件与截短工具输出；手动改过就不再属于任何一档',
+      'panel.gearTitle': '点一下载入这一档的开关：标准开精简输出与三条思考开关；手动改过就不再属于任何一档',
       'panel.gearSafe': '保守',
       'panel.gearAuto': '标准',
-      'panel.gearFast': '激进',
       'panel.prose': '精简输出',
       'panel.proseTitle': '少写过程，直接给结论',
       'panel.on': '开',
       'panel.off': '关',
-      'panel.budget': '步数上限',
-      'panel.budgetOff': '不限',
-      'panel.budgetSteps': '{n} 步',
       'panel.scope': '只影响本会话',
       'panel.scopeTitle': '未读到本会话的步数与输出',
       'panel.saved': '{steps} 步 · 输出 {tokens}',
       'panel.savedSteps': '{steps} 步',
       'panel.savedTokens': '输出 {tokens}',
-      'panel.budgetTitle': '到上限先汇报，不截断任务',
-      'panel.map': '开局附文件清单',
-      'panel.mapTitle': '开局附上文件清单，省掉先翻目录',
-      'panel.batch': '批量读文件',
-      'panel.compact': '截短工具输出',
-      'panel.compactTitle': '只留头尾和报错行，长输出不再整段进上下文',
-      'panel.batchTitle': '互不依赖的读取合成一次发出',
       'panel.probe': '不确定先查证',
       'panel.probeTitle': '拿不准就读一次，省的是猜错后的重来',
       'panel.act': '先执行后解释',
@@ -136,29 +125,18 @@ window.__ModuleLoader__.load({
       'chip.absent': 'Fast mode is not configured in this composition. Click to retry',
       'panel.title': 'Faster',
       'panel.gear': 'Parallel width',
-      'panel.gearTitle': 'One click loads that tier\'s switches: Standard turns on prose trimming and the three deliberation switches, Aggressive also adds the file inventory, batched reads and output trimming; a switch changed by hand leaves no tier selected',
+      'panel.gearTitle': 'One click loads that tier\'s switches: Standard turns on prose trimming and the three deliberation switches; a switch changed by hand leaves no tier selected',
       'panel.gearSafe': 'Cautious',
       'panel.gearAuto': 'Standard',
-      'panel.gearFast': 'Aggressive',
       'panel.prose': 'Concise output',
       'panel.proseTitle': 'States the result; skips the narration',
       'panel.on': 'On',
       'panel.off': 'Off',
-      'panel.budget': 'Step cap',
-      'panel.budgetOff': 'No cap',
-      'panel.budgetSteps': '{n} steps',
       'panel.scope': 'This conversation only',
       'panel.scopeTitle': 'Session steps and output are unavailable here',
       'panel.saved': '{steps} steps · {tokens} out',
       'panel.savedSteps': '{steps} steps',
       'panel.savedTokens': '{tokens} out',
-      'panel.budgetTitle': 'Reports at the cap; never truncates the task',
-      'panel.map': 'File inventory',
-      'panel.mapTitle': 'Lists the folder up front; skips the lookup',
-      'panel.batch': 'Batched reads',
-      'panel.compact': 'Trim tool output',
-      'panel.compactTitle': 'Keeps head, tail and matching error lines instead of the whole output',
-      'panel.batchTitle': 'Sends independent reads as one batch',
       'panel.probe': 'Verify before guessing',
       'panel.probeTitle': 'Reads the fact once; a guess costs a retry',
       'panel.act': 'Act before explaining',
@@ -236,10 +214,10 @@ window.__ModuleLoader__.load({
       /** What this conversation runs at: on or off, never a shared default. */
       enabled: false, // painted on the first read, then follows every click
       /**
-       * Which of the three tiers this conversation runs at: `safe`, `auto`
-       * (factory default), or `fast`. Older builds pinned `turbo` / `max` /
-       * `ludicrous`; a read-back collapses them onto `auto`, because the tier
-       * ladder is gone and the scheduler decides the width now.
+       * Which tier this conversation runs at: `safe` (cautious) or `auto`
+       * (standard, the factory default). Older builds also pinned `fast` /
+       * `aggressive` and `turbo` / `max` / `ludicrous`; the read-back collapses
+       * all of those onto `auto`, because only two tiers are offered now.
        */
       gear: '', // normalized by refresh(); '' only before the first read
       /**
@@ -297,14 +275,14 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The three tiers the panel offers, in reading order. The ids are the
+     * The two tiers the panel offers, in reading order. The ids are the
      * scheduler's own gear names, so the value travels unchanged through the
      * settings column; only the read-back is normalized (see `gearTier`).
      */
-    const GEAR_TIERS = ['safe', 'auto', 'aggressive']
+    const GEAR_TIERS = ['safe', 'auto']
 
     /** Dictionary keys for the tier labels. */
-    const GEAR_LABELS = { safe: 'panel.gearSafe', auto: 'panel.gearAuto', aggressive: 'panel.gearFast' }
+    const GEAR_LABELS = { safe: 'panel.gearSafe', auto: 'panel.gearAuto' }
 
     /**
      * What each tier loads when it is clicked. A tier is a preset, not a stored
@@ -313,12 +291,13 @@ window.__ModuleLoader__.load({
      * switch by hand therefore drops the panel out of every tier instead of
      * leaving a label that contradicts the rows below it.
      *
-     * The width is the scheduler's own gear id. The three switches are the ones
-     * with evidence behind them: the prose rule is the measured mechanism, tool
-     * output trimming cut wall clock and tokens on every paired run (0.756x /
-     * 0.786x), and batched reads paid off together with the workspace map
-     * (0.742x, 11 pairs). The step cap is deliberately absent: it is a guardrail
-     * the user set, not a speed knob, and a preset must not add or remove it.
+     * Only the switches with paired evidence behind them are presets: the prose
+     * rule, and the three deliberation switches measured together at 0.526x
+     * wall clock over 15 pairs. The file inventory, batched reads, output
+     * trimming and the step cap are absent on purpose — each was measured on
+     * its own and either lost or never separated from noise, so a preset must
+     * not load it, and the panel must not offer it as a speed choice. They stay
+     * in the config file for anyone who wants them.
      * The keys are the session row's own field names, so a preset can be handed
      * to `write` as is.
      */
@@ -331,30 +310,24 @@ window.__ModuleLoader__.load({
         gear: 'auto', discipline: 'late', map: false, batch: false, compactResults: false,
         probeFirst: true, actBeforePlan: true, repeatNudge: true,
       },
-      aggressive: {
-        gear: 'aggressive', discipline: 'late', map: true, batch: true, compactResults: true,
-        probeFirst: true, actBeforePlan: true, repeatNudge: true,
-      },
     }
 
     /**
-     * Collapse any gear name onto one of the three tiers the panel shows.
+     * Collapse any gear name onto one of the two tiers the panel shows.
      *
-     * `safe` and `aggressive` are live gear ids, so they survive. `fast` is the
-     * id the first bundle wrote for the aggressive tier; a per-session entry
-     * that still carries it is resolved as `aggressive` too. Everything else —
-     * the retired `turbo` / `max` / `ludicrous`, an empty field, a typo — reads
-     * as `auto`, the factory default. The scheduler degrades the same way, and a
-     * panel that displayed an id it cannot write would be showing a state it
-     * cannot produce.
+     * `safe` survives. Everything else — `auto`, the retired `aggressive` /
+     * `fast` / `turbo` / `max` / `ludicrous`, an empty field, a typo — reads as
+     * `auto`, the factory default. The aggressive tier is gone because its three
+     * extra switches lost their own measurements; a conversation that still
+     * carries the old name resolves here, and because its row also carries
+     * switches this preset does not describe, `activeTier` highlights nothing
+     * until the user clicks a tier.
      *
      * @param {unknown} gear
-     * @returns {'safe' | 'auto' | 'aggressive'}
+     * @returns {'safe' | 'auto'}
      */
     function gearTier(gear) {
-      if (gear === 'safe') return 'safe'
-      if (gear === 'aggressive' || gear === 'fast') return 'aggressive'
-      return 'auto'
+      return gear === 'safe' ? 'safe' : 'auto'
     }
 
     /**
@@ -1182,15 +1155,13 @@ window.__ModuleLoader__.load({
     function panelNode(t, remote) {
       const ready = store.phase === 'ready'
       const canWrite = ready && store.writable && !store.busy
-      // The cautious tier turns the whole mechanism off in `resolveConfig`
-      // (`gear.directive` gates the prose rule, the batch tool, the truncator and
-      // the step cap), so leaving the four rows clickable there would be a dead
-      // switch: a click writes the per-session value and nothing changes.
+      // The cautious tier resolves all four fields off: `gear.directive` gates
+      // the prose rule, and the three deliberation switches are bundle-only
+      // evidence, so `safe` turns them off too. A row left clickable there would
+      // be a dead switch — the click writes the per-session value and nothing
+      // changes — so all four are disabled and read off instead.
       const gated = gearTier(store.gear) === 'safe'
       const rowLive = canWrite && !gated
-      const budgetText = !gated && store.stepBudget > 0
-        ? t('panel.budgetSteps', { n: store.stepBudget })
-        : t('panel.budgetOff')
 
       /**
        * One row: label on the left, current value on the right, and the
@@ -1219,32 +1190,6 @@ window.__ModuleLoader__.load({
 
       const toggleProse = () => {
         void toggleDiscipline(remote, !store.discipline)
-        store.panelOpen = false
-        emit()
-      }
-
-      /**
-       * The file list is a per-conversation choice too, and this row is where the
-       * previous release's dead switches came from: it wrote the shared
-       * `workspaceMap` field, the settings side refused it as non-volatile, and the button
-       * looked broken.
-       */
-      const toggleMap = () => {
-        void write(remote, undefined, { entry: { map: !store.inventory } })
-        store.panelOpen = false
-        emit()
-      }
-
-      /** Same per-conversation tier as the file list, one call for many reads. */
-      const toggleBatch = () => {
-        void write(remote, undefined, { entry: { batch: !store.batch } })
-        store.panelOpen = false
-        emit()
-      }
-
-      /** Trim long tool output, keeping the error lines. */
-      const toggleCompact = () => {
-        void write(remote, undefined, { entry: { compactResults: !store.compact } })
         store.panelOpen = false
         emit()
       }
@@ -1289,34 +1234,6 @@ window.__ModuleLoader__.load({
           !gated && store.discipline,
           t('panel.proseTitle'),
         ),
-        row('menuitem', t('panel.budget'), budgetText, rowLive, () => void cycleBudget(remote), undefined, t('panel.budgetTitle')),
-        row(
-          'menuitemcheckbox',
-          t('panel.map'),
-          t(store.inventory ? 'panel.on' : 'panel.off'),
-          canWrite,
-          toggleMap,
-          store.inventory,
-          t('panel.mapTitle'),
-        ),
-        row(
-          'menuitemcheckbox',
-          t('panel.batch'),
-          t(!gated && store.batch ? 'panel.on' : 'panel.off'),
-          rowLive,
-          toggleBatch,
-          !gated && store.batch,
-          t('panel.batchTitle'),
-        ),
-        row(
-          'menuitemcheckbox',
-          t('panel.compact'),
-          t(!gated && store.compact ? 'panel.on' : 'panel.off'),
-          rowLive,
-          toggleCompact,
-          !gated && store.compact,
-          t('panel.compactTitle'),
-        ),
         row(
           'menuitemcheckbox',
           t('panel.probe'),
@@ -1346,24 +1263,6 @@ window.__ModuleLoader__.load({
         ),
         savedFooter(t),
       )
-    }
-
-    /** Step-cap values offered by the panel: off, then the two sane caps. */
-    const BUDGET_STEPS = [0, 15, 30]
-
-    /**
-     * Move the step cap to the next offered value for this conversation.
-     *
-     * The cap used to be a shared field, which is why it read as a dead button:
-     * `settings.write` refuses a non-volatile path outright. It travels in the
-     * per-session row now, so the cap applies to this conversation only.
-     *
-     * @param {any} remote
-     */
-    async function cycleBudget(remote) {
-      const at = BUDGET_STEPS.indexOf(store.stepBudget)
-      const next = BUDGET_STEPS[(at < 0 ? 0 : at + 1) % BUDGET_STEPS.length]
-      await write(remote, undefined, { entry: { stepBudget: next } })
     }
 
     /* ------------------------------------------------------------------ apply */

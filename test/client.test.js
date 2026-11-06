@@ -515,29 +515,20 @@ function panelOf(tree) {
   return tree.children[1]
 }
 
-/** The one preference row inside the panel. */
+/** The four preference rows inside the panel, in render order. */
 function rowOf(panel) {
   return panel.children[1]
 }
 
-/** The step-cap row: the second control in the panel. */
-function budgetRowOf(panel) {
+/** The three deliberation rows: probe, act, repeat. */
+function probeRowOf(panel) {
   return panel.children[2]
 }
-
-/** The workspace-inventory row: the third control in the panel. */
-function mapRowOf(panel) {
+function actRowOf(panel) {
   return panel.children[3]
 }
-
-/** The batch-read row: the fourth control in the panel. */
-function batchRowOf(panel) {
+function repeatRowOf(panel) {
   return panel.children[4]
-}
-
-/** The output-compaction row: the fifth control in the panel. */
-function compactRowOf(panel) {
-  return panel.children[5]
 }
 
 test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
@@ -591,141 +582,6 @@ test('a read-only configuration disables the panel row instead of swallowing the
   await sleep(20)
   assert.equal(remote.calls.length, 0)
 })
-
-test('the step cap cycles through 0, 15 and 30 inside one conversation', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote, 'session-alpha')
-
-  await rightClick(render)
-  assert.equal(budgetRowOf(panelOf(render())).props.disabled, false, 'the cap row is live')
-  const valueOf = () => budgetRowOf(panelOf(render())).children[1].children[0]
-
-  assert.equal(valueOf(), 'panel.budgetOff', 'no cap is the shipped default')
-
-  for (const want of [15, 30, 0]) {
-    await budgetRowOf(panelOf(render())).props.onClick()
-    await sleep(40)
-    const call = remote.calls[remote.calls.length - 1]
-    assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the cap rides the per-conversation column')
-    assert.equal(columnOf(call)['session-alpha'].stepBudget, want, 'three caps, then back off')
-    assert.equal('stepBudget' in call.patch, false, 'the cap is per conversation, not the shared default')
-    assert.equal('enabled' in call.patch, false, 'the cap is not the mode switch')
-    assert.ok(panelOf(render()), 'the panel stays open while cycling a cap')
-  }
-  assert.equal(remote.state.value.stepBudget, undefined, 'the shared default never moved')
-})
-
-test('the file list is off by default and toggles for this conversation only', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote, 'session-alpha')
-
-  await rightClick(render)
-  const row = mapRowOf(panelOf(render()))
-  assert.equal(row.props.disabled, false, 'the file-list row is live')
-  assert.equal(row.props['aria-checked'], false, 'off is the shipped default')
-  assert.equal(row.children[1].children[0], 'panel.off')
-
-  await row.props.onClick()
-  await sleep(40)
-  const call = remote.calls[remote.calls.length - 1]
-  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the file list is a per-conversation choice now')
-  assert.equal(columnOf(call)['session-alpha'].map, true)
-  assert.equal('workspaceMap' in call.patch, false, 'the shared default is for new conversations; this row is a choice')
-  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
-
-  await rightClick(render)
-  assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'the panel paints the host value')
-  await mapRowOf(panelOf(render())).props.onClick()
-  await sleep(40)
-  assert.equal(columnOf(remote.calls[remote.calls.length - 1])['session-alpha'].map, false, 'toggle back off')
-  assert.equal(remote.state.value.workspaceMap, undefined, 'the shared default never moved')
-})
-
-
-test('the batch-read switch is off by default and rides the per-conversation column', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote, 'session-alpha')
-
-  await rightClick(render)
-  const row = batchRowOf(panelOf(render()))
-  assert.equal(row.props.disabled, false, 'the batch row is live')
-  assert.equal(row.props['aria-checked'], false, 'off is the shipped default')
-
-  await row.props.onClick()
-  await sleep(40)
-  const call = remote.calls[remote.calls.length - 1]
-  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'the batch switch is a per-conversation choice')
-  assert.equal(columnOf(call)['session-alpha'].batch, true)
-  assert.equal('openBatch' in call.patch, false, 'the shared default never moved')
-  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
-})
-
-test('the batch row paints the host value, including a shared default', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto', openBatch: true })
-  const { render } = await mount(remote, 'session-alpha')
-  await rightClick(render)
-  assert.equal(batchRowOf(panelOf(render())).props['aria-checked'], true, 'the shared field shows through')
-
-  const own = fakeRemote({ enabled: true, gear: 'auto', openBatch: true, sessions: JSON.stringify({ 'session-alpha': { batch: false, ts: 1 } }) })
-  const second = await mount(own, 'session-alpha')
-  await rightClick(second.render)
-  assert.equal(batchRowOf(panelOf(second.render())).props['aria-checked'], false, 'the conversation entry outranks it')
-})
-
-test('the compaction switch is off by default and rides the per-conversation column', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto' })
-  const { render } = await mount(remote, 'session-alpha')
-
-  await rightClick(render)
-  const row = compactRowOf(panelOf(render()))
-  assert.equal(row.props.disabled, false, 'the compaction row is live')
-  assert.equal(row.props['aria-checked'], false, 'off is the shipped default: it changes what the model reads')
-  assert.equal(row.children[1].children[0], 'panel.off')
-
-  await row.props.onClick()
-  await sleep(40)
-  const call = remote.calls[remote.calls.length - 1]
-  assert.deepEqual(Object.keys(call.patch), ['sessions'], 'compaction is a per-conversation choice')
-  assert.equal(columnOf(call)['session-alpha'].compactResults, true)
-  assert.equal('compactResults' in call.patch, false, 'the shared default never moved')
-  assert.equal(panelOf(render()), undefined, 'the panel closes after a choice')
-
-  await rightClick(render)
-  assert.equal(compactRowOf(panelOf(render())).props['aria-checked'], true, 'the panel paints the host value')
-  await compactRowOf(panelOf(render())).props.onClick()
-  await sleep(40)
-  assert.equal(columnOf(remote.calls[remote.calls.length - 1])['session-alpha'].compactResults, false, 'toggle back off')
-  assert.equal(remote.state.value.compactResults, undefined, 'the shared default never moved')
-})
-
-test('the compaction row shows a shared default and lets the conversation outrank it', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto', compactResults: true })
-  const { render } = await mount(remote, 'session-alpha')
-  await rightClick(render)
-  assert.equal(compactRowOf(panelOf(render())).props['aria-checked'], true, 'the shared field shows through')
-
-  const own = fakeRemote({ enabled: true, gear: 'auto', compactResults: true, sessions: JSON.stringify({ 'session-alpha': { compactResults: false, ts: 1 } }) })
-  const second = await mount(own, 'session-alpha')
-  await rightClick(second.render)
-  assert.equal(compactRowOf(panelOf(second.render())).props['aria-checked'], false, 'the conversation entry outranks it')
-})
-
-/* ------------------------------------------ the shipped Settings, transcribed
- *
- * The real `settings` service projects a plugin Config through two functions in
- * `dsh-settings/lib/types/schema.js` — `volatileForm()` keeps only nodes marked
- * `.volatile()`, `projectForm()` keeps only declared fields — and its `write()`
- * (same package, `lib/types/index.js`) refuses any key `isVolatilePath()` calls
- * dead. Those files ship inside the app bundle and are not importable from here,
- * so what follows is a transcription of the projection and of the write gate.
- *
- * Why it has to exist: the `fakeRemote` above merges a patch into a flat object,
- * a shape the shipped service never produces. A panel that only reads correctly
- * against that fake proves nothing about the app the user runs — and three rows
- * silently pinned to `late` / 0 / off is exactly the failure that fake hides.
- * `test('a non-volatile row is invisible to describe(), which is why these three
- * had to move')` keeps the transcription honest by running it on the old schema.
- */
 
 /** `volatileForm()`: the sub-schema the form may read and write live. */
 function liveForm(schema) {
@@ -847,8 +703,8 @@ function runtimeFor(state, sessionId) {
 }
 
 test('the panel paints the shared defaults the shipped host resolves, not the built-ins', async () => {
-  // A hand-written cordis.patch.yml: no narration, 15 steps, list the files.
-  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, stepBudget: 15, workspaceMap: true }
+  // A hand-written cordis.patch.yml: no narration, no deliberation nudges.
+  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, probeFirst: false, actBeforePlan: false, repeatNudge: false }
   const remote = hostRemote({ inherited: shared })
   const { render } = await mount(remote, 'session-alpha')
 
@@ -862,70 +718,46 @@ test('the panel paints the shared defaults the shipped host resolves, not the bu
   await rightClick(render)
   const panel = panelOf(render())
   assert.equal(rowOf(panel).props['aria-checked'], false, 'the shared "no narration" is painted')
-  assert.equal(budgetRowOf(panel).children[1].children[0], 'panel.budgetSteps {"n":15}', 'the shared cap is painted')
-  assert.equal(mapRowOf(panel).props['aria-checked'], true, 'the shared inventory switch is painted')
+  assert.equal(probeRowOf(panel).props['aria-checked'], false, 'the shared probe default is painted')
+  assert.equal(actRowOf(panel).props['aria-checked'], false, 'the shared act default is painted')
+  assert.equal(repeatRowOf(panel).props['aria-checked'], false, 'the shared repeat default is painted')
+  assert.equal(panel.children.length, 6, 'four preference rows and the footer; no cap or inventory row is left')
 
   const runtime = runtimeFor(remote.state, 'session-alpha')
-  assert.equal(runtime.stepBudget, 15, 'the row shows the number the channel half uses')
-  assert.equal(runtime.workspaceMap, true, 'and the same inventory default')
   assert.equal(runtime.discipline, 'off', 'and the same narration default')
+  assert.equal(runtime.probeFirst, false, 'and the same probe default')
+  assert.equal(runtime.actBeforePlan, false, 'and the same act default')
+  assert.equal(runtime.repeatNudge, false, 'and the same repeat default')
 })
 
-test('a non-volatile row is invisible to describe(), which is why these three had to move', async () => {
-  // The schema as it shipped before this fix: same three declarations, no
-  // `.volatile()`. Running the host's own projection on it reproduces the bug —
-  // the panel paints built-in defaults over a patch document that says otherwise.
-  const json = structuredClone(Config.toJSON())
-  const root = json.refs[String(json.uid)]
-  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap']) delete json.refs[String(root.dict[key])].meta.volatile
-  const old = new z(json)
-  const oldForm = liveForm(old)
-
-  assert.equal(oldForm.dict.outputDiscipline, undefined, 'no form node means no row the client can read')
-  assert.equal(writablePath(oldForm, ['stepBudget']), false)
-  assert.throws(() => hostAccept({}, { outputDiscipline: false }, oldForm), /Config field "outputDiscipline" is not volatile/)
-
-  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, stepBudget: 15, workspaceMap: true }
-  const remote = hostRemote({ inherited: shared, form: oldForm })
-  const { render } = await mount(remote, 'session-alpha')
-  await rightClick(render)
-  const panel = panelOf(render())
-  assert.equal(rowOf(panel).props['aria-checked'], true, 'the built-in "late" instead of the shared "false"')
-  assert.equal(budgetRowOf(panel).children[1].children[0], 'panel.budgetOff', 'the built-in cap instead of the shared 15')
-  assert.equal(mapRowOf(panel).props['aria-checked'], false, 'the built-in off instead of the shared true')
-})
-
-test('all three panel writes pass the host gate and read back as the channel value', async () => {
+test('every visible switch writes through the host gate and reads back as the channel value', async () => {
   const remote = hostRemote({ inherited: { enabled: true, gear: 'auto' } })
   const { render } = await mount(remote, 'session-alpha')
   const sid = 'session-alpha'
-
-  await rightClick(render)
-  await rowOf(panelOf(render())).props.onClick()
-  await sleep(40)
-  assert.equal(remote.calls.length, 1)
-  assert.deepEqual(Object.keys(remote.calls[0].patch), ['sessions'], 'only the per-conversation column moves')
-  assert.equal(remote.state.stored.outputDiscipline, undefined, 'and the shared default stays where it was')
-  assert.equal(columnOf(remote.calls[0])[sid].discipline, false)
-  assert.equal(runtimeFor(remote.state, sid).discipline, 'off', 'the choice is what the channel half reads')
-  await rightClick(render)
-  assert.equal(rowOf(panelOf(render())).props['aria-checked'], false, 'and it reads back through describe()')
-
-  await budgetRowOf(panelOf(render())).props.onClick()
-  await sleep(40)
-  const cap = columnOf(remote.calls[remote.calls.length - 1])[sid].stepBudget
-  assert.equal(cap, 15)
-  assert.equal(runtimeFor(remote.state, sid).stepBudget, 15, 'the cap the host accepted is the cap in force')
-  assert.equal(remote.state.stored.stepBudget, undefined, 'the shared cap never moved')
-  assert.equal(budgetRowOf(panelOf(render())).children[1].children[0], 'panel.budgetSteps {"n":15}', 'and it reads back')
-
-  await mapRowOf(panelOf(render())).props.onClick()
-  await sleep(40)
-  assert.equal(columnOf(remote.calls[remote.calls.length - 1])[sid].map, true)
-  assert.equal(runtimeFor(remote.state, sid).workspaceMap, true, 'the inventory switch the host accepted is in force')
-  assert.equal(remote.state.stored.workspaceMap, undefined, 'the shared default never moved')
-  await rightClick(render)
-  assert.equal(mapRowOf(panelOf(render())).props['aria-checked'], true, 'and it reads back through describe()')
+  // The prose row writes the session's `discipline` choice (`false` = off); the
+  // three deliberation rows write their own boolean field. The shared row keeps
+  // `outputDiscipline` untouched either way.
+  const rows = [
+    ['outputDiscipline', () => rowOf(panelOf(render())), 'discipline', false, runtime => runtime.discipline === 'off'],
+    ['probeFirst', () => probeRowOf(panelOf(render())), 'probeFirst', true, runtime => runtime.probeFirst === true],
+    ['actBeforePlan', () => actRowOf(panelOf(render())), 'actBeforePlan', true, runtime => runtime.actBeforePlan === true],
+    ['repeatNudge', () => repeatRowOf(panelOf(render())), 'repeatNudge', true, runtime => runtime.repeatNudge === true],
+  ]
+  const nav = async () => { if (!panelOf(render())) await rightClick(render) }
+  for (const [storedField, at, columnField, want, effective] of rows) {
+    await nav()
+    await at().props.onClick()
+    await sleep(40)
+    const call = remote.calls[remote.calls.length - 1]
+    assert.deepEqual(Object.keys(call.patch), ['sessions'], 'only the per-conversation column moves')
+    assert.equal(remote.state.stored[storedField], undefined, 'the shared default stays where it was')
+    assert.equal(columnOf(call)[sid][columnField], want, `the row writes ${columnField}`)
+    assert.equal(effective(runtimeFor(remote.state, sid)), true, 'the choice is what the channel half reads')
+    const checked = want === true
+    await nav()
+    assert.equal(at().props['aria-checked'], checked, 'and it reads back through describe()')
+  }
+  assert.equal(remote.calls.length, rows.length, 'one write per click, nothing else')
 })
 
 /**

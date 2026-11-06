@@ -180,7 +180,7 @@ const checkedOf = (control) => control.children.find(node => node.props['aria-ch
 
 /* ------------------------------------------------------------- three tiers */
 
-test('the title row keeps its words and grows a radiogroup of exactly three tiers', async () => {
+test('the title row keeps its words and grows a radiogroup of exactly two tiers', async () => {
   const { render } = await mount(fakeRemote({ enabled: true, gear: 'auto' }))
   const row = titleRowOf(await openPanel(render))
 
@@ -192,7 +192,7 @@ test('the title row keeps its words and grows a radiogroup of exactly three tier
   assert.equal(gear.props.role, 'radiogroup')
   assert.equal(gear.props['aria-label'], 'panel.gear')
   assert.equal(gear.props.title, 'panel.gearTitle', 'the group explains what the tiers do')
-  assert.equal(gear.children.length, 3, 'no fourth state creeps in')
+  assert.equal(gear.children.length, 2, 'two tiers only: every offered tier is proven')
   for (const button of gear.children) {
     assert.equal(button.props.role, 'radio')
     assert.equal(button.props.type, 'button', 'a plain button, so Enter and Space both work')
@@ -200,37 +200,25 @@ test('the title row keeps its words and grows a radiogroup of exactly three tier
   }
 })
 
-test('the five frozen rows keep their labels and their order', async () => {
+test('the four frozen rows keep their labels and their order', async () => {
   const { render } = await mount(fakeRemote())
   const panel = await openPanel(render)
   const labels = panel.children.slice(1, -1).map(node => node.children[0].children[0])
-  assert.deepEqual(labels, [
-    'panel.prose',
-    'panel.budget',
-    'panel.map',
-    'panel.batch',
-    'panel.compact',
-    'panel.probe',
-    'panel.act',
-    'panel.repeat',
-  ])
+  assert.deepEqual(labels, ['panel.prose', 'panel.probe', 'panel.act', 'panel.repeat'],
+    'only switches with paired evidence behind them are offered')
 })
 
-test('the cautious tier greys the four gated rows instead of leaving dead switches', async () => {
+test('the cautious tier greys the prose row instead of leaving a dead switch', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
   const panel = await openPanel(render)
   const rows = panel.children.slice(1, -1)
+  assert.equal(rows.length, 4)
 
-  for (const index of [0, 3, 4, 5, 6, 7]) {
-    const row = rows[index]
-    assert.equal(row.props.disabled, true, 'a row the cautious tier turns off refuses the click')
-    assert.equal(row.children[1].children[0], 'panel.off', 'and reads off, because the mechanism is off')
+  for (const row of rows) {
+    assert.equal(row.props.disabled, true, 'a gated row refuses the click instead of writing nothing')
+    assert.equal(row.children[1].children[0], 'panel.off', 'and reads off, because the tier resolves the field off')
   }
-  const budget = rows[1]
-  assert.equal(budget.props.disabled, true, 'the cap is gated too')
-  assert.equal(budget.children[1].children[0], 'panel.budgetOff', 'a gated cap reads no cap')
-  assert.equal(rows[2].props.disabled, false, 'the workspace map is not gated, so it stays live')
   assert.equal(remote.calls.length, 0, 'rendering the gated state writes nothing')
 })
 
@@ -238,30 +226,34 @@ test('leaving the cautious tier brings the gated rows back', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
   const gear = gearOf(await openPanel(render))
-  gear.children[2].props.onClick()
+  gear.children[1].props.onClick()
   await sleep(20)
 
   const rows = (await openPanel(render)).children.slice(1, -1)
   for (const row of rows) assert.equal(row.props.disabled, false, 'every row is live again')
+  assert.equal(rows[0].children[1].children[0], 'panel.on')
+  assert.equal(rows[1].children[1].children[0], 'panel.on', 'the standard preset carried the deliberation switches too')
 })
 
-test('a row that matches a tier highlights it, and its retired gear name still does', async () => {
+test('a row that matches a tier highlights it, and a retired name with a custom row does not', async () => {
+  const trio = { probeFirst: true, actBeforePlan: true, repeatNudge: true }
+  const legacy = { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, ...trio }
   const cases = [
     ['safe', {}, 'safe'],
-    ['auto', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
-    ['fast', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'aggressive'],
-    ['aggressive', { outputDiscipline: true, workspaceMap: true, openBatch: true, compactResults: true, probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'aggressive'],
-    ['turbo', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
-    ['max', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
-    ['ludicrous', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
-    ['nonsense', { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
-    [undefined, { probeFirst: true, actBeforePlan: true, repeatNudge: true }, 'auto'],
+    ['auto', trio, 'auto'],
+    ['fast', legacy, undefined],
+    ['aggressive', legacy, undefined],
+    ['turbo', trio, 'auto'],
+    ['max', trio, 'auto'],
+    ['ludicrous', trio, 'auto'],
+    ['nonsense', trio, 'auto'],
+    [undefined, trio, 'auto'],
   ]
   for (const [stored, switches, tier] of cases) {
     const { render } = await mount(fakeRemote({ enabled: true, gear: stored, ...switches }))
     const gear = gearOf(await openPanel(render))
-    assert.equal(checkedOf(gear), tier, `${String(stored)} with those switches reads as ${tier}`)
-    assert.equal(gear.children.filter(button => button.props['aria-checked'] === true).length, 1, 'exactly one tier is checked')
+    assert.equal(checkedOf(gear), tier, `${String(stored)} with those switches reads as ${String(tier)}`)
+    assert.equal(gear.children.filter(button => button.props['aria-checked'] === true).length, tier ? 1 : 0, 'at most one tier is checked')
   }
 })
 
@@ -311,49 +303,45 @@ test('a tier click loads that tier into this conversation, at the revision it re
   assert.equal(checkedOf(after), 'safe', 'the panel shows the new tier after the echo')
 })
 
-test('the aggressive tier turns its three switches on in the same click, visibly', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'auto' })
+test('the standard tier turns the prose rule and three deliberation switches on in the same click', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
   let rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.off', 'panel.off', 'panel.off', 'panel.off'])
 
   const gear = gearOf(await openPanel(render))
-  gear.children[2].props.onClick()
+  gear.children[1].props.onClick()
   await sleep(20)
 
   const entry = JSON.parse(remote.calls[0].patch.sessions)['session-alpha']
   const { ts, ...preset } = entry
   assert.equal(typeof ts, 'number', 'the row is stamped like every other write')
   assert.deepEqual(preset, {
-    gear: 'aggressive',
+    gear: 'auto',
     discipline: 'late',
-    map: true,
-    batch: true,
-    compactResults: true,
+    map: false,
+    batch: false,
+    compactResults: false,
     probeFirst: true,
     actBeforePlan: true,
     repeatNudge: true,
-  }, 'one patch carries the whole preset')
+  }, 'one patch carries the whole preset, and no falsified switch rides along')
   rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.budgetOff', 'panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.on', 'panel.on', 'panel.on'])
 })
 
 test('clicking the tier this conversation already matches writes nothing', async () => {
   const remote = fakeRemote({
     enabled: true,
-    gear: 'aggressive',
-    outputDiscipline: true,
-    workspaceMap: true,
-    openBatch: true,
-    compactResults: true,
+    gear: 'auto',
     probeFirst: true,
     actBeforePlan: true,
     repeatNudge: true,
   })
   const { render } = await mount(remote)
   const gear = gearOf(await openPanel(render))
-  assert.equal(checkedOf(gear), 'aggressive')
-  gear.children[2].props.onClick()
+  assert.equal(checkedOf(gear), 'auto')
+  gear.children[1].props.onClick()
   await sleep(20)
   assert.equal(remote.calls.length, 0)
 })
@@ -361,25 +349,24 @@ test('clicking the tier this conversation already matches writes nothing', async
 test('editing one switch by hand drops the tier highlight instead of leaving a stale label', async () => {
   const remote = fakeRemote({
     enabled: true,
-    gear: 'aggressive',
+    gear: 'auto',
     outputDiscipline: true,
-    workspaceMap: true,
-    openBatch: true,
-    compactResults: true,
+    map: false,
+    batch: false,
+    compactResults: false,
     probeFirst: true,
     actBeforePlan: true,
     repeatNudge: true,
   })
   const { render } = await mount(remote)
   let gear = gearOf(await openPanel(render))
-  assert.equal(checkedOf(gear), 'aggressive')
+  assert.equal(checkedOf(gear), 'auto')
 
-  // Turn "trim tool output" off by hand, the way the reported bug was reached.
   const rows = (await openPanel(render)).children.slice(1, -1)
-  rows[4].props.onClick()
+  rows[3].props.onClick()
   await sleep(20)
   const entry = JSON.parse(remote.calls[0].patch.sessions)['session-alpha']
-  assert.equal(entry.compactResults, false)
+  assert.equal(entry.repeatNudge, false)
   assert.equal(entry.gear, undefined, 'the hand edit is one switch, not a tier load')
 
   gear = gearOf(await openPanel(render))
@@ -387,25 +374,25 @@ test('editing one switch by hand drops the tier highlight instead of leaving a s
   for (const button of gear.children) {
     assert.equal(button.props['aria-checked'], false)
   }
-  assert.equal(gear.children[2].props.tabIndex, 0, 'the group still has one tab stop')
+  assert.equal(gear.children[1].props.tabIndex, 0, 'the group still has one tab stop')
 })
 
 test('arrow keys move between tiers and wrap; the checked one holds the tab stop', async () => {
-  const remote = fakeRemote({ enabled: true, gear: 'aggressive' })
+  const remote = fakeRemote({ enabled: true, gear: 'auto' })
   const { render } = await mount(remote, 'session-alpha')
   let gear = gearOf(await openPanel(render))
 
-  assert.equal(gear.children[2].props.tabIndex, 0)
+  assert.equal(gear.children[1].props.tabIndex, 0)
   assert.equal(gear.children[0].props.tabIndex, -1, 'roving tabindex: one stop for the whole group')
 
-  gear.children[2].props.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
+  gear.children[1].props.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
   await sleep(20)
   assert.equal(JSON.parse(remote.calls[0].patch.sessions)['session-alpha'].gear, 'safe', 'right wraps past the last tier')
 
   gear = gearOf(await openPanel(render))
   gear.children[0].props.onKeyDown({ key: 'ArrowLeft', preventDefault() {} })
   await sleep(20)
-  assert.equal(JSON.parse(remote.calls[1].patch.sessions)['session-alpha'].gear, 'aggressive', 'left wraps past the first tier')
+  assert.equal(JSON.parse(remote.calls[1].patch.sessions)['session-alpha'].gear, 'auto', 'left wraps past the first tier')
 
   gear = gearOf(await openPanel(render))
   gear.children[1].props.onKeyDown({ key: 'ArrowUp', preventDefault() {} })
