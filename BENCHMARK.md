@@ -2938,3 +2938,39 @@ python3 bench/overhead.py --blocks QC1 --base std --arm combo3
 - **只有组合成立。** `workspaceMap` 单独 0.927×（`W11`/`map15`）、`openBatch` 单独 1.136×（`open15/def15`），两个成员单独都不成立；结论只支持「作为标准档的成组默认」，不支持把任一项拆出来当开关卖。面板因此没有新增行。
 - `combo2`（`std`+`d2g`+map+batch）22 对 0.669× 但 `d2g` 在 `codeimpl` 1.073×、`shellpipeline` 1.111× 反向 ⇒ 维持 HOLD，未进默认。
 - 决定：`combo3` 作为 `auto`（标准）档默认，1.7.32 发布；`safe` 档 `directive: false` 照旧关掉全部 opt-in，`workspaceMap`/`openBatch` 显式 `false` 仍生效。
+
+## 预注册 `COV1`：默认档在 `codeimpl`/`shellpipeline` 的覆盖块（2026-11-07，先写后跑）
+
+`QC1` 让 `combo3` 成了标准档默认，但只覆盖 `debugfix`/`migrate`/`codebase`/`ledger` 四族；`combo2` 里 `d2g` 正是在 `codeimpl`（1.073×）与 `shellpipeline`（1.111×）上反向才被 HOLD。默认档在这两族上有没有副作用，目前没有任何数据，所以先补覆盖，再谈新的可选开关。
+
+**臂**：`std`（现标准档，`outputDiscipline: late` + 三条思考开关，map/batch 关）对 `combo3`（`std` + `workspaceMap` + `openBatch`），与 `QC1` 同一对定义；臂文件 `bench/arms/std.yml`、`bench/arms/combo3.yml`。
+**任务族**：`codeimpl`、`shellpipeline` 各 4 对，共 8 对、16 次运行，同对 ABBA 交错。
+**围栏命令**：
+
+```
+python3 bench/suite-run.py --tasks codeimpl,shellpipeline --arms std,combo3 --pairs 4 --tag COV1
+python3 bench/pairpool.py --files bench/results/suite-COV1.jsonl --baseline std --arm combo3 --ci 4000
+python3 bench/overhead.py --blocks COV1 --base std --arm combo3
+```
+
+**预注册判据（三条，缺一条即不下结论）**：
+
+1. **质量否决门**：8 对 16 格 `hidden` 全绿、`leak` 合计 0、无步骤截断、退出码符合预期。任一格红 ⇒ 直接否决 `combo3` 在这两族的适用性，与墙钟数字无关。
+2. **方向判据**：`combo3/std` 墙钟几何比 CI95 上界 < 1.0 ⇒ 默认档在这两族同样成立，写进 README/REFERENCE 的覆盖说明；CI 跨 1 ⇒ 记「无结论」，默认档不因此改动，也不新增面板项；CI 下界 > 1.0 ⇒ 默认档在这两族**净变慢**，必须如实写进文档并说明收益只在被测的四族。
+3. **不许拿它撑新开关**：本块只回答「已发布默认在更多族上是否成立」。任何想把 `workspaceMap`/`openBatch` 拆成面板行的说法都不受本块支持——判定成员级收益需要各自的单臂块，而单臂已知 0.927×/1.136×。
+
+### 结果 `COV1`（2026-11-07，按上节判据裁决）
+
+`bench/results/suite-COV1.jsonl`，8 对 16 格**全部有效**，隐藏用例 16/16 绿、`leak` 0、无步骤截断。三条指标（`bench/pairpool.py`，bootstrap 4000）：
+
+| 指标 | 几何比 `combo3/std` | CI95 | 更快 | 中位 |
+| --- | --- | --- | --- | --- |
+| 墙钟 | 0.954× | [0.699, 1.339] | 5/8 | 0.925× |
+| 输出 token | 0.904× | [0.702, 1.196] | 6/8 | 0.912× |
+| 步数 | **0.651×** | [0.486, 0.804] | **8/8** | 0.800× |
+
+按预注册第 2 条：墙钟 CI 跨 1 ⇒ **这两族「无结论」**，默认档不因此改动，也不新增面板项。步数是 8/8 显著更少（-35%），这条成立且不与墙钟矛盾。
+
+**为什么步数少了、墙钟没少：单步变贵。** 合计 `codeimpl` 步均 20.1 s→40.0 s（步数 39→21，墙钟 782→840 s）；`shellpipeline` 步均 10.0→12.0 s（69→49，692→587 s）。逐对看最极端的两格都是这个形状：`codeimpl p2` 5 步 405 s（81 s/步，std 19 步 243 s），`shellpipeline p4` 13 步 144 s（std 17 步 71 s）。也就是「把独立调用塞进同一步」省下的是往返次数，但单步上下文变大后推理时间补回去了一部分；在两族合计上输出 token 反而 0.904×，说明省下的还有一部分是「少写」而不是「写得更慢」。
+
+**结论的使用边界**：`combo3` 的墙钟收益仍只在 `QC1` 的四族（`debugfix`/`migrate`/`codebase`/`ledger`，0.683× [0.520, 0.893]）有证据；`codeimpl`/`shellpipeline` 只能承诺「步数更少、质量全绿、墙钟无结论」。文档措辞按此写，不把 0.683× 说成跨族承诺。
