@@ -10,7 +10,7 @@ averaged. Geometric mean over cells, 4000-resample bootstrap CI.
 """
 import argparse, collections, json, math, random, sys
 
-METRICS = [("wall", "wall s"), ("out", "out tok"), ("steps", "steps")]
+METRICS = [("wall", "wall s"), ("reasoning", "reason tok"), ("out", "out tok"), ("steps", "steps")]
 
 
 def geo(xs):

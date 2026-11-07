@@ -55,6 +55,17 @@ export const MAX_REPEAT_NUDGES = 2
 export const REPEAT_CALLS = 2
 /** Consecutive unchanged results beyond the first: three identical results in a row. */
 export const STALE_RESULTS = 2
+/**
+ * Shortest result that can count as "substantial" for the stale test. Below
+ * this, two calls returning the same bytes are not evidence of a loop: the
+ * generic confirmations (`the file has been updated`, `ok`, the one-line git
+ * status of a clean tree) are identical across unrelated calls by design, and
+ * counting them made a three-edit batch — three edits, three identical
+ * confirmations — read as a loop. Measured on 78 suite transcripts (QC1/COV1/
+ * ABL1): all 45 stale triggers were different calls returning a 171-char edit
+ * confirmation, i.e. legitimate work; none was a real loop.
+ */
+export const STALE_MIN_CHARS = 400
 /** Bounded history per conversation; the watch is a WeakMap-free Map trimmed by age. */
 const HISTORY_MAX = 8
 const RUN_MAX = 64
@@ -119,14 +130,21 @@ export function beginTurn(watch, sid, key) {
  * error is information, and it is the one case where more thought is warranted.
  * @param {{runs: Map<string, object>}} watch
  * @param {string} sid
- * @param {{signature?: string, digest?: string, isError?: boolean}} call
+ * @param {{signature?: string, digest?: string, isError?: boolean, chars?: number}} call
  */
 export function noteCall(watch, sid, call) {
   const run = runOf(watch, sid)
   const signature = typeof call?.signature === 'string' ? call.signature : ''
   const digest = typeof call?.digest === 'string' ? call.digest : ''
+  const chars = Number.isFinite(call?.chars) && call.chars > 0 ? call.chars : 0
   const last = run.calls[run.calls.length - 1]
-  if (call?.isError !== true && last !== undefined && digest !== '' && digest === last.digest) {
+  // Same bytes only mean "nothing new" when the content is long enough to be a
+  // payload rather than a canned confirmation. A same-call repeat never reaches
+  // this test: planRepeatNudge reports it first, with a count. See
+  // STALE_MIN_CHARS.
+  const same =
+    last !== undefined && digest !== '' && digest === last.digest && chars >= STALE_MIN_CHARS
+  if (call?.isError !== true && same) {
     run.stale += 1
   } else {
     run.stale = 0
@@ -135,7 +153,7 @@ export function noteCall(watch, sid, call) {
   // as a repeated call, because the next step after a failure is exactly where
   // more thought is warranted rather than less.
   const isError = call?.isError === true
-  run.calls.push({ signature: isError ? '' : signature, digest, isError })
+  run.calls.push({ signature: isError ? '' : signature, digest, chars, isError })
   if (run.calls.length > HISTORY_MAX) run.calls.shift()
 }
 

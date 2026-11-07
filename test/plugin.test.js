@@ -824,8 +824,9 @@ test('repeatNudge also fires when several results carry nothing new', async () =
   apply(ctx, { ...ON, gear: 'auto', repeatNudge: true })
   const claimed = [{ id: 'u1', role: 'user', content: [] }]
   await step(ctx, { claimed })
+  const payload = 'x'.repeat(600)
   for (let i = 0; i < 3; i += 1) {
-    await runTool(ctx, { callId: `c${i}`, name: 'read', args: { path: `f${i}.js` }, text: 'same bytes' })
+    await runTool(ctx, { callId: `c${i}`, name: 'read', args: { path: `f${i}.js` }, text: payload })
   }
   const nudged = await step(ctx, { claimed })
   assert.match(noticeText(nudged.out), /returned the same content/i)
@@ -848,8 +849,9 @@ test('repeatNudge is capped per turn and the next turn starts clean', async () =
   const claimed = [{ id: 'u1', role: 'user', content: [] }]
   await step(ctx, { claimed })
   const nudges = []
+  const payload = 'y'.repeat(600)
   for (let i = 0; i < 8; i += 1) {
-    await runTool(ctx, { callId: `c${i}`, name: 'grep', args: { pattern: `p${i}` }, text: 'same bytes' })
+    await runTool(ctx, { callId: `c${i}`, name: 'grep', args: { pattern: `p${i}` }, text: payload })
     const next = await step(ctx, { claimed })
     if (noticesOf(next.out).length > 0) nudges.push(next)
   }

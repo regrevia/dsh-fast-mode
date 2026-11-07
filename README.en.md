@@ -76,7 +76,7 @@ A step costs roughly round-trip overhead × steps + decode time × output tokens
 
 - **Some tasks get slower — do not expect a win everywhere.** 1–5 step repairs and data reshaping do not repay the hint cost (`perfrefactor` 1.18x, `csvpipe` 1.12x); implementation-shaped tasks occasionally take one extra step (one 1.04x pair in DP20).
 - **Quality first.** In every accepted batch both arms produced identical hidden assertions; safety checks, destructive operations and accessibility paths always run the full validation.
-- **The switch is yours.** Only concise output is on by default; the three newer switches stay off because their payoff varies by task shape.
+- **The switch is yours.** A new conversation starts with concise output only; the three deliberation switches, the opening file inventory and batched reads load with the **standard tier**, and the conservative tier turns all of them off. No single switch has a marginal effect large enough to resolve — `ABL1`/`ABL2` intervals both cross 1 — so the panel sells two tiers, not individual switches.
 
 Recommendation: **most of the time, turn all three on.** If you want the safest single switch, take *Verify before guessing*; for long reasoning chains take *Act before explaining*; *Nudge on repeats* alone measured 1.007x and fired 3 times across twelve sessions — harmless in the combination, not worth switching alone.
 

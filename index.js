@@ -114,7 +114,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.32'
+export const VERSION = '1.7.33'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -903,6 +903,7 @@ export function apply(ctx, rawConfig) {
         noteDeliberationCall(progressWatch, agent, {
           signature: `${observation.name}\u0000${observation.argsKey}`,
           digest: observation.digest,
+          chars: observation.chars,
           isError: observation.isError,
         })
       }
