@@ -99,8 +99,26 @@ const EXEMPT = new Set([
  * The tools a stall actually happens in: shells, scripts, and monitors. A
  * `read` that takes 90 s is a broken filesystem, not a design problem, and
  * guarding it would only turn one failure into two.
+ *
+ * The match is on name *tokens*, not on substrings. `sh` used as a substring
+ * also hit `browser_shot`, `adb_shot`, `push`, `finish` and `show` — tools that
+ * never stall for the reason the guard exists, but that a cancellation would
+ * still fail. Splitting on separators and camelCase keeps `run_script`,
+ * `adb_sh` and `shell_exec` guarded while `browser_shot` and `adb_shot` are
+ * not.
  */
-const GUARDED_NAME = /(bash|shell|sh|zsh|exec|pwsh|powershell|cmd|script|monitor|terminal)/i
+const GUARDED_TOKENS = new Set([
+  'bash', 'shell', 'sh', 'zsh', 'exec', 'pwsh', 'powershell', 'cmd', 'script', 'monitor', 'terminal',
+])
+
+/** Split a tool name into lower-case tokens: `browser_shot`, `ShellExec`, `adb-sh`. */
+function nameTokens(name) {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
 
 /**
  * Decide whether a call is worth guarding.
@@ -111,9 +129,52 @@ const GUARDED_NAME = /(bash|shell|sh|zsh|exec|pwsh|powershell|cmd|script|monitor
  */
 export function shouldGuard(name, budgetMs) {
   if (!(budgetMs > 0) || typeof name !== 'string' || name.length === 0) return false
-  const lower = name.toLowerCase()
-  if (EXEMPT.has(lower)) return false
-  return GUARDED_NAME.test(lower)
+  const tokens = nameTokens(name)
+  if (tokens.length === 0) return false
+  if (EXEMPT.has(tokens.join('_'))) return false
+  return tokens.some((token) => GUARDED_TOKENS.has(token))
+}
+
+/**
+ * How far a fixed gear's ceiling may stretch for a session whose own calls have
+ * already been running longer than the gear expects, in milliseconds.
+ *
+ * The gear table is a fault bound, not a judgement about the work: when a build
+ * this session has already been running takes 150 s, a `max` ceiling of 120 s
+ * cancels a call that is working normally, which is the one thing the guard
+ * promises never to do. So the ceiling widens with the session's own observed
+ * p90 — the same signal `auto` already uses — but never beyond twice the gear
+ * value and never beyond ten minutes, so a hang is still caught in one step.
+ */
+export const STALL_HEADROOM_CAP_MS = 600_000
+
+/** Multiplier over the observed p90: a call this much slower than normal is the anomaly. */
+export const STALL_HEADROOM_MULTIPLIER = 3
+
+/** Never widen a fixed gear's ceiling by more than this factor. */
+export const STALL_HEADROOM_MAX_FACTOR = 2
+
+/**
+ * Widen a fixed gear's ceiling to fit the calls this session actually makes.
+ *
+ * Pure function so the bound can be asserted without a running session. With no
+ * history (`p90Ms <= 0`, or a non-finite value) the gear value is returned
+ * unchanged, which is the pre-evidence behaviour.
+ *
+ * @param {number} budgetMs - the gear's ceiling, in milliseconds.
+ * @param {number} p90Ms - p90 of this session's recent call durations.
+ * @returns {number} milliseconds.
+ */
+export function headroomFor(budgetMs, p90Ms) {
+  if (!(budgetMs > 0)) return budgetMs
+  if (!Number.isFinite(p90Ms) || p90Ms <= 0) return budgetMs
+  const wanted = p90Ms * STALL_HEADROOM_MULTIPLIER
+  if (wanted <= budgetMs) return budgetMs
+  return Math.min(
+    Math.round(wanted),
+    budgetMs * STALL_HEADROOM_MAX_FACTOR,
+    Math.max(budgetMs, STALL_HEADROOM_CAP_MS),
+  )
 }
 
 /**

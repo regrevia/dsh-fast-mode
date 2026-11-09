@@ -21,10 +21,12 @@ import {
   confirmWindowFor,
   createStallGuard,
   DEFAULT_STALL_BUDGET,
+  headroomFor,
   shouldGuard,
   STALL_BUDGET,
   STALL_CONFIRM_TOTAL_MS,
   STALL_CONFIRM_WINDOW_MS,
+  STALL_HEADROOM_CAP_MS,
   stallBudgetFor,
   stallFailure,
 } from '../src/stallguard.js'
@@ -80,6 +82,41 @@ test('only shells and scripts are guarded, and a waiting tool never is', () => {
   // No budget, no guard — that is how `safe` and an explicit `-1` behave.
   assert.equal(shouldGuard('bash', 0), false)
   assert.equal(shouldGuard('', 1000), false)
+})
+
+test('the name match is on tokens, so a screenshot tool is not a shell', () => {
+  // Names that carry a shell token in a real position are guarded.
+  for (const name of ['bash', 'Bash', 'adb_sh', 'shell_exec', 'ShellExec', 'run_script', 'my-shell', 'pwsh', 'cmd']) {
+    assert.equal(shouldGuard(name, 1000), true, `${name} is a shell-shaped tool`)
+  }
+
+  // Substring hits that never stall for the reason the guard exists: cancelling
+  // them fails a call that was working, and the guard would then be the fault.
+  for (const name of ['browser_shot', 'adb_shot', 'push', 'finish', 'show', 'shot', 'browser_ask', 'adb_tap']) {
+    assert.equal(shouldGuard(name, 1000), false, `${name} is not a shell`)
+  }
+})
+
+test('a fixed gear widens to the calls the session already makes, up to a bound', () => {
+  // No evidence yet: the table value is the value.
+  assert.equal(headroomFor(120_000, 0), 120_000)
+  assert.equal(headroomFor(120_000, Number.NaN), 120_000)
+  assert.equal(headroomFor(0, 90_000), 0, 'a disabled guard has no budget to widen')
+
+  // Calls are comfortably inside the ceiling: nothing changes.
+  assert.equal(headroomFor(300_000, 20_000), 300_000)
+
+  // A session whose calls run at 70 s p90 is a build session: three p90s is
+  // 210 s, and that is what `turbo`'s 180 s widens to.
+  assert.equal(headroomFor(180_000, 70_000), 210_000)
+
+  // A much slower session hits the 2x factor first: 450 s wanted, 360 s allowed.
+  assert.equal(headroomFor(180_000, 150_000), 360_000)
+
+  // The 2x factor binds before the cap for a small gear...
+  assert.equal(headroomFor(90_000, 200_000), 180_000)
+  // ...and the cap binds before anything else on a huge one.
+  assert.equal(headroomFor(600_000, 900_000), STALL_HEADROOM_CAP_MS)
 })
 
 test('a call that finishes inside its budget is passed through, and the caller signal is restored', async () => {

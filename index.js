@@ -75,13 +75,14 @@ import {
   noteStep,
   noteTool,
   noteTurn,
+  observedWaitP90,
   toolTargets,
 } from './src/auto.js'
 import { buildConflictMessage, buildReassertMessage, createNoticeMessage } from './src/notices.js'
 import { buildWorkspaceMap } from './src/map.js'
 import { classifyEntry } from './src/shape.js'
 import { detectPeerPlugins, opsToolsLive } from './src/peers.js'
-import { createStallGuard, stallBudgetFor } from './src/stallguard.js'
+import { createStallGuard, headroomFor, stallBudgetFor } from './src/stallguard.js'
 import { compactResult } from './src/compact.js'
 import { createReadCache, statKey } from './src/readcache.js'
 import { createRecorder } from './src/metrics.js'
@@ -114,7 +115,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.34'
+export const VERSION = '1.7.35'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -557,10 +558,12 @@ export function apply(ctx, rawConfig) {
       // outermost gate, so it is checked first.
       if (!cfg.enabled) return 0
       const base = stallBudgetFor(cfg)
-      // The adaptive ceiling only replaces the gear table: an explicit
-      // `toolTimeoutMs`, a disabled guard, and every fixed gear keep their own
-      // value untouched.
-      if (cfg.gear !== AUTO || base === 0 || cfg.toolTimeoutMs > 0) return base
+      // An explicit `toolTimeoutMs` and a disabled guard are read verbatim.
+      if (base === 0 || cfg.toolTimeoutMs > 0) return base
+      // `auto` uses the live schedule budget (`src/auto.js`). A fixed gear keeps
+      // its own table value but may stretch to the calls this session already
+      // makes, so a healthy build is not cancelled for being a build.
+      if (cfg.gear !== AUTO) return headroomFor(base, observedWaitP90(auto, agent))
       const live = autoBudgets.get(agent)
       return Number.isFinite(live) ? live : base
     },

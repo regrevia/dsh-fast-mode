@@ -917,6 +917,21 @@ function quantile(values, fraction) {
 }
 
 /**
+ * p90 of the call durations this session has actually seen, in milliseconds.
+ *
+ * Exported for the stall guard: a fixed gear's ceiling is a fault bound, so it
+ * may stretch to the work the session is demonstrably doing, but it must not
+ * stretch on a guess. `0` means "no evidence yet".
+ *
+ * @param {ReturnType<typeof createAutoState>} state
+ * @param {string} agent
+ * @returns {number}
+ */
+export function observedWaitP90(state, agent) {
+  return quantile(entryOf(state, agent).waits, 0.9)
+}
+
+/**
  * The schedule for the next step of one session.
  *
  * Reading the schedule is not the same as delivering it: the width and the
