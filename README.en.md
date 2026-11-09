@@ -42,11 +42,11 @@ Standard tier — Concise output, the three deliberation switches, the opening f
 dsh plugin install dsh-fast-mode
 ```
 
-Click the bolt in a conversation. Right-click it for the panel — four rows, two tiers, each affecting that conversation only.
+Click the bolt in a conversation. Right-click it for the panel — five rows, two tiers, each affecting that conversation only.
 
-## What the four switches do
+## What the five switches do
 
-All four are prompt-side: no request parameter, no model change, no change to completion checks. One shapes output, three shape how the turn is routed.
+Four of them are prompt-side: no request parameter, no model change, no change to completion checks. One shapes output, three shape how the turn is routed. The fifth sits in the execution layer instead — it caps a single tool call and hands control back.
 
 | Button | How it works | Default |
 |---|---|---|
@@ -54,8 +54,9 @@ All four are prompt-side: no request parameter, no model change, no change to co
 | **Verify before guessing** | Read the uncertain fact once; not pure speed — it saves the retry a wrong guess costs | Off |
 | **Act before explaining** | At most one line of plan; past 4000 characters of reasoning, a nudge to act on evidence | Off |
 | **Nudge on repeats** | The same call again, or three identical results: one line saying to change the approach | Off |
+| **Tool-call timeout** | A single shell-shaped call past its limit is cancelled and returned as a failed call — a fault guard, not a speed claim | On |
 
-Only verified switches are here. Four more (step cap, file inventory, batched reads, trim tool output) had panel rows until 1.7.31; none showed a stable gain alone or in a measured bundle — the step cap came out at 1.021x with its notice firing in only 3/12 turns, file inventory 0.927x, batched reads 1.136x, and trim tool output was never A/B'd alone — so they are removed from the panel rather than defaulted off. The config keys still work. The three deliberation switches were added in 1.7.29 on top of Concise output (0.526x over 15 pairs) and are loaded by the Standard tier.
+Only verified switches are here, with one deliberate exception: the tool-call timeout is a safety bound, so it carries no speed claim and is exempt from the "verified gain" rule. Under the Standard tier the limit starts at 120 s and stretches with the session's own latency (3× the recent P90, capped at 300 s); the Cautious tier's budget is 0. Its known cost: a legitimate long job (Gradle, `npm install`, a large test suite) can be cut at that floor — such jobs belong in the background. A cancelled signal is not proof the process group exited, and the failure message says so when it could not confirm. Four more (step cap, file inventory, batched reads, trim tool output) had panel rows until 1.7.31; none showed a stable gain alone or in a measured bundle — the step cap came out at 1.021x with its notice firing in only 3/12 turns, file inventory 0.927x, batched reads 1.136x, and trim tool output was never A/B'd alone — so they are removed from the panel rather than defaulted off. The config keys still work. The three deliberation switches were added in 1.7.29 on top of Concise output (0.526x over 15 pairs) and are loaded by the Standard tier.
 
 ## Benchmark
 

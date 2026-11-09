@@ -515,7 +515,7 @@ function panelOf(tree) {
   return tree.children[1]
 }
 
-/** The four preference rows inside the panel, in render order. */
+/** The five preference rows inside the panel, in render order. */
 function rowOf(panel) {
   return panel.children[1]
 }
@@ -529,6 +529,9 @@ function actRowOf(panel) {
 }
 function repeatRowOf(panel) {
   return panel.children[4]
+}
+function stallRowOf(panel) {
+  return panel.children[5]
 }
 
 test('right click opens the panel and writes nothing: the left click is still the switch', async () => {
@@ -704,14 +707,14 @@ function runtimeFor(state, sessionId) {
 
 test('the panel paints the shared defaults the shipped host resolves, not the built-ins', async () => {
   // A hand-written cordis.patch.yml: no narration, no deliberation nudges.
-  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, probeFirst: false, actBeforePlan: false, repeatNudge: false }
+  const shared = { enabled: true, gear: 'auto', outputDiscipline: false, probeFirst: false, actBeforePlan: false, repeatNudge: false, stallGuard: true }
   const remote = hostRemote({ inherited: shared })
   const { render } = await mount(remote, 'session-alpha')
 
   const namespaces = (await remote.settings.describe()).value.namespaces
   assert.deepEqual(
     Object.keys(namespaces[0].value).sort(),
-    ['actBeforePlan', 'enabled', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'sessions', 'stepBudget', 'workspaceMap'],
+    ['actBeforePlan', 'enabled', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'sessions', 'stallGuard', 'stepBudget', 'workspaceMap'],
     'describe() carries the shared defaults because they are volatile',
   )
 
@@ -721,13 +724,15 @@ test('the panel paints the shared defaults the shipped host resolves, not the bu
   assert.equal(probeRowOf(panel).props['aria-checked'], false, 'the shared probe default is painted')
   assert.equal(actRowOf(panel).props['aria-checked'], false, 'the shared act default is painted')
   assert.equal(repeatRowOf(panel).props['aria-checked'], false, 'the shared repeat default is painted')
-  assert.equal(panel.children.length, 6, 'four preference rows and the footer; no cap or inventory row is left')
+  assert.equal(stallRowOf(panel).props['aria-checked'], true, 'the shared guard default is painted too')
+  assert.equal(panel.children.length, 7, 'five preference rows and the footer; no cap or inventory row is left')
 
   const runtime = runtimeFor(remote.state, 'session-alpha')
   assert.equal(runtime.discipline, 'off', 'and the same narration default')
   assert.equal(runtime.probeFirst, false, 'and the same probe default')
   assert.equal(runtime.actBeforePlan, false, 'and the same act default')
   assert.equal(runtime.repeatNudge, false, 'and the same repeat default')
+  assert.equal(runtime.stallGuard, true, 'and the guard is on, because the shared default is')
 })
 
 test('every visible switch writes through the host gate and reads back as the channel value', async () => {
@@ -735,16 +740,18 @@ test('every visible switch writes through the host gate and reads back as the ch
   const { render } = await mount(remote, 'session-alpha')
   const sid = 'session-alpha'
   // The prose row writes the session's `discipline` choice (`false` = off); the
-  // three deliberation rows write their own boolean field. The shared row keeps
+  // three deliberation rows write their own boolean field, and the guard row
+  // clears the switch its default left on. The shared row keeps
   // `outputDiscipline` untouched either way.
   const rows = [
-    ['outputDiscipline', () => rowOf(panelOf(render())), 'discipline', false, runtime => runtime.discipline === 'off'],
-    ['probeFirst', () => probeRowOf(panelOf(render())), 'probeFirst', true, runtime => runtime.probeFirst === true],
-    ['actBeforePlan', () => actRowOf(panelOf(render())), 'actBeforePlan', true, runtime => runtime.actBeforePlan === true],
-    ['repeatNudge', () => repeatRowOf(panelOf(render())), 'repeatNudge', true, runtime => runtime.repeatNudge === true],
+    ['outputDiscipline', () => rowOf(panelOf(render())), 'discipline', false, runtime => runtime.discipline === 'off', true],
+    ['probeFirst', () => probeRowOf(panelOf(render())), 'probeFirst', true, runtime => runtime.probeFirst === true, true],
+    ['actBeforePlan', () => actRowOf(panelOf(render())), 'actBeforePlan', true, runtime => runtime.actBeforePlan === true, true],
+    ['repeatNudge', () => repeatRowOf(panelOf(render())), 'repeatNudge', true, runtime => runtime.repeatNudge === true, true],
+    ['stallGuard', () => stallRowOf(panelOf(render())), 'stallGuard', false, runtime => runtime.stallGuard === false, true],
   ]
   const nav = async () => { if (!panelOf(render())) await rightClick(render) }
-  for (const [storedField, at, columnField, want, effective] of rows) {
+  for (const [storedField, at, columnField, want, effective, expect] of rows) {
     await nav()
     await at().props.onClick()
     await sleep(40)
@@ -752,7 +759,7 @@ test('every visible switch writes through the host gate and reads back as the ch
     assert.deepEqual(Object.keys(call.patch), ['sessions'], 'only the per-conversation column moves')
     assert.equal(remote.state.stored[storedField], undefined, 'the shared default stays where it was')
     assert.equal(columnOf(call)[sid][columnField], want, `the row writes ${columnField}`)
-    assert.equal(effective(runtimeFor(remote.state, sid)), true, 'the choice is what the channel half reads')
+    assert.equal(effective(runtimeFor(remote.state, sid)), expect, 'the choice is what the channel half reads')
     const checked = want === true
     await nav()
     assert.equal(at().props['aria-checked'], checked, 'and it reads back through describe()')

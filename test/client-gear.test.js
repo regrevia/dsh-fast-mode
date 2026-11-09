@@ -200,11 +200,11 @@ test('the title row keeps its words and grows a radiogroup of exactly two tiers'
   }
 })
 
-test('the four frozen rows keep their labels and their order', async () => {
+test('the five frozen rows keep their labels and their order', async () => {
   const { render } = await mount(fakeRemote())
   const panel = await openPanel(render)
   const labels = panel.children.slice(1, -1).map(node => node.children[0].children[0])
-  assert.deepEqual(labels, ['panel.prose', 'panel.probe', 'panel.act', 'panel.repeat'],
+  assert.deepEqual(labels, ['panel.prose', 'panel.probe', 'panel.act', 'panel.repeat', 'panel.stall'],
     'only switches with paired evidence behind them are offered')
 })
 
@@ -213,7 +213,7 @@ test('the cautious tier greys the prose row instead of leaving a dead switch', a
   const { render } = await mount(remote)
   const panel = await openPanel(render)
   const rows = panel.children.slice(1, -1)
-  assert.equal(rows.length, 4)
+  assert.equal(rows.length, 5)
 
   for (const row of rows) {
     assert.equal(row.props.disabled, true, 'a gated row refuses the click instead of writing nothing')
@@ -299,6 +299,7 @@ test('a tier click loads that tier into this conversation, at the revision it re
   assert.equal(entry.probeFirst, false, 'the cautious tier turns deliberation off too')
   assert.equal(entry.actBeforePlan, false)
   assert.equal(entry.repeatNudge, false)
+  assert.equal(entry.stallGuard, false, 'the cautious tier turns the fault guard off with the rest')
   assert.equal(entry.enabled, undefined, 'the bolt is a separate switch')
   assert.equal(entry.stepBudget, undefined, 'a preset never touches the step cap')
   assert.equal(remote.calls[0].revision, 3)
@@ -307,11 +308,11 @@ test('a tier click loads that tier into this conversation, at the revision it re
   assert.equal(checkedOf(after), 'safe', 'the panel shows the new tier after the echo')
 })
 
-test('the standard tier turns the prose rule and three deliberation switches on in the same click', async () => {
+test('the standard tier turns the prose rule, three deliberation switches and the guard on in one click', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
   let rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.off', 'panel.off', 'panel.off', 'panel.off'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off'])
 
   const gear = gearOf(await openPanel(render))
   gear.children[1].props.onClick()
@@ -329,9 +330,10 @@ test('the standard tier turns the prose rule and three deliberation switches on 
     probeFirst: true,
     actBeforePlan: true,
     repeatNudge: true,
+    stallGuard: true,
   }, 'one patch carries the whole preset, and no falsified switch rides along')
   rows = (await openPanel(render)).children.slice(1, -1)
-  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.on', 'panel.on', 'panel.on'])
+  assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on'])
 })
 
 test('clicking the tier this conversation already matches writes nothing', async () => {

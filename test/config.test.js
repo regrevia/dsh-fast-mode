@@ -98,7 +98,7 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   // can never paint: it would show `late` / 0 / off no matter what
   // cordis.patch.yml says. test/client.test.js runs the host's own projection to
   // pin that read.
-  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap', 'probeFirst', 'actBeforePlan', 'repeatNudge']) {
+  for (const key of ['outputDiscipline', 'stepBudget', 'workspaceMap', 'probeFirst', 'actBeforePlan', 'repeatNudge', 'stallGuard']) {
     assert.equal(visit(root.dict[key]).meta.volatile, true, `${key} carries a panel row, so it must be in the form`)
   }
 
@@ -107,15 +107,15 @@ test('the declared fields are exactly these, and the form fields are volatile', 
   const defaults = parse({})
   assert.deepEqual(
     [defaults.outputDiscipline, defaults.stepBudget, defaults.workspaceMap,
-      defaults.probeFirst, defaults.actBeforePlan, defaults.repeatNudge],
-    ['late', 0, true, false, false, false],
-    'the panel fields kept their shipped defaults, and all three new switches are off',
+      defaults.probeFirst, defaults.actBeforePlan, defaults.repeatNudge, defaults.stallGuard],
+    ['late', 0, true, false, false, false, true],
+    'the panel fields kept their shipped defaults: the three new switches are off, the guard is on',
   )
 
   // Everything else is a composition knob, like `debugFile`: read at load and
   // deliberately out of the form. Changing it is an edit in cordis.patch.yml,
   // not something to click mid-task.
-  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'stallGuard', 'toolTimeoutMs', 'reassertAfterCompaction']) {
+  for (const key of ['metrics', 'metricsFile', 'benchmarkFile', 'mapEntries', 'scheduler', 'shapeGate', 'toolTimeoutMs', 'reassertAfterCompaction']) {
     assert.notEqual(visit(root.dict[key]).meta.volatile, true, `${key} is a composition knob, not a form field`)
   }
 })

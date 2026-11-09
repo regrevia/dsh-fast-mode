@@ -53,6 +53,12 @@ test('the ceiling follows the gear, and every escape hatch is spelled out', () =
   assert.equal(budget('turbo', { toolTimeoutMs: -1 }), 0)
   assert.equal(budget('turbo', { stallGuard: false }), 0)
 
+  // The panel writes the guard as a per-conversation switch, so the kill switch
+  // must survive the trip from the `sessions` column into resolveConfig().
+  const scoped = resolveConfig({ enabled: true, gear: 'auto' }, { stallGuard: false })
+  assert.equal(scoped.stallGuard, false)
+  assert.equal(stallBudgetFor(scoped), 0)
+
   // An unknown gear must still be bounded rather than silently unlimited.
   assert.equal(stallBudgetFor({ gear: 'nonexistent' }), DEFAULT_STALL_BUDGET)
   assert.equal(STALL_BUDGET.safe, 0)

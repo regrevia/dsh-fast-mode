@@ -157,6 +157,17 @@ test('the output-compaction switch a panel click writes reaches the policy', () 
   assert.equal(resolveConfig(configOverridesFor(column, 'session-b')).compactResults, false, 'another conversation stays off')
 })
 
+test('the guard switch a panel click writes reaches the policy', () => {
+  const column = JSON.stringify({ 'session-a': { enabled: true, gear: 'auto', stallGuard: false } })
+  assert.deepEqual(
+    configOverridesFor(column, 'session-a'),
+    { enabled: true, gear: 'auto', stallGuard: false },
+    'the guard keeps its config spelling all the way down',
+  )
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto' }, configOverridesFor(column, 'session-a')).stallGuard, false)
+  assert.equal(resolveConfig({ enabled: true, gear: 'auto' }).stallGuard, true, 'another conversation keeps the guard')
+})
+
 test('the effective pair falls back field by field, and says whether it was scoped', () => {
   const fallback = { enabled: false, gear: 'fast' }
   const column = JSON.stringify({ 'session-a': { gear: 'turbo' }, 'session-b': { enabled: true } })

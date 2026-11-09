@@ -112,6 +112,8 @@ window.__ModuleLoader__.load({
       'panel.actTitle': '最多一行计划，想清楚就直接做',
       'panel.repeat': '重复时换方法',
       'panel.repeatTitle': '同一调用重发、或连续三步结果一样时提醒换法',
+      'panel.stall': '工具超时自动取消',
+      'panel.stallTitle': '单次调用超过时长上限就取消，把控制权交回来；故障保护，不承诺提速',
     }
 
     const en = {
@@ -143,6 +145,8 @@ window.__ModuleLoader__.load({
       'panel.actTitle': 'One line of plan, then act',
       'panel.repeat': 'Nudge on repeats',
       'panel.repeatTitle': 'When a call repeats or three results match, switch approach',
+      'panel.stall': 'Cancel stalled tools',
+      'panel.stallTitle': 'Cancels a single call past its time limit and hands control back; a fault guard, not a speed switch',
     }
 
     const CSS = [
@@ -238,6 +242,8 @@ window.__ModuleLoader__.load({
        * conversation turned them on.
        */
       probe: false, act: false, repeat: false,
+      /** Cancels one tool call past its time limit; fault protection, never a speed claim. */
+      stall: true,
       /** This conversation's step cap; 0 means no cap. */
       stepBudget: 0,
       /** The right-click panel is open. Store-backed, like every other paint. */
@@ -304,11 +310,11 @@ window.__ModuleLoader__.load({
     const GEAR_PRESETS = {
       safe: {
         gear: 'safe', discipline: false, map: false, batch: false, compactResults: false,
-        probeFirst: false, actBeforePlan: false, repeatNudge: false,
+        probeFirst: false, actBeforePlan: false, repeatNudge: false, stallGuard: false,
       },
       auto: {
         gear: 'auto', discipline: 'late', map: true, batch: true, compactResults: false,
-        probeFirst: true, actBeforePlan: true, repeatNudge: true,
+        probeFirst: true, actBeforePlan: true, repeatNudge: true, stallGuard: true,
       },
     }
 
@@ -354,6 +360,7 @@ window.__ModuleLoader__.load({
         && store.probe === preset.probeFirst
         && store.act === preset.actBeforePlan
         && store.repeat === preset.repeatNudge
+        && store.stall === preset.stallGuard
       return same ? tier : ''
     }
 
@@ -559,6 +566,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.probeFirst === 'boolean') clean.probeFirst = entry.probeFirst
         if (typeof entry.actBeforePlan === 'boolean') clean.actBeforePlan = entry.actBeforePlan
         if (typeof entry.repeatNudge === 'boolean') clean.repeatNudge = entry.repeatNudge
+        if (typeof entry.stallGuard === 'boolean') clean.stallGuard = entry.stallGuard
         if (Number.isFinite(entry.ts)) clean.ts = Number(entry.ts)
         if (
           clean.enabled === undefined
@@ -571,6 +579,7 @@ window.__ModuleLoader__.load({
           && clean.probeFirst === undefined
           && clean.actBeforePlan === undefined
           && clean.repeatNudge === undefined
+          && clean.stallGuard === undefined
         ) continue
         out[sessionId] = clean
       }
@@ -637,6 +646,7 @@ window.__ModuleLoader__.load({
       if (typeof patch.probeFirst === 'boolean') entry.probeFirst = patch.probeFirst
       if (typeof patch.actBeforePlan === 'boolean') entry.actBeforePlan = patch.actBeforePlan
       if (typeof patch.repeatNudge === 'boolean') entry.repeatNudge = patch.repeatNudge
+      if (typeof patch.stallGuard === 'boolean') entry.stallGuard = patch.stallGuard
       next[sessionId] = entry
       return next
     }
@@ -795,6 +805,11 @@ window.__ModuleLoader__.load({
           const seenRepeat = own !== undefined && typeof own.repeatNudge === 'boolean'
             ? own.repeatNudge
             : value.repeatNudge === true
+          // Entries written before this switch existed carry no `stallGuard`,
+          // so fall back to the shared default.
+          const seenStall = own !== undefined && typeof own.stallGuard === 'boolean'
+            ? own.stallGuard
+            : value.stallGuard !== false
           store.phase = 'ready'
           store.error = ''
           store.ns = view.ns
@@ -809,6 +824,7 @@ window.__ModuleLoader__.load({
           store.probe = seenProbe
           store.act = seenAct
           store.repeat = seenRepeat
+          store.stall = seenStall
           // A write we have not seen echoed yet wins: the Loader applies the new
           // section asynchronously, and flipping back to the old paint in that
           // window would read as a failed click.
@@ -855,14 +871,14 @@ window.__ModuleLoader__.load({
      *
      * - `options.entry` updates *this conversation's* row and writes nothing else.
      *   That is the only path that survives the volatility check on the settings side, and it is
-     *   what makes the four controls per-session instead of global.
+     *   what makes the five controls per-session instead of global.
      * - `patch` names shared config fields. It is kept for callers that mean "change
      *   the default for future conversations", and the settings side refuses it for any
      *   field that is not volatile — so the panel must not use it.
      *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
-     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean}}} [options]
+     * @param {{entry?: {enabled?: boolean, gear?: string, discipline?: boolean|'late', stepBudget?: number, map?: boolean, batch?: boolean, probeFirst?: boolean, actBeforePlan?: boolean, repeatNudge?: boolean, stallGuard?: boolean}}} [options]
      * @returns {Promise<boolean>} whether the write was accepted
      */
     async function write(remote, patch, options = {}) {
@@ -890,6 +906,7 @@ window.__ModuleLoader__.load({
         if (typeof entry.probeFirst === 'boolean') store.probe = entry.probeFirst
         if (typeof entry.actBeforePlan === 'boolean') store.act = entry.actBeforePlan
         if (typeof entry.repeatNudge === 'boolean') store.repeat = entry.repeatNudge
+        if (typeof entry.stallGuard === 'boolean') store.stall = entry.stallGuard
       }
       if (typeof shared.enabled === 'boolean') {
         store.enabled = shared.enabled
@@ -905,6 +922,7 @@ window.__ModuleLoader__.load({
       if (typeof shared.probeFirst === 'boolean') store.probe = shared.probeFirst
       if (typeof shared.actBeforePlan === 'boolean') store.act = shared.actBeforePlan
       if (typeof shared.repeatNudge === 'boolean') store.repeat = shared.repeatNudge
+      if (typeof shared.stallGuard === 'boolean') store.stall = shared.stallGuard
       emit()
       try {
         unwrap(await withTimeout(remote.settings.update(store.ns, outgoing, store.revision), 15000, 'settings/update'))
@@ -925,6 +943,7 @@ window.__ModuleLoader__.load({
         store.probe = before.probe
         store.act = before.act
         store.repeat = before.repeat
+        store.stall = before.stall
         store.pending = undefined
         store.writeError = describeError(error)
         emit()
@@ -1218,6 +1237,12 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      const toggleStall = () => {
+        void write(remote, undefined, { entry: { stallGuard: !store.stall } })
+        store.panelOpen = false
+        emit()
+      }
+
       return react.createElement(
         'div',
         { className: 'fm-panel', role: 'menu', 'aria-label': t('panel.title') },
@@ -1260,6 +1285,15 @@ window.__ModuleLoader__.load({
           toggleRepeat,
           !gated && store.repeat,
           t('panel.repeatTitle'),
+        ),
+        row(
+          'menuitemcheckbox',
+          t('panel.stall'),
+          t(!gated && store.stall ? 'panel.on' : 'panel.off'),
+          rowLive,
+          toggleStall,
+          !gated && store.stall,
+          t('panel.stallTitle'),
         ),
         savedFooter(t),
       )
