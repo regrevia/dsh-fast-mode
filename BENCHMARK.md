@@ -1,3 +1,39 @@
+## 块 `ABL5`（先登记后跑）：把「一行计划」这句话说硬一点（2026-11-10）
+
+**余量**（判据 15）：`ABL4` 的负结果把矛头指向了时机——提醒只在工具结果之后触发，第 1 步的推理它够不到。从 `t2all` 的会话记录里按步拆：`ABL3` 八轮共 109894 字，其中 **45.5 %** 落在每轮第 1 步；`ABL4` 七轮共 120832 字，**72.3 %** 落在第 1 步；而「收到过长度提醒之后的推理」只占 11.9 % / 23.5 %。也就是说，可动的大头（45–72 %）发生在任何长度提醒之前，只在开局那句话的射程内。
+
+**问题**：「一行计划，然后动手」这句开场白现在的措辞是软的（"one line of plan is enough … take it now and explain afterwards"）。把它换硬——明确要求第 1 步就执行、分析留到事后——会不会把第 1 步的推理压下来，同时不多走步？
+
+**臂**：`t2all`（今天的措辞）vs `tact`（只换 `ACT_TEXT` 那一段字符串，其余逐字节相同：`probeFirst`/`actBeforePlan`/`repeatNudge`/`outputDiscipline: late`/`workspaceMap`/`openBatch`/auto 档）。差别经临时易失键 `actText: 'tight'` 注入，不上面板、不参与档位解析、不进 `gear.directive`。`PROBE_TEXT` 与末尾 `GUARD` 一字不改——本块只测「一行计划」这一段的说法。家族 `debugfix`+`migrate`，每族 4 对 ⇒ 8 对 × 2 臂 + 同块 `std` 基准 = 24 格，ABBA 轮转。
+
+**换成的措辞**（`ACT_TEXT_TIGHT`，只此一段不同）：
+> One line of plan is the whole plan: state the first action and run it in the same step. Do not analyse before your first tool call — the first call is cheaper to correct than the action is to predict. Explain afterwards only if the result is not self-evident.
+
+**预登记判据**（跑之前写死）：
+1. 推理卡相对 `t2all` 下降，且几何均值 CI95 不跨 1；
+2. 步数不上升（措辞变硬不允许换来更多往返）；
+3. 24/24 green、0 leak；
+4. 送达自证：`tact` 的会话记录里必须真的出现 `the first call is cheaper to correct than the action is to predict`，且至少 6/8 个 `tact` 会话里有它（证明换的是实际下发的那句话，不是只改了文件）。
+
+四条全中 ⇒ 把 `ACT_TEXT_TIGHT` 的措辞直接换成默认 `ACT_TEXT`（不新增用户开关，`t2all` 的行为随之改变）；否则保留现措辞，把负结果写进本段。
+
+**命令**：`python3 bench/suite-run.py --tasks debugfix,migrate --arms std,t2all,tact --pairs 4 --tag ABL5`，然后 `python3 bench/pairpool.py --files bench/results/suite-ABL5.jsonl --baseline t2all --arm tact --ci 4000`。
+
+**数据**：`bench/results/suite-ABL5.jsonl`。
+
+**结果**（2026-11-10，24 格全绿，0 泄漏，24 行全有效）：
+
+- 判据 1 **不成立**：`tact vs t2all` 推理 1.040× CI95 [0.735, 1.430]，4/8 更快，中位 1.383×。
+- 判据 2 **不成立**：步数 1.221× CI95 [0.939, 1.545]，只有 1/8 更快。
+- 判据 3 **成立**：24/24 green、0 leak、24 行全 valid。
+- 判据 4 **成立**：8/8 个 `tact` 会话里都有新措辞、8/8 个 `t2all` 会话里都没有（`tact` 会话里同时不含旧的开场白，两句互斥，证明换的就是实际下发那句）。
+
+同块参照（本轮块本身有效）：`t2all vs std` 推理 0.514× CI95 [0.316, 0.804]（6/8 更快）、步数 0.690×、输出 0.630×、耗时 0.545×——所以本块的零结果不是基线塌了。
+
+**机制自证**（新增只读工具 `bench/step-share.py`，把每轮推理按步拆开）：`t2all` 八轮共 154301 字，首步占 57.8 %、收到长度提醒之后占 21.8 %；`tact` 八轮共 148946 字，首步 63.0 %、提醒后 33.3 %。措辞说硬之后总量 0.965×（落在噪声里），而且推理并没有从首步挪走。**首步那部分推理对开场白措辞不敏感**——它写在任何提醒之前，靠改写提醒够不到。
+
+**结论**：不采用新措辞，`ACT_TEXT` 保持原样，不新增任何用户开关。加上 `ABL4`（加提醒条数无效）与 `ABL5`（换措辞无效），长度提醒这条机制内已经没有可挖的余量；首步推理占 46–72 %（`ABL3` 45.5 %、`ABL4` 72.3 %、`ABL5` 57.8 %），要动它只能换机制类别，而不是继续调这句话。附带一条本块的旁证：`t2all` 全部 81 个推理步里**工具报错之后的推理是 0 字**（0 个报错结果），所以「报错后还在想」这条方向在这些基准上没有质量，已排除。
+
 ## 块 `ABL4`（先登记后跑）：长推理提醒要不要再多给两条（2026-11-10）
 
 **余量**：提醒阶梯现在是每轮 4000 字一条、8000 字一条，**最多两条**。`ABL3` 的 `t2all` 会话里 **53.0 %** 的推理字符落在单轮累计 8000 字之后——即一半的思考发生在现有阶梯够不到的地方（`python3 bench/reason-headroom.py --tag ABL3 --arm t2all --arm t3nolen`：`t2all` 109894 字里 58246 字在 8000 之后，`t3nolen` 同比例 53.0 %）。按判据 15，这个余量够开一块。
