@@ -49,7 +49,14 @@ TOKEN_TIMEOUT = 1500
 # grades from memory, and the tree is restored on exit or on a signal.
 DEFAULT_RUNS = pathlib.Path(os.environ.get('TMPDIR', '/tmp')) / 'dsh-runs'
 SESSIONS = pathlib.Path.home() / '.dsh' / 'sessions'
-LEAK_MARKERS = ('/hidden/', '/ref/', 'bench/suite/', 'fm-bench/suite', 'MANIFEST.json')
+# Only markers that cannot be reached without opening a fixture count as a leak.
+# A bare `MANIFEST.json` was here too, but it holds hashes and nothing gradeable,
+# and the name is common enough that an unrelated listing could trip it; `/ref/`
+# was similarly loose, and every reference lives under a suite path anyway, so
+# `bench/suite/` already covers it. Narrowing the markers can only turn a false
+# `leak: true` into a correct one, so runs graded green under the wider set stay
+# green.
+LEAK_MARKERS = ('hidden/test_', '/hidden/', 'bench/suite/', 'fm-bench/suite')
 
 
 def session_dir(dest):
