@@ -49,14 +49,32 @@ export const STALL_BUDGET = Object.freeze({
   turbo: 180_000,
   // The starting ceiling for `auto`; the live one comes from the session's own
   // observed call latency (`src/auto.js`), so this is only the pre-evidence
-  // value.
-  auto: 120_000,
-  max: 120_000,
-  ludicrous: 90_000,
+  // value. Every entry that guards at all sits above `HOST_PROMOTE_MS`: at the
+  // host's own deadline a healthy command is kept alive as a background job,
+  // and cancelling it there would kill work that was still running fine.
+  auto: 150_000,
+  max: 150_000,
+  ludicrous: 150_000,
 })
 
 /** Ceiling used when a gear has no entry (an unknown gear must still be bounded). */
 export const DEFAULT_STALL_BUDGET = 300_000
+
+/**
+ * The point at which the host's own bash tool stops waiting in the foreground
+ * and hands the command to the jobs registry, when the profile loads
+ * `dsh-tool-bash` with its defaults (`timeoutMs` 120 s, `promoteOnTimeout`
+ * true). Past this point the call is no longer stalling: the host has handed
+ * back control and the output stays readable through `job_output`.
+ *
+ * The guard must therefore never expire at or before this point for a shell
+ * tool, or it cancels a command the host was about to keep running — the one
+ * thing the guard promises never to do.
+ */
+export const HOST_PROMOTE_MS = 120_000
+
+/** How far past the host's promote point the guard's own ceiling must sit. */
+export const HOST_PROMOTE_MARGIN_MS = 30_000
 
 /**
  * Ceiling on the *total* time the guard may spend confirming that a cancelled
@@ -140,7 +158,7 @@ export function shouldGuard(name, budgetMs) {
  * already been running longer than the gear expects, in milliseconds.
  *
  * The gear table is a fault bound, not a judgement about the work: when a build
- * this session has already been running takes 150 s, a `max` ceiling of 120 s
+ * this session has already been running takes 400 s, a `max` ceiling of 150 s
  * cancels a call that is working normally, which is the one thing the guard
  * promises never to do. So the ceiling widens with the session's own observed
  * p90 — the same signal `auto` already uses — but never beyond twice the gear
@@ -178,6 +196,45 @@ export function headroomFor(budgetMs, p90Ms) {
 }
 
 /**
+ * The deadline the call itself asked for, in milliseconds, from the arguments
+ * the tool was dispatched with — `timeoutMs` is the name both `dsh-tool-bash`
+ * and `dsh-tool-pwsh` use, and the snake_case spelling is accepted so a
+ * plugin-defined shell tool is not missed.
+ *
+ * @param {unknown} value - `exec.arguments`, which may be anything.
+ * @returns {number} the positive deadline, or `0` when the call named none.
+ */
+export function callDeadlineFor(value) {
+  if (!value || typeof value !== 'object') return 0
+  for (const key of ['timeoutMs', 'timeout_ms', 'timeout']) {
+    const raw = value[key]
+    const ms = typeof raw === 'string' ? Number(raw) : raw
+    if (Number.isFinite(ms) && ms > 0) return Math.round(ms)
+  }
+  return 0
+}
+
+/**
+ * Widen a ceiling so the guard never pre-empts a deadline the caller set.
+ *
+ * Only a minority of long calls are ever promoted to a background job: a call
+ * that names its own `timeoutMs` is waited on by the host for exactly that
+ * long, so a guard ceiling below it cancels a build the caller deliberately
+ * allowed to run — the one thing the guard promises never to do. The caller
+ * already bounded the call; the guard's job is the unbounded ones.
+ *
+ * @param {number} budgetMs - the resolved ceiling.
+ * @param {unknown} args - `exec.arguments`.
+ * @returns {number} milliseconds.
+ */
+export function respectCallDeadline(budgetMs, args) {
+  if (!(budgetMs > 0)) return budgetMs
+  const asked = callDeadlineFor(args)
+  if (!(asked > 0)) return budgetMs
+  return Math.max(budgetMs, asked + HOST_PROMOTE_MARGIN_MS)
+}
+
+/**
  * Resolve the ceiling for one session's config.
  *
  * `toolTimeoutMs` is the escape hatch: a positive value is used verbatim, a
@@ -193,7 +250,9 @@ export function stallBudgetFor(config) {
   if (Number.isFinite(explicit) && explicit < 0) return 0
   if (Number.isFinite(explicit) && explicit > 0) return explicit
   const fromGear = STALL_BUDGET[config.gear]
-  return Number.isFinite(fromGear) ? fromGear : DEFAULT_STALL_BUDGET
+  const gearBudget = Number.isFinite(fromGear) ? fromGear : DEFAULT_STALL_BUDGET
+  if (!(gearBudget > 0)) return 0
+  return Math.max(gearBudget, HOST_PROMOTE_MS + HOST_PROMOTE_MARGIN_MS)
 }
 
 /**
@@ -328,8 +387,9 @@ export function createStallGuard(options = {}) {
    */
   return async function stallGuard(exec, next) {
     if (!exec || typeof exec !== 'object') return next()
-    const budgetMs = budgetFor(exec)
-    if (!shouldGuard(exec.name, budgetMs)) return next()
+    const ceiling = budgetFor(exec)
+    if (!shouldGuard(exec.name, ceiling)) return next()
+    const budgetMs = respectCallDeadline(ceiling, exec.arguments)
 
     const caller = exec.signal
     if (!caller || typeof caller.addEventListener !== 'function' || caller.aborted === true) return next()

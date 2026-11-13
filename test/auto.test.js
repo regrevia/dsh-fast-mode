@@ -223,7 +223,7 @@ test('errors narrow the width even when calls keep changing', () => {
   assert.equal(autoSchedule(state, 's1').parallel, 1)
 })
 
-test('the stall budget follows the recent p90, clamped to 2-5 minutes', () => {
+test('the stall budget follows the recent p90, clamped to 2.5-5 minutes', () => {
   const slow = createAutoState()
   for (let i = 0; i < 10; i += 1) {
     noteTool(slow, 's1', { name: 'shell', argsKey: `c-${i}`, chars: i, durationMs: 1_000 })
@@ -234,7 +234,9 @@ test('the stall budget follows the recent p90, clamped to 2-5 minutes', () => {
   for (let i = 0; i < 10; i += 1) {
     noteTool(mid, 's1', { name: 'shell', argsKey: `c-${i}`, chars: i, durationMs: 45_000 })
   }
-  assert.equal(autoSchedule(mid, 's1').stallBudgetMs, 135_000)
+  // 45 s p90 × 3 = 135 s, still under the floor: a session whose own calls run
+  // this long must not be cancelled at the point the host is still waiting.
+  assert.equal(autoSchedule(mid, 's1').stallBudgetMs, AUTO_LIMITS.stallFloorMs)
 
   const stuck = createAutoState()
   for (let i = 0; i < 10; i += 1) {
@@ -528,7 +530,7 @@ test('strange input degrades to no opinion instead of throwing', () => {
 test('describeSchedule quotes the same numbers the scheduler picked', () => {
   const state = createAutoState()
   const schedule = autoSchedule(state, 's1')
-  assert.deepEqual(describeSchedule(schedule), { parallel: 4, minutes: '2', budgetMs: 120_000 })
+  assert.deepEqual(describeSchedule(schedule), { parallel: 4, minutes: '2.5', budgetMs: 150_000 })
 
   const fallback = describeSchedule(undefined)
   assert.equal(fallback.parallel, AUTO_LIMITS.parallelBase)

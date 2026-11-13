@@ -22,7 +22,7 @@
  *    It never asks for a shorter answer: the deliverable is exempt by
  *    construction.
  * 3. **Bounded calls and evidence-based loop breaking.** Shell-class tool calls
- *    get a cancellable ceiling (`auto`: 120 s, self-tuning to 300 s from the
+ *    get a cancellable ceiling (`auto`: 150 s, self-tuning to 300 s from the
  *    recent p90; `safe`: none). A cancelled call is waited on until its body
  *    really stops, then the model is told to change approach. A step that
  *    produced a new result is progress even when the result has the same size as
@@ -565,7 +565,10 @@ export function apply(ctx, rawConfig) {
       // makes, so a healthy build is not cancelled for being a build.
       if (cfg.gear !== AUTO) return headroomFor(base, observedWaitP90(auto, agent))
       const live = autoBudgets.get(agent)
-      return Number.isFinite(live) ? live : base
+      // The live schedule is itself floored in `src/auto.js`; this keeps a
+      // stale entry written before that floor existed from undercutting it.
+      if (!Number.isFinite(live)) return base
+      return Math.max(live, base)
     },
     onStall: (info) => {
       stalls += 1

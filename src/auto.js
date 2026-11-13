@@ -50,7 +50,13 @@ export const AUTO_LIMITS = Object.freeze({
   parallelCapMax: 12,
   /** Widest step is only asked for after this many clean steps. */
   widenAfterSteps: 2,
-  stallFloorMs: 120_000,
+  /**
+   * The floor sits above the host's own foreground deadline for bash (120 s
+   * by default) and above the point where it hands that command to the jobs
+   * registry instead of killing it. A floor at or below that point would
+   * cancel a command the host was about to keep running.
+   */
+  stallFloorMs: 150_000,
   stallCeilMs: 300_000,
   /** A call that is already slower than this makes the ceiling grow with it. */
   stallMultiplier: 3,

@@ -20,12 +20,15 @@ import { detectPeerPlugins, opsToolsLive, PEER_PLUGINS } from '../src/peers.js'
 import {
   confirmWindowFor,
   createStallGuard,
+  callDeadlineFor,
   DEFAULT_STALL_BUDGET,
+  HOST_PROMOTE_MS,
   headroomFor,
   shouldGuard,
   STALL_BUDGET,
   STALL_CONFIRM_TOTAL_MS,
   STALL_CONFIRM_WINDOW_MS,
+  respectCallDeadline,
   STALL_HEADROOM_CAP_MS,
   stallBudgetFor,
   stallFailure,
@@ -40,13 +43,13 @@ test('the ceiling follows the gear, and every escape hatch is spelled out', () =
   // number. The fixed ids survive as experiment arms, so they are reachable
   // through an override and never through a patch.
   assert.equal(budget('safe'), 0)
-  assert.equal(budget('auto'), 120_000)
-  assert.equal(budget('turbo'), 120_000, 'a retired patch gear runs auto, so it runs the auto ceiling')
+  assert.equal(budget('auto'), 150_000)
+  assert.equal(budget('turbo'), 150_000, 'a retired patch gear runs auto, so it runs the auto ceiling')
   const arm = (gear) => stallBudgetFor(resolveConfig({ enabled: true }, { enabled: true, gear }))
   assert.equal(arm('fast'), 300_000)
   assert.equal(arm('turbo'), 180_000)
-  assert.equal(arm('max'), 120_000)
-  assert.equal(arm('ludicrous'), 90_000)
+  assert.equal(arm('max'), 150_000)
+  assert.equal(arm('ludicrous'), 150_000)
 
   // A positive `toolTimeoutMs` overrides the table for every gear; a negative
   // one is the kill switch; `stallGuard: false` is the same kill switch.
@@ -60,6 +63,13 @@ test('the ceiling follows the gear, and every escape hatch is spelled out', () =
   const scoped = resolveConfig({ enabled: true, gear: 'auto' }, { stallGuard: false })
   assert.equal(scoped.stallGuard, false)
   assert.equal(stallBudgetFor(scoped), 0)
+
+  // Every gear that guards at all must expire *after* the point where the host
+  // stops waiting in the foreground and keeps the command alive as a job.
+  // Cancelling there would kill work the host was about to keep running.
+  for (const gear of ['auto', 'turbo', 'fast', 'max', 'ludicrous']) {
+    assert.ok(budget(gear) > HOST_PROMOTE_MS, `${gear} must expire after the host promote point`)
+  }
 
   // An unknown gear must still be bounded rather than silently unlimited.
   assert.equal(stallBudgetFor({ gear: 'nonexistent' }), DEFAULT_STALL_BUDGET)
@@ -504,4 +514,35 @@ test('a caller abort during confirmation reports cancel-requested, not exited', 
   assert.equal(stalled.confirmed, false)
   assert.equal(caller.listenerCount, 0)
   assert.match(result.content[0].text, /exit is NOT confirmed/)
+})
+
+
+test('the caller\'s own deadline outranks the guard\'s ceiling', () => {
+  // `timeoutMs` is what a bash call asks the host to wait; a call that names one
+  // has already been bounded by the caller, so the guard must not expire first.
+  assert.equal(callDeadlineFor({ timeoutMs: 400_000 }), 400_000)
+  assert.equal(callDeadlineFor({ timeout_ms: 90_000 }), 90_000)
+  assert.equal(callDeadlineFor({ timeout: '600000' }), 600_000)
+  assert.equal(callDeadlineFor({ suffix: 'x' }), 0)
+  assert.equal(callDeadlineFor(null), 0)
+  assert.equal(callDeadlineFor('400000'), 0, 'a bare string is not a tool-argument bag')
+  assert.equal(callDeadlineFor({ timeoutMs: -1 }), 0)
+  assert.equal(callDeadlineFor({ timeoutMs: Number.NaN }), 0)
+
+  assert.equal(respectCallDeadline(150_000, { timeoutMs: 400_000 }), 430_000)
+  assert.equal(respectCallDeadline(150_000, { timeoutMs: 5_000 }), 150_000, 'a shorter deadline never lowers the guard')
+  assert.equal(respectCallDeadline(150_000, {}), 150_000)
+  assert.equal(respectCallDeadline(0, { timeoutMs: 400_000 }), 0, 'a disabled guard stays disabled')
+})
+
+test('a call that finishes inside its ceiling is returned untouched', async () => {
+  let budget = 0
+  const guard = createStallGuard({
+    budgetFor: (exec) => budget,
+    graceMs: 50,
+  })
+  budget = 200
+  const value = { ok: true }
+  const out = await guard({ name: 'bash', signal: new AbortController().signal, arguments: { timeoutMs: 5_000 } }, async () => value)
+  assert.equal(out, value)
 })
