@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({
       'panel.repeat': '重复时换方法',
       'panel.repeatTitle': '同一调用重发、或连续三步结果一样时提醒换法',
       'panel.stall': '工具超时自动取消',
-      'panel.stallTitle': '单次调用超过时长上限就取消，把控制权交回来；故障保护，不承诺提速',
+      'panel.stallTitle': '跑太久的调用会被取消，把控制权交回来；故障保护，不承诺提速',
     }
 
     const en = {
