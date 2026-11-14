@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.38（修掉 1.7.37 的打包缺陷：手册要跑的两个脚本没进 npm 包）
+
+**不改行为。** 1.7.37 把 `bench/shapegate.py` 与 `bench/channels.py` 写进了仓库、并在 `BENCHMARK.md` 里引用它们，但 `package.json` 的 `files` 是白名单——两个脚本没被加进去。npm 包里的 `BENCHMARK.md` 让读者用 `python3 bench/shapegate.py` 复算数字，而那两份文件根本不在包里。`files` 与已在发的另外八个 `bench/` 脚本对齐，测试文件数 56 → 58。
+
+- 复现：`npm pack dsh-fast-mode@1.7.37`、解开、`grep -o "bench/shapegate.py" BENCHMARK.md` 有命中，`ls bench/` 里却没有这两个脚本。
+- 教训：**白名单打包下，新增一个被文档引用的脚本要同时改 `files`**，否则「可复算」这句话在发布物里不成立。这一版只补这一处。
+
 ## 1.7.37（不改行为：把两处已被实测推翻的说法改掉，并把扫描器放进仓库）
 
 **这一版没有任何行为变化，也不宣称提速。** 它只改两处**已经写在用户能读到的地方**的错说法，并补上复算脚本。版本号仍然要动，因为 `src/config.js` 的帮助串是用户可见的。
