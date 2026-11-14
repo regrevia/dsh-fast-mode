@@ -174,3 +174,29 @@ python3 bench/dr8score.py                  # dr8 预注册判据 + 下发核对
 ```
 
 这四个 `d2g*`/`dr8*` 脚本原先只在 `~/.local/fm/`，现在搬进 `bench/`：路径改成相对仓库（`pathlib.Path(__file__).resolve().parent`），会话检索只依赖 `~/.dsh/sessions`（不要求临时 run 目录还在），且同时认 `hasSessionIds` 与历史 `exact`。在现有 result 上跑出来的判定与 BENCHMARK.md 的 HOLD 结论一致（`D2G_IMPL d2g step 4` 一行 FAIL，实际第 3 步）。
+
+## 闸门命中率与按通道拆分的两个扫描器
+
+两个都只读留存会话、不跑模型、不花一次运行，用来在「开臂之前」判断一个机制最多能改多少。它们的数字进 `BENCHMARK.md`，脚本在这里以便重跑。
+
+```bash
+python3 bench/shapegate.py                 # 465 个会话 437 回合：闸门命中率、工具构成、反事实
+python3 bench/shapegate.py --json          # 同样数字，机器可读
+python3 bench/shapegate.py --limit 60      # 只扫前 60 个会话目录
+python3 bench/channels.py                  # 长回合里 prose / 工具参数 / reasoning 三条通道的走向
+python3 bench/channels.py --json
+```
+
+`shapegate.py` 重放的是 `src/auto.js` 的判据本体（`stats.turnCalls >= 4` 且 `stats.turnUnsafe * 10 >= stats.turnCalls * 6`，`turnUnsafe` = 名字不在 `SAFE_CALLS` 里的调用），不是「开了闸门之后回合怎么变」——它只回答闸门在多少回合、哪一步合上。脚本里 `SAFE_CALLS` / `MUTATING_CALLS` 是手抄的，运行时会读 `src/auto.js` 的声明块核对，漂了就打印 `WARNING` 而不是悄悄给出错数字。它同时给出「只数 `MUTATING_CALLS`」的反事实，那是唯一不干扰长回合提醒的改法，数字见 `BENCHMARK.md` 的「补测：闸门的命中率」。
+
+`channels.py` 把 `assistant/message` 的内容按 `reasoning` / `text` / `tool-call` 三块分开累加，再比「前 8 步」与「之后」的每步均值，末尾按「步 4–6 均值 vs 末三步均值」判 reasoning 反弹。`step-share.py` 只看 reasoning、`textshare.py` 只看 prose 与参数，`channels.py` 是唯一把三条放同一张表里的；结论是提醒压住了 prose 与工具参数、压不住 reasoning，因此 `disciplineRepeatAtSteps` 的前提只在 reasoning 通道成立，而那条杠杆实测更慢（`DR8_MIG` 1.394×）。
+
+## 看门狗（150 秒下限）的回放分析：没有仓库脚本
+
+1.7.36 把 `stallGuard` 的下限抬到 150 秒，依据是 `~/.dsh/sessions` 里的一次性扫描加回放，**没有配套脚本进仓库**，这一点先写清楚，免得被当成可复算数字引用：
+
+- 扫描面：2325 个留存会话，命中 276 次看门狗取消，全部是 `bash`；
+- 分布：241 次正好压在 120 秒线上，270 次自带 `timeoutMs`，246 次的 `timeoutMs` 大于 120 秒；
+- 回放：按 1.7.36 的新规则重判，275 次不再会被取消（99.6 %），只有 1 次真的超过它自己声明的 240 秒。
+
+能复算的是**机制**而不是这份分布：`bench/replay.mjs` 能把留存会话喂回钩子看每轮步数与提醒落点，`test/stallguard.test.js` 钉住预算与下限的关系（`budget(gear) > HOST_PROMOTE_MS`、`budget('auto'|'max'|'ludicrous') === 150_000`、`respectCallDeadline` 三例）。要重新量这份分布得自己写扫描器：读 `session.v4.jsonl.zstd` 里的工具调用与结果记录，抽 `timeoutMs` 与被取消的标记，再按新规则重算。

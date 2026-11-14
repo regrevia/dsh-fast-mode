@@ -244,7 +244,7 @@ export const Config = z.object({
     .max(80)
     .default(0)
     .description(
-      '压缩指令的重复步 / Compression repeat step: `outputDiscipline: late` 的提醒每回合只发一次，第 4 步之后的长回合（10 步以上）输出会重新变长。给一个正数就按那一步再提醒一次「仍然只写下一步要用的」，仍然每回合最多一次。0 = 不发（默认，行为不变）。',
+      '压缩指令的重复步 / Compression repeat step: `outputDiscipline: late` 的提醒每回合只发一次。给一个正数就按那一步再提醒一次「仍然只写下一步要用的」，仍然每回合最多一次。0 = 不发（默认，行为不变）。按通道量过：长回合里可见文字与工具参数在提醒之后继续变短（6.7 → 5.2 字符/步；参数 1 766 → 672），不反弹，反弹的只有 reasoning（118 个长回合里 75 个，中位比值 2.61）。所以这条提醒想压的其实是 reasoning，而 `DR8_MIG`（`disciplineRepeatAtSteps: 8`，6 对）实测 1.394× 更慢、输出 1.365× 更长：重发一次压不住，且每条提醒都要占一段 prompt 加一次决策。这条杠杆已关闭，保留配置键只为对照。',
     ),
 
   compactRereadHint: z
