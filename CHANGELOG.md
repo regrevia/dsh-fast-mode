@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.39（把 `bench/` 的白名单换成 glob：发布物里的「可复算」才算数）
+
+**不改行为。** 1.7.38 只补了 1.7.37 那两个脚本，没治根：`files` 里 `bench/` 是**逐条白名单**，而 `BENCHMARK.md` 引用的仓库脚本有 23 个、只发了 11 个——另外 12 个（`audit-delivery.py`、`compactshare.py`、`overhead.py`、`pairpool.py`、`pool.py`、`reason-headroom.py`、`report.py`、`rereread.py`、`scrub.py`、`step-share.py`、`suite-run.py`、`d2gscore.py` 等）同样被发布物里的文档要求读者去跑。
+
+- 改法：`bench/*.py`、`bench/*.mjs`、`bench/*.json`、`bench/README.md`——以后新增脚本不用再想起改 `files`，这类缺陷在结构上不会再出现。仓库里实际存在的 31 个 `bench/` 文件全部进包（文件数 58 → 77）。
+- 边界说明：发布物里仍有 5 个 `bench/…` 路径找不到（`pipeline.py`、`tasks.swebench.jsonl`、`baseline/`、`work/`、`sweb.eval.x86_64/`），它们在**仓库里也不存在**，是从未落到这个仓库的外部/示例路径，不是漏发。
+- 教训：白名单打包 + 文档引用脚本 = 每加一个脚本就埋一颗雷。要么用 glob，要么别在发布物里引用仓库外的东西。
+
 ## 1.7.38（修掉 1.7.37 的打包缺陷：手册要跑的两个脚本没进 npm 包）
 
 **不改行为。** 1.7.37 把 `bench/shapegate.py` 与 `bench/channels.py` 写进了仓库、并在 `BENCHMARK.md` 里引用它们，但 `package.json` 的 `files` 是白名单——两个脚本没被加进去。npm 包里的 `BENCHMARK.md` 让读者用 `python3 bench/shapegate.py` 复算数字，而那两份文件根本不在包里。`files` 与已在发的另外八个 `bench/` 脚本对齐，测试文件数 56 → 58。
