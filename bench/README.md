@@ -175,6 +175,22 @@ python3 bench/dr8score.py                  # dr8 预注册判据 + 下发核对
 
 这四个 `d2g*`/`dr8*` 脚本原先只在 `~/.local/fm/`，现在搬进 `bench/`：路径改成相对仓库（`pathlib.Path(__file__).resolve().parent`），会话检索只依赖 `~/.dsh/sessions`（不要求临时 run 目录还在），且同时认 `hasSessionIds` 与历史 `exact`。在现有 result 上跑出来的判定与 BENCHMARK.md 的 HOLD 结论一致（`D2G_IMPL d2g step 4` 一行 FAIL，实际第 3 步）。
 
+## 可见文字按来源拆分
+
+`mix.py` 回答的是「这个比例的分母是什么」。工具结果文本只占模型可见文本的 12.18 %，
+所以「压缩能拿掉 6.3 % 的工具结果」不等于「能拿掉 6.3 % 的提示词」。它按来源拆七个通道：
+reasoning、user 消息、工具结果、工具参数、system 消息、插件注入的提醒、assistant 可见文字。
+
+```
+python3 bench/mix.py                       # std 臂，前 135 个会话
+python3 bench/mix.py --arm off --limit 0   # 全部会话
+python3 bench/mix.py --limit 0 --json
+```
+
+采样规则继承 `textshare.collect`（按运行目录名排序取前 `--limit`，`--limit 0` = 全部），
+所以同一份语料永远给同一个数。记录形状与 `compactshare.py` 一致：工具结果取
+`/tool/result` 的 `data.message.content[].text`——早期只认 `data['result']` 的匹配器会返回接近 0。
+
 ## 闸门命中率与按通道拆分的两个扫描器
 
 两个都只读留存会话、不跑模型、不花一次运行，用来在「开臂之前」判断一个机制最多能改多少。它们的数字进 `BENCHMARK.md`，脚本在这里以便重跑。

@@ -3329,6 +3329,11 @@ python3 bench/compactshare.py --arm off --limit 0   # 对照组
 | assistant 可见文字 | 19 726 | 0.14 % |
 | 合计 | 14 028 067 | 100 % |
 
+```
+python3 bench/mix.py                # 135 个 std 会话，规则与 textshare.py 相同
+python3 bench/mix.py --arm off --limit 0 --json
+```
+
 所以 `compactResults` 的真实上界是 **12.18 % × 6.3 % ≈ 0.77 % 的模型可见文本**，不是 6.3 %。
 
 **判定：HOLD，不开臂。** 理由三条，都写在这里免得下次再算一遍：一，上界 0.77 % 远低于 2–6 % 的准入线；二，`compactshare.py` 的 6.4 % 本身是上界不是量测——它对每条超阈值结果都套 `KEEP = 0.65`，而实际压缩只在超过 `compactMaxChars`（`src/config.js:196`）时触发，且不碰报错、短结果与已压缩结果；三，`off` 臂里 `ledger` 2 条（21.2 %）、`migrate` 2 条（18.7 %）说明这块面积不随档位变化，是任务形状决定的，不是插件能收回的成本。

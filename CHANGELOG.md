@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.40（给「可见文字来源」那张表补上仓库脚本 `bench/mix.py`）
+
+**不改行为。** `BENCHMARK.md` 里那张七行表（reasoning 39.49 %、工具结果 12.18 %、插件提醒 2.98 % …）是 `compactResults` 判 HOLD 的**分母**：没有它，6.3 % 那个数字会被读成「6.3 % 的提示词」，而真值是 0.77 %。但它是全库唯一一张没有仓库脚本的表——数字对，来源不可复算。
+
+- 新增 `bench/mix.py`：按来源拆七个通道，采样规则继承 `textshare.collect`（同一份语料永远给同一个数），记录形状与 `compactshare.py` 一致（工具结果取 `/tool/result` 的 `data.message.content[].text`）。跑出来逐项复现表里的数字，包括 135 会话、14 028 067 字符、300k+ 的大结果 23 条。
+- `BENCHMARK.md` 表格后补两条命令，`bench/README.md` 补一节说明它回答的是什么问题。
+- 顺带验证 1.7.39 的 glob：新脚本不用改 `files` 就进了包（77 → 78 文件）。
+
 ## 1.7.39（把 `bench/` 的白名单换成 glob：发布物里的「可复算」才算数）
 
 **不改行为。** 1.7.38 只补了 1.7.37 那两个脚本，没治根：`files` 里 `bench/` 是**逐条白名单**，而 `BENCHMARK.md` 引用的仓库脚本有 23 个、只发了 11 个——另外 12 个（`audit-delivery.py`、`compactshare.py`、`overhead.py`、`pairpool.py`、`pool.py`、`reason-headroom.py`、`report.py`、`rereread.py`、`scrub.py`、`step-share.py`、`suite-run.py`、`d2gscore.py` 等）同样被发布物里的文档要求读者去跑。
