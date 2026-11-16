@@ -262,7 +262,7 @@ export const Config = z.object({
     .default(true)
     .volatile()
     .description(
-      '工作区清单 / Workspace inventory（面板「开局附文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、最多 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。单独开测不到显著（0.927×），1.7.32 起随标准档默认开启，成组证据见 `openBatch` 与 `BENCHMARK.md` 的 `QC1` 块；配置键 `false` 仍可单独关掉。',
+      '工作区清单 / Workspace inventory（面板「开局附文件清单」）: 会话开始时不调用任何工具，harness 自己走一遍 cwd（深度 2、默认 60 条、跳过 node_modules 等）把路径、大小和现有测试入口作为一条提示交给模型。实测 `def15` 会话里 35.7% 的工具调用是 ls/find/cat 这类探路，其中 40% 出现在前两次调用里——这一步就是把那次往返拿掉。只发一次，不隐藏任何文件，读文件仍由模型自己决定。单独开测不到显著（0.927×），1.7.32 起随标准档默认开启，成组证据见 `openBatch` 与 `BENCHMARK.md` 的 `QC1` 块；配置键 `false` 仍可单独关掉。',
     ),
 
   mapEntries: z
@@ -272,7 +272,7 @@ export const Config = z.object({
     .max(200)
     .default(60)
     .description(
-      '清单条数上限 / Inventory cap: 工作区清单最多列多少条路径，默认 60。超过上限时注明「前 N 条 / 共 M 条」。',
+      '清单条数上限 / Inventory cap: 工作区清单最多列多少条路径，默认 60，上限 200；按整条路径截断并注明「前 N 条 / 共 M 条」，把本值调高会同步放宽正文上限',
     ),
 
   fanoutWidth: z

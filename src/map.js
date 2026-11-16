@@ -17,10 +17,12 @@
  *
  * Design limits, deliberately tight:
  *
- * - depth 2, at most 60 entries, known clutter (`node_modules`, `.git`, build
- *   output, caches) skipped;
- * - total text stays well under 1 500 characters, so it costs picture-frame
- *   tokens, not a re-read;
+ * - depth 2, 60 entries by default, known clutter (`node_modules`, `.git`,
+ *   build output, caches) skipped;
+ * - at the default cap the whole message stays under 1 400 characters, so it
+ *   costs picture-frame tokens, not a re-read; raising `mapEntries` scales that
+ *   bound with it, and the listing is always cut at a whole path — half a path
+ *   is a filename the model cannot open;
  * - every failure path returns `null` (no cwd, unreadable dir, empty dir) and
  *   the caller sends nothing. A map is a convenience, never a precondition.
  *
@@ -39,7 +41,25 @@ const MAX_ENTRIES = 60
 const MAX_DEPTH = 2
 const MAX_TEXT = 1400
 
-function walk(root, dir, depth, out) {
+// The listing is cut at a whole entry, never mid-path: a truncated path is a
+// filename the model cannot open and would have to unlearn. So the walk always
+// collects a few more than the cap and the text bound decides how many are
+// actually printed.
+const OVERSCAN = 40
+
+// Roughly what one listing line costs (a path, a size, the newline). Only used
+// when `mapEntries` is raised above the default: the default arm must keep
+// emitting byte-for-byte the same message it did before, so its text bound is
+// unchanged.
+const CHARS_PER_ENTRY = 34
+const MAX_TEXT_HARD = 6000
+
+function textBoundFor(cap) {
+  if (cap <= MAX_ENTRIES) return MAX_TEXT
+  return Math.min(MAX_TEXT_HARD, MAX_TEXT + (cap - MAX_ENTRIES) * CHARS_PER_ENTRY)
+}
+
+function walk(root, dir, depth, out, limit) {
   let names
   try {
     names = fs.readdirSync(dir, { withFileTypes: true })
@@ -48,7 +68,7 @@ function walk(root, dir, depth, out) {
   }
   names.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
   for (const entry of names) {
-    if (out.length >= MAX_ENTRIES) return
+    if (out.length >= limit) return
     if (SKIP.has(entry.name)) continue
     const abs = path.join(dir, entry.name)
     // The map is read by the model, not by this shell: forward slashes keep one
@@ -56,7 +76,7 @@ function walk(root, dir, depth, out) {
     const rel = path.relative(root, abs).split(path.sep).join('/')
     if (entry.isDirectory()) {
       out.push(`${rel}/`)
-      if (depth < MAX_DEPTH) walk(root, abs, depth + 1, out)
+      if (depth < MAX_DEPTH) walk(root, abs, depth + 1, out, limit)
     } else if (entry.isFile()) {
       let size = ''
       try {
@@ -137,20 +157,45 @@ export function buildWorkspaceMap(cwd, options = {}) {
   } catch {
     return null
   }
+  // Ask the walk for a little more than the caller's cap so the text bound has
+  // something to trim against instead of cutting the last path in half.
+  const cap = Math.max(1, Math.floor(Number(options.maxEntries) || MAX_ENTRIES))
   const entries = []
-  walk(root, root, 1, entries)
+  walk(root, root, 1, entries, cap + OVERSCAN)
   const hints = testHints(root)
   if (entries.length === 0 && hints.length === 0) return null
-  const cap = Math.max(1, Math.floor(Number(options.maxEntries) || MAX_ENTRIES))
-  const listed = entries.slice(0, cap)
-  const lines = [
-    `Auto map: one inventory of ${root} so you do not need a discovery round trip.`,
-    `Entries (depth <= ${MAX_DEPTH}${entries.length > listed.length ? `, first ${listed.length} of ${entries.length}` : ''}):`,
-    ...listed.map(e => `- ${e}`),
+
+  const head = `Auto map: one inventory of ${root} so you do not need a discovery round trip.`
+  const tail = [
+    ...(hints.length > 0 ? [`Test entry points present: ${hints.join(', ')}.`] : []),
+    'Read the files you need; this only replaces the "what is in the directory" step.',
   ]
-  if (hints.length > 0) lines.push(`Test entry points present: ${hints.join(', ')}.`)
-  lines.push('Read the files you need; this only replaces the "what is in the directory" step.')
-  let text = lines.join('\n')
-  if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT - 20).trimEnd()}\n…(truncated)`
-  return text
+
+  // Shrink the listing from the caller's cap one whole entry at a time until
+  // the assembled message fits. A path is never cut in half: half a path is a
+  // filename the model cannot open.
+  const assemble = (n) => {
+    const more = entries.length > n
+    // The walk stops collecting at cap + OVERSCAN, so a full overscan proves
+    // only "at least this many" and the total is not stated then.
+    const total = entries.length < cap + OVERSCAN ? String(entries.length) : 'more'
+    const header = more
+      ? `Entries (depth <= ${MAX_DEPTH}, first ${n} of ${total}):`
+      : `Entries (depth <= ${MAX_DEPTH}):`
+    return [
+      head,
+      header,
+      ...entries.slice(0, n).map(e => `- ${e}`),
+      ...tail,
+    ].join('\n')
+  }
+
+  const bound = textBoundFor(cap)
+  let listed = Math.min(cap, entries.length)
+  let text = assemble(listed)
+  while (text.length > bound && listed > 0) {
+    listed -= 1
+    text = assemble(listed)
+  }
+  return text.length > bound ? null : text
 }

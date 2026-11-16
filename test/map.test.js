@@ -54,8 +54,46 @@ test('stays under the text bound even on a wide tree', () => {
   for (let i = 0; i < 200; i++) {
     fs.writeFileSync(path.join(root, `file-with-a-long-name-${i}.txt`), 'x'.repeat(i))
   }
-  const map = buildWorkspaceMap(root, { maxEntries: 200 })
-  assert.ok(map.length <= 1400, `map was ${map.length} chars`)
+  const map = buildWorkspaceMap(root)
+  assert.ok(map.length <= 1400, `default map was ${map.length} chars`)
+})
+
+test('raising the cap scales the bound instead of being swallowed by it', () => {
+  const root = tmpdir()
+  for (let i = 0; i < 200; i++) {
+    fs.writeFileSync(path.join(root, `file-with-a-long-name-${i}.txt`), 'x'.repeat(i))
+  }
+  const base = buildWorkspaceMap(root)
+  const wide = buildWorkspaceMap(root, { maxEntries: 200 })
+  const listed = (m) => (m.match(/^- /mg) || []).length
+  assert.ok(wide.length > base.length, 'a raised cap must add paths')
+  assert.ok(listed(wide) > listed(base), `${listed(wide)} vs ${listed(base)} paths`)
+  assert.ok(wide.length <= 6000, `wide map was ${wide.length} chars`)
+})
+
+test('never cuts a path in half', () => {
+  const root = tmpdir()
+  for (let i = 0; i < 200; i++) {
+    fs.writeFileSync(path.join(root, `file-with-a-long-name-${i}.txt`), 'x'.repeat(i))
+  }
+  for (const maxEntries of [10, 60, 200]) {
+    const map = buildWorkspaceMap(root, { maxEntries })
+    assert.doesNotMatch(map, /truncated/)
+    for (const line of map.split('\n').filter(l => l.startsWith('- '))) {
+      const rel = line.slice(2).replace(/ \d+B$/, '')
+      assert.ok(fs.existsSync(path.join(root, rel)), `listed a path that does not exist: ${rel}`)
+    }
+  }
+})
+
+test('states a total only when the walk actually saw it', () => {
+  const root = tmpdir()
+  for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(root, `f${i}.py`), 'x')
+  assert.match(buildWorkspaceMap(root, { maxEntries: 10 }), /first 10 of 12/)
+  // 200 files is past cap + overscan for maxEntries 10, so the walk stops
+  // collecting before it knows the real total and must not invent one.
+  for (let i = 12; i < 200; i++) fs.writeFileSync(path.join(root, `f${i}.py`), 'x')
+  assert.match(buildWorkspaceMap(root, { maxEntries: 10 }), /first 10 of more/)
 })
 
 test('returns null instead of throwing when there is nothing to show', () => {
