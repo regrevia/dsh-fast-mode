@@ -14,6 +14,24 @@ That split is why `disciplineRepeatAtSteps` is closed for the right reason: the
 rebound is real, but it lives in reasoning, where re-sending the same sentence
 measured slower (`DR8_MIG`, 1.394x).
 
+The rebound's *size* was then checked against a second baseline, because steps
+4-6 are the reminder's own trough and a trough is the flattering denominator.
+Measured over the same 118 long turns:
+
+    baseline                     median chars/step   tail-3 vs baseline
+    steps 1-3 (before reminder)              11876   0.30x, 15/118 above
+    steps 4-6 (the trough)                     963   2.61x, 75/118 above
+
+So the tail is not reasoning growth; it is the reminder landing (5211 -> 963)
+and reasoning recovering to well below where it started. Against the
+pre-reminder baseline the excess is 101,809 chars -- 0.95 % of the visible text
+in these long turns, under the 2-6 % headroom bar. The excess is also
+concentrated in turns that already contain a reminder, so a lever here would
+have to beat that reminder rather than fill a vacuum; `def15/nodisc` points the
+same way (median 0.901x over 18 paired cells, but 10 faster / 8 slower, so a
+direction hint, not a number). Hence HOLD: the 2.61x is a recovery inside a
+working mechanism, not waste to reclaim.
+
 Usage:
     python3 bench/channels.py            # tables
     python3 bench/channels.py --json     # same numbers as JSON
@@ -117,7 +135,8 @@ def main():
         medians.append(statistics.median(vals))
     result['reasoning_median_per_step'] = medians
 
-    rebound, ratios = 0, []
+    rebound, ratios, excess = 0, [], 0
+    pre_ratios, pre_excess = [], 0
     for t in long_turns:
         if len(t) < 8:
             continue
@@ -130,10 +149,35 @@ def main():
         ratios.append(l / e)
         if l > e:
             rebound += 1
+            # The size of the rebound, not just its sign: the three late steps
+            # spend this much reasoning more than they would at the trough. That
+            # is the whole pool any reasoning-channel lever could touch, so an
+            # axis sized by this number is sized by its ceiling, not its effect.
+            excess += (l - e) * 3
+        # The trough is the reminder's own step, so it is the flattering
+        # denominator. Steps 1-3 are the same turn before any reminder; against
+        # it the tail is a recovery, not growth.
+        before = [row[2] for row in t[:3]]
+        b = sum(before) / len(before)
+        if b > 0:
+            pre_ratios.append(l / b)
+            if l > b:
+                pre_excess += (l - b) * 3
+    reasoning_total = result['reasoning']['early_total'] + result['reasoning']['late_total']
+    visible_total = sum(result[n]['early_total'] + result[n]['late_total']
+                        for n in ('prose', 'args', 'reasoning'))
     result['reasoning_rebound'] = {
         'turns': len(ratios),
         'rebounded': rebound,
         'median_ratio': statistics.median(ratios) if ratios else None,
+        'excess_chars': int(excess),
+        'excess_share_of_reasoning': excess / reasoning_total if reasoning_total else None,
+        'pre_reminder_median_ratio': statistics.median(pre_ratios) if pre_ratios else None,
+        'pre_reminder_above': sum(1 for r in pre_ratios if r > 1),
+        'pre_reminder_excess_chars': int(pre_excess),
+        'logic': {'long_turn_visible_chars': int(visible_total),
+                  'pre_reminder_share_of_long_turn_visible':
+                      pre_excess / visible_total if visible_total else None},
     }
 
     if args.json:
@@ -154,10 +198,14 @@ def main():
     print('  ' + ' '.join('%d' % m for m in medians))
     r = result['reasoning_rebound']
     if r['turns']:
-        print('\nrebound (steps 4-6 mean vs last-3 mean): %d/%d long turns, median ratio %.2f'
-              % (r['rebounded'], r['turns'], r['median_ratio']))
-        print('prose and args above are the channel that does NOT rebound: '
-              'the lever targets reasoning and the reasoning channel is where it fails.')
+        print('\nrebound vs the reminder trough (steps 4-6) vs before the reminder (steps 1-3):')
+        print('  tail / trough   %d/%d long turns above, median %.2fx, excess %d chars'
+              % (r['rebounded'], r['turns'], r['median_ratio'], r['excess_chars']))
+        print('  tail / pre      %d/%d long turns above, median %.2fx, excess %d chars'
+              % (r['pre_reminder_above'], r['turns'], r['pre_reminder_median_ratio'],
+                 r['pre_reminder_excess_chars']))
+        print('the trough is the reminder\'s own step, so the first line flatters itself: '
+              'the tail is still below where the turn started.')
     else:
         print('\nno turns long enough for the rebound check')
 

@@ -205,7 +205,7 @@ python3 bench/channels.py --json
 
 `shapegate.py` 重放的是 `src/auto.js` 的判据本体（`stats.turnCalls >= 4` 且 `stats.turnUnsafe * 10 >= stats.turnCalls * 6`，`turnUnsafe` = 名字不在 `SAFE_CALLS` 里的调用），不是「开了闸门之后回合怎么变」——它只回答闸门在多少回合、哪一步合上。脚本里 `SAFE_CALLS` / `MUTATING_CALLS` 是手抄的，运行时会读 `src/auto.js` 的声明块核对，漂了就打印 `WARNING` 而不是悄悄给出错数字。它同时给出「只数 `MUTATING_CALLS`」的反事实，那是唯一不干扰长回合提醒的改法，数字见 `BENCHMARK.md` 的「补测：闸门的命中率」。
 
-`channels.py` 把 `assistant/message` 的内容按 `reasoning` / `text` / `tool-call` 三块分开累加，再比「前 8 步」与「之后」的每步均值，末尾按「步 4–6 均值 vs 末三步均值」判 reasoning 反弹。`step-share.py` 只看 reasoning、`textshare.py` 只看 prose 与参数，`channels.py` 是唯一把三条放同一张表里的；结论是提醒压住了 prose 与工具参数、压不住 reasoning，因此 `disciplineRepeatAtSteps` 的前提只在 reasoning 通道成立，而那条杠杆实测更慢（`DR8_MIG` 1.394×）。
+`channels.py` 把 `assistant/message` 的内容按 `reasoning` / `text` / `tool-call` 三块分开累加，再比「前 8 步」与「之后」的每步均值，末尾判 reasoning 反弹——**同时给两个基线**：步 4–6（提醒低谷，2.61×）与步 1–3（提醒之前，0.30×）。低谷是提醒自己砸出来的，只看它会读成「rebound 有待回收」；按提醒前基线算超出量只有 101 809 字符（长回合可见文字的 0.95 %），所以这一轴判 HOLD。`step-share.py` 只看 reasoning、`textshare.py` 只看 prose 与参数，`channels.py` 是唯一把三条放同一张表里的；结论是提醒压住了 prose 与工具参数、压不住 reasoning，因此 `disciplineRepeatAtSteps` 的前提只在 reasoning 通道成立，而那条杠杆实测更慢（`DR8_MIG` 1.394×）。
 
 ## 看门狗（150 秒下限）的回放分析：没有仓库脚本
 
