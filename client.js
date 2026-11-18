@@ -114,6 +114,8 @@ window.__ModuleLoader__.load({
       'panel.repeatTitle': '同一调用重发、或连续三步结果一样时提醒换法',
       'panel.stall': '工具超时自动取消',
       'panel.stallTitle': '跑太久的调用会被取消，把控制权交回来；故障保护，不承诺提速',
+      'panel.save': '设为默认',
+      'panel.saveTitle': '新会话按现在这组开关起步，本会话不变',
     }
 
     const en = {
@@ -147,6 +149,8 @@ window.__ModuleLoader__.load({
       'panel.repeatTitle': 'When a call repeats or three results match, switch approach',
       'panel.stall': 'Cancel stalled tools',
       'panel.stallTitle': 'Cancels a single call past its time limit and hands control back; a fault guard, not a speed switch',
+      'panel.save': 'Save as default',
+      'panel.saveTitle': 'Makes this the starting point for new conversations, not this one',
     }
 
     const CSS = [
@@ -195,6 +199,10 @@ window.__ModuleLoader__.load({
       '.fm-panel__row[disabled]{opacity:.55;cursor:default}',
       '.fm-panel__value{color:var(--dsw-alias-label-tertiary,#8b8b8b);font-variant-numeric:tabular-nums}',
       '.fm-panel__row[aria-checked="true"] .fm-panel__value{color:var(--dsw-alias-label-primary,#141414)}',
+      // The save row is an action, not one of the switches: a rule above it and a
+      // quieter label say so without a second heading.
+      '.fm-panel__save{margin-top:4px;border-top:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));',
+      'padding-top:8px;color:var(--dsw-alias-label-secondary,#5c5c5c)}',
       // One line, with an ellipsis when the panel is too narrow: the full
       // numbers ride in the `title`, so clamping never hides information.
       '.fm-panel__scope{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;max-width:100%;',
@@ -866,15 +874,14 @@ window.__ModuleLoader__.load({
      * The patch is optimistic, then reconciled with what the settings side reports. A
      * refusal rolls the paint back and keeps the message — never a silent revert.
      *
-     * Two shapes of change reach this function, and only one of them is used by
-     * the panel:
+     * Two shapes of change reach this function:
      *
      * - `options.entry` updates *this conversation's* row and writes nothing else.
-     *   That is the only path that survives the volatility check on the settings side, and it is
-     *   what makes the five controls per-session instead of global.
-     * - `patch` names shared config fields. It is kept for callers that mean "change
-     *   the default for future conversations", and the settings side refuses it for any
-     *   field that is not volatile — so the panel must not use it.
+     *   Five of the panel's controls use it, and it is what makes them per-session
+     *   instead of global.
+     * - `patch` names shared config fields — the fallback that a conversation
+     *   without a row of its own reads. One row uses it, "save as default", and it
+     *   names only volatile fields because the settings side refuses the rest.
      *
      * @param {{settings: {update: (ns: string, patch: object, revision?: number) => Promise<any>}}} remote
      * @param {{enabled?: boolean, gear?: string, outputDiscipline?: boolean|'late', stepBudget?: number, workspaceMap?: boolean}} [patch]
@@ -1164,8 +1171,10 @@ window.__ModuleLoader__.load({
     /**
      * The right-click panel: one preference, stated with its scope.
      *
-     * Every row writes this conversation's own entry in `sessions`, so the footer
-     * names the conversation rather than implying a shared field. A read-only,
+     * The switch rows write this conversation's own entry in `sessions`, and the
+     * footer names the conversation so the scope is never implied. The last row
+     * does the opposite on purpose: it copies the current tier into the shared
+     * defaults, so the next conversation starts where this one is. A read-only,
      * busy or gated row is disabled instead of swallowing the click.
      *
      * @param {(key: string, params?: object) => string} t
@@ -1190,10 +1199,13 @@ window.__ModuleLoader__.load({
        *
        * Props are assigned one by one because a dense key/value literal reads as
        * a status dump to the copy linter, and this is a control, not a dump.
+       *
+       * `extra` appends a class name, which is how the save row is set apart from
+       * the switches it saves.
        */
-      const row = (role, label, value, live, act, checked, hint) => {
+      const row = (role, label, value, live, act, checked, hint, extra) => {
         const props = {}
-        props.className = 'fm-panel__row'
+        props.className = extra === undefined ? 'fm-panel__row' : 'fm-panel__row ' + extra
         props.role = role
         props.disabled = !live
         props.onClick = act
@@ -1239,6 +1251,44 @@ window.__ModuleLoader__.load({
 
       const toggleStall = () => {
         void write(remote, undefined, { entry: { stallGuard: !store.stall } })
+        store.panelOpen = false
+        emit()
+      }
+
+      /**
+       * Write what this conversation is running at into the fields a new
+       * conversation starts from — the one place the panel deliberately reaches
+       * past the per-session column.
+       *
+       * Only the volatile fields can go: the settings side refuses the rest with
+       * "Config field … is not volatile", so `openBatch` and `compactResults` stay
+       * out of the patch rather than producing a half-applied write. Nothing is
+       * lost by leaving batching out — the tier's own directive still batches
+       * (`effort.js` derives `openBatch` from `gear.directive`), and `gear` is
+       * here.
+       *
+       * `stepBudget` is out for a different reason: 0 is both "no cap" and the
+       * default, so writing it would silently drop a cap someone configured.
+       *
+       * The `sessions` column is not in the patch, so every conversation with an
+       * entry of its own keeps it.
+       *
+       * Every value is the one the row above paints, `gated` included: on the
+       * cautious tier the switches read off because the tier resolves them off,
+       * and a save that recorded anything else would be the panel contradicting
+       * itself one click later.
+       */
+      const saveAsDefault = () => {
+        const patch = {
+          gear: gearTier(store.gear),
+          outputDiscipline: !gated && store.discipline ? 'late' : false,
+          workspaceMap: !gated && store.inventory,
+          probeFirst: !gated && store.probe,
+          actBeforePlan: !gated && store.act,
+          repeatNudge: !gated && store.repeat,
+          stallGuard: !gated && store.stall,
+        }
+        void write(remote, patch)
         store.panelOpen = false
         emit()
       }
@@ -1294,6 +1344,16 @@ window.__ModuleLoader__.load({
           toggleStall,
           !gated && store.stall,
           t('panel.stallTitle'),
+        ),
+        row(
+          'menuitem',
+          t('panel.save'),
+          t(GEAR_LABELS[gearTier(store.gear)]),
+          canWrite,
+          saveAsDefault,
+          undefined,
+          t('panel.saveTitle'),
+          'fm-panel__save',
         ),
         savedFooter(t),
       )

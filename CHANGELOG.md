@@ -1,3 +1,20 @@
+## 1.7.45（右键面板加第 6 行「设为默认」，把当前这组开关存成新会话的起点）
+
+**不改注入行为。** 这一版只动右键面板：多一行把当前档位记下来，注入侧一个字符串都没改，所以别按提速读，也量不出差别。
+
+issue #5 要的是「新开会话总要进去点一下标准」。之前面板 5 行都只写当前会话（`sessions` 里那一条），共享的 `enabled` / `gear` 只能手改 `cordis.patch.yml`。现在面板最后一行「设为默认」把这组开关一次性写进共享默认值，新会话就按它起步；已经有自己条目的会话一个字都不动（`sessions` 不在这一行的补丁里）。
+
+这一行只写宿主允许改的 7 个字段：`gear`、`outputDiscipline`、`workspaceMap`、`probeFirst`、`actBeforePlan`、`repeatNudge`、`stallGuard`。两个存不进去的：
+
+- `openBatch`、`compactResults` 在 `src/config.js` 里没有标 `.volatile()`，宿主对非易变字段的写入直接拒（`dsh-settings` 的 `update` 只放行易变字段），所以它们不在补丁里。好在批量读文件不用靠这个字段：`effort.js` 里 `openBatch: gear.directive && config.openBatch === true`，只要存下来的是 `gear: 'auto'`，那个档位照样开批量——面板「设为默认」显示的值就是档位名，正是为了说明这点。
+- `stepBudget` 也不进这一行：`0` 同时表示「没上限」和「默认」，写进去等于悄悄把别人配的上限抹掉。
+
+修正档位的写法：在保守档上五行都读「关」（`gear.directive` 把提示规则关掉，三个推敲开关也是这档关掉的），所以这一行保存的也是面板画出来的那组值，不是藏起来的那组——否则点一下保存，面板下一屏就跟自己刚存的东西对不上。
+
+- `client.js`：新增 `panel.save` / `panel.saveTitle` 两条文案与 `saveAsDefault`，`row()` 加 `extra` 参数带上 `.fm-panel__save`（上边一条分隔线，次级文字色）；`panel.save` 右侧显示当前档位名。
+- `src/state.js`：三处 docstring 原本写着「共享的 `enabled` / `gear` 只由 `cordis.patch.yml` 决定」，与这一行矛盾，改成「面板这一行是唯一的例外，且不动 `sessions`」。
+- `test/client.test.js`、`test/client-gear.test.js`：面板子节点 7 → 8，按行取值的地方改成跳过最后一行的 switch 集合；新增两条用例钉住保存补丁的字段集（含 `stepBudget` 缺席）与保守档下存的是面板显示值。
+
 ## 1.7.44（修掉工作区清单在真实仓库里把路径切断、并丢掉测试入口行）
 
 **改行为。** 这是正确性修复，不是提速，也别当提速读：`bench/` 语料里 198 条清单通知最长 590 字符，**0 条触发截断**（全部 cwd 都是 `dsh-runs/suite-*` 临时目录，通常只有两三个文件），所以这一条在基准里量不出任何差别，只能按代码与真实目录说明。

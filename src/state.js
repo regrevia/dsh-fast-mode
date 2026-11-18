@@ -11,21 +11,28 @@
  *
  * - The config fields (`enabled`, `gear`, `outputDiscipline`, `stepBudget`,
  *   `workspaceMap`) are the **defaults**: what a conversation runs at until it
- *   has an entry of its own. Only an edit in `cordis.patch.yml` changes them;
- *   the chip and the panel never write them.
+ *   has an entry of its own. An edit in `cordis.patch.yml` sets them, and so does
+ *   the panel's last row — "save as default" copies the current tier into the
+ *   volatile ones so the next conversation starts where this one is. Nothing else
+ *   in the panel writes them.
  * - The `sessions` field carries every per-session choice: `{ sessionId: {
  *   enabled, gear, discipline, stepBudget, map, batch, probeFirst, actBeforePlan, repeatNudge, stallGuard, ts } }` as a compact JSON
  *   string. It is volatile, so a write lands in the running plugin without a
  *   remount.
  *
- * Every panel control writes this second tier, and that is what makes the four
- * switches independent per conversation: one tab can be fast with terser prose
- * while another is fast with full narration, and neither click moves the other.
+ * Every switch writes this second tier, and that is what makes the four of them
+ * independent per conversation: one tab can be fast with terser prose while
+ * another is fast with full narration, and neither click moves the other. The
+ * save row is the one exception, and it is a deliberate one: it writes the shared
+ * tier above and leaves `sessions` alone, so a conversation that has an entry of
+ * its own keeps running at it.
  * The previous release wrote the three extra knobs into the shared fields; the
  * host refuses a write to a non-volatile field ("Config field … is not
  * volatile"), so those rows did nothing whatsoever — the symptom read as a dead
  * button rather than as a refusal, because the panel closes on click and the
- * error only appears in a tooltip.
+ * error only appears in a tooltip. What the host does accept is exactly the
+ * volatile subset, which is why the save row names its fields one at a time
+ * instead of sending a whole tier.
  *
  * Why a config field and not a new remote call: a plugin-owned RPC would need a
  * decorated `TypertRemoteService`, and the client half is a static bundle with no

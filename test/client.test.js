@@ -725,7 +725,7 @@ test('the panel paints the shared defaults the shipped host resolves, not the bu
   assert.equal(actRowOf(panel).props['aria-checked'], false, 'the shared act default is painted')
   assert.equal(repeatRowOf(panel).props['aria-checked'], false, 'the shared repeat default is painted')
   assert.equal(stallRowOf(panel).props['aria-checked'], true, 'the shared guard default is painted too')
-  assert.equal(panel.children.length, 7, 'five preference rows and the footer; no cap or inventory row is left')
+  assert.equal(panel.children.length, 8, 'five preference rows, the save row and the footer; no cap or inventory row is left')
 
   const runtime = runtimeFor(remote.state, 'session-alpha')
   assert.equal(runtime.discipline, 'off', 'and the same narration default')

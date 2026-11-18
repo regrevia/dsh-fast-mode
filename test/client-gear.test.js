@@ -175,6 +175,10 @@ const gearOf = (panel) => {
   return { ...group, children: group.children.flat() }
 }
 const footerOf = panel => panel.children[panel.children.length - 1]
+// The save row sits between the five switches and the footer: it is a write
+// to the shared defaults, not one of the switches it saves.
+const saveRowOf = panel => panel.children[panel.children.length - 2]
+const switchRowsOf = panel => panel.children.slice(1, -2)
 
 const checkedOf = (control) => control.children.find(node => node.props['aria-checked'] === true)?.props.key
 
@@ -203,16 +207,21 @@ test('the title row keeps its words and grows a radiogroup of exactly two tiers'
 test('the five frozen rows keep their labels and their order', async () => {
   const { render } = await mount(fakeRemote())
   const panel = await openPanel(render)
-  const labels = panel.children.slice(1, -1).map(node => node.children[0].children[0])
+  const labels = switchRowsOf(panel).map(node => node.children[0].children[0])
   assert.deepEqual(labels, ['panel.prose', 'panel.probe', 'panel.act', 'panel.repeat', 'panel.stall'],
     'only switches with paired evidence behind them are offered')
+  const save = saveRowOf(panel)
+  assert.equal(save.children[0].children[0], 'panel.save', 'and the last row saves the set')
+  assert.equal(save.props.role, 'menuitem', 'it is an action, not a checked switch')
+  assert.equal(save.props['aria-checked'], undefined, 'so it carries no checked state')
+  assert.equal(save.props.className, 'fm-panel__row fm-panel__save', 'and is set apart from the switches')
 })
 
 test('the cautious tier greys the prose row instead of leaving a dead switch', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
   const panel = await openPanel(render)
-  const rows = panel.children.slice(1, -1)
+  const rows = switchRowsOf(panel)
   assert.equal(rows.length, 5)
 
   for (const row of rows) {
@@ -229,7 +238,7 @@ test('leaving the cautious tier brings the gated rows back', async () => {
   gear.children[1].props.onClick()
   await sleep(20)
 
-  const rows = (await openPanel(render)).children.slice(1, -1)
+  const rows = switchRowsOf(await openPanel(render))
   for (const row of rows) assert.equal(row.props.disabled, false, 'every row is live again')
   assert.equal(rows[0].children[1].children[0], 'panel.on')
   assert.equal(rows[1].children[1].children[0], 'panel.on', 'the standard preset carried the deliberation switches too')
@@ -311,7 +320,7 @@ test('a tier click loads that tier into this conversation, at the revision it re
 test('the standard tier turns the prose rule, three deliberation switches and the guard on in one click', async () => {
   const remote = fakeRemote({ enabled: true, gear: 'safe' })
   const { render } = await mount(remote)
-  let rows = (await openPanel(render)).children.slice(1, -1)
+  let rows = switchRowsOf(await openPanel(render))
   assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.off', 'panel.off', 'panel.off', 'panel.off', 'panel.off'])
 
   const gear = gearOf(await openPanel(render))
@@ -332,8 +341,65 @@ test('the standard tier turns the prose rule, three deliberation switches and th
     repeatNudge: true,
     stallGuard: true,
   }, 'one patch carries the whole preset, and no falsified switch rides along')
-  rows = (await openPanel(render)).children.slice(1, -1)
+  rows = switchRowsOf(await openPanel(render))
   assert.deepEqual(rows.map(row => row.children[1].children[0]), ['panel.on', 'panel.on', 'panel.on', 'panel.on', 'panel.on'])
+})
+
+test('the save row copies the current switches into the shared defaults, never into the session column', async () => {
+  const remote = fakeRemote({
+    enabled: true,
+    gear: 'auto',
+    outputDiscipline: false,
+    workspaceMap: true,
+    probeFirst: true,
+    actBeforePlan: false,
+    repeatNudge: true,
+    stallGuard: true,
+    stepBudget: 12,
+  })
+  const { render } = await mount(remote)
+  const save = saveRowOf(await openPanel(render))
+  assert.equal(save.props.disabled, false)
+  assert.equal(save.children[1].children[0], 'panel.gearAuto', 'the value is the tier it would save')
+
+  save.props.onClick()
+  await sleep(20)
+  const call = remote.calls[0]
+  assert.equal(call.ns, 'fast-mode')
+  assert.deepEqual(Object.keys(call.patch).sort(), [
+    'actBeforePlan', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'stallGuard', 'workspaceMap',
+  ], 'only the fields the host accepts as volatile, and no sessions column')
+  assert.equal(call.patch.gear, 'auto')
+  assert.equal(call.patch.outputDiscipline, false, 'the current narration choice is saved as it stands')
+  assert.equal(call.patch.probeFirst, true)
+  assert.equal(call.patch.actBeforePlan, false)
+  assert.equal(call.patch.repeatNudge, true)
+  assert.equal(call.patch.stallGuard, true)
+  assert.equal(call.patch.workspaceMap, true)
+  assert.equal(call.patch.stepBudget, undefined, '0 is both "no cap" and the default, so the cap is left alone')
+  assert.equal(panelOf(render()), undefined, 'the panel closes on a save like any other row')
+})
+
+test('the save row on the cautious tier saves the tier, not the switches it gated', async () => {
+  const remote = fakeRemote({ enabled: true, gear: 'safe', outputDiscipline: 'late', probeFirst: true })
+  const { render } = await mount(remote)
+  const save = saveRowOf(await openPanel(render))
+  assert.equal(save.children[1].children[0], 'panel.gearSafe')
+
+  save.props.onClick()
+  await sleep(20)
+  // The patch is built inside the sandbox realm, so copy it out before a
+  // strict comparison: same fields, this realm's prototypes.
+  const patch = JSON.parse(JSON.stringify(remote.calls[0].patch))
+  assert.deepEqual(patch, {
+    gear: 'safe',
+    outputDiscipline: false,
+    workspaceMap: false,
+    probeFirst: false,
+    actBeforePlan: false,
+    repeatNudge: false,
+    stallGuard: false,
+  }, 'every gated row reads off on this tier, so that is what a save records')
 })
 
 test('clicking the tier this conversation already matches writes nothing', async () => {
@@ -371,7 +437,7 @@ test('editing one switch by hand drops the tier highlight instead of leaving a s
   let gear = gearOf(await openPanel(render))
   assert.equal(checkedOf(gear), 'auto')
 
-  const rows = (await openPanel(render)).children.slice(1, -1)
+  const rows = switchRowsOf(await openPanel(render))
   rows[3].props.onClick()
   await sleep(20)
   const entry = JSON.parse(remote.calls[0].patch.sessions)['session-alpha']
