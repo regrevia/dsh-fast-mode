@@ -14,6 +14,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 
+import { resolveConfig } from '../src/effort.js'
+
 const SOURCE = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
 const react = {
@@ -156,6 +158,12 @@ async function mount(remote, sessionId = 'session-alpha', options = {}) {
 
 const boltOf = tree => tree.children[0]
 const panelOf = tree => tree.children[1]
+
+/** Click the bolt: the per-conversation switch every other row's write hangs off. */
+function clickBolt(render) {
+  boltOf(render()).props.onClick()
+  return sleep(20)
+}
 
 async function openPanel(render) {
   let tree = render()
@@ -367,8 +375,9 @@ test('the save row copies the current switches into the shared defaults, never i
   const call = remote.calls[0]
   assert.equal(call.ns, 'fast-mode')
   assert.deepEqual(Object.keys(call.patch).sort(), [
-    'actBeforePlan', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'stallGuard', 'workspaceMap',
+    'actBeforePlan', 'enabled', 'gear', 'outputDiscipline', 'probeFirst', 'repeatNudge', 'stallGuard', 'workspaceMap',
   ], 'only the fields the host accepts as volatile, and no sessions column')
+  assert.equal(call.patch.enabled, true, 'the switch on the bolt is saved too, or a new conversation reads none of this')
   assert.equal(call.patch.gear, 'auto')
   assert.equal(call.patch.outputDiscipline, false, 'the current narration choice is saved as it stands')
   assert.equal(call.patch.probeFirst, true)
@@ -378,6 +387,33 @@ test('the save row copies the current switches into the shared defaults, never i
   assert.equal(call.patch.workspaceMap, true)
   assert.equal(call.patch.stepBudget, undefined, '0 is both "no cap" and the default, so the cap is left alone')
   assert.equal(panelOf(render()), undefined, 'the panel closes on a save like any other row')
+})
+
+test('what the save row writes is what a conversation without an entry resolves from', async () => {
+  // issue #6: the row saved the tier and the switches but not `enabled`, so a
+  // new conversation resolved the shared default to "off" and the bolt stayed
+  // dark — the save looked applied and changed nothing about whether the mode ran.
+  const remote = fakeRemote({ enabled: false, gear: 'auto' })
+  const { render } = await mount(remote)
+
+  // on in this conversation, then saved as the default
+  await clickBolt(render)
+  saveRowOf(await openPanel(render)).props.onClick()
+  await sleep(20)
+
+  const shared = JSON.parse(JSON.stringify(remote.state.value))
+  const fresh = resolveConfig(shared)
+  assert.equal(fresh.enabled, true, 'a conversation with no entry of its own starts on')
+  assert.equal(fresh.gear, 'auto', 'and at the tier the row painted')
+
+  // the same holds the other way: saving an off conversation leaves new ones off
+  const offRemote = fakeRemote({ enabled: true, gear: 'auto' })
+  const off = await mount(offRemote)
+  await clickBolt(off.render)
+  saveRowOf(await openPanel(off.render)).props.onClick()
+  await sleep(20)
+  assert.equal(resolveConfig(JSON.parse(JSON.stringify(offRemote.state.value))).enabled, false,
+    'a save records the bolt as it stands, in both directions')
 })
 
 test('the save row on the cautious tier saves the tier, not the switches it gated', async () => {
@@ -392,6 +428,7 @@ test('the save row on the cautious tier saves the tier, not the switches it gate
   // strict comparison: same fields, this realm's prototypes.
   const patch = JSON.parse(JSON.stringify(remote.calls[0].patch))
   assert.deepEqual(patch, {
+    enabled: true,
     gear: 'safe',
     outputDiscipline: false,
     workspaceMap: false,

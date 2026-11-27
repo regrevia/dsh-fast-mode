@@ -1,3 +1,22 @@
+## 1.7.46（「设为默认」补上 `enabled`，新会话真的按存的这组值起步）
+
+**改行为。** 只动右键面板最后一行写出去的那个补丁，注入侧一个字符串都没改——修的是「存了但没生效」，不是提速。
+
+issue #6：1.7.45 这一行只写了 7 个字段（`gear` 与六个开关），漏了 `enabled`。没有自己 `sessions` 条目的新会话走 `resolveConfig(rawConfig)`，那里 `enabled` 的默认值是 `false`（`src/config.js` 里 `.default(false)`），于是档位和开关全存进去了、闪电却是暗的——正好还是 issue #5 想解决的那件事：每个新会话仍要进去点一次闪电。`cordis.patch.yml` 里缺 `enabled` 就是缺了唯一那个「其余字段要不要读」的开关。
+
+现在补丁以 `enabled` 开头，共 8 个可写字段：`enabled`、`gear`、`outputDiscipline`、`workspaceMap`、`probeFirst`、`actBeforePlan`、`repeatNudge`、`stallGuard`。
+
+`enabled` 有两处跟别的字段不一样，都写进 docstring 了：
+
+- **它是布尔，不参与 `gated`。** 保守档 gate 掉的是它推导出来的那五个开关，不是闪电本身——面板上闪电亮着就存亮着，否则又是点一下保存、下一屏跟自己对不上。
+- **`store.enabled === true`，不是裸 `store.enabled`。** 写进 YAML 的值必须是布尔，`undefined` 会变成缺键，那正好是这一版要修的病。
+
+不需要额外改动：`write()` 本来就把 `store.enabled = shared.enabled`（`client.js:919`），随后 `settle()` 偏向 `outgoing.enabled`，写失败时回滚也用 `before.enabled`。`sessions` 仍然不在补丁里，已有条目的会话一个字都不动。
+
+- `client.js`：`saveAsDefault` 的补丁加 `enabled: store.enabled === true`；docstring 补一段说明它是唯一决定其余字段读不读的开关、新会话从 `resolveConfig(rawConfig)` 起步且那里默认 false、它跟 `gear` 一样在 `src/config.js` 里标了 `.volatile()` 且从不被 gate。
+- `test/client-gear.test.js`：两条保存行用例改成预期 8 个字段（排序键含 `enabled`，保守档 `deepEqual` 也以 `enabled: true` 开头）；新增一条用例走完整路径——保存后开一个没有条目的会话，断言 `resolveConfig` 解出 `enabled: true` 与存档位，另一个方向（关着的会话保存）断言新会话解出 `false`。
+- `CHANGELOG.md`、`docs/REFERENCE.md`、`docs/REFERENCE.en.md`：1.7.45 里「7 个可写字段」的说法与字段名清单同步成 8 个（`enabled` 排第一），版本标签改成 1.7.46。
+
 ## 1.7.45（右键面板加第 6 行「设为默认」，把当前这组开关存成新会话的起点）
 
 **不改注入行为。** 这一版只动右键面板：多一行把当前档位记下来，注入侧一个字符串都没改，所以别按提速读，也量不出差别。

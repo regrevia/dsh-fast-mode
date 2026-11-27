@@ -1267,6 +1267,14 @@ window.__ModuleLoader__.load({
        * (`effort.js` derives `openBatch` from `gear.directive`), and `gear` is
        * here.
        *
+       * `enabled` is the one field that decides whether any of the rest is read
+       * at all: a conversation with no entry of its own starts from
+       * `resolveConfig(rawConfig)`, and `enabled` defaults to false there. Saving
+       * the switches without it is a save that a new conversation reads as "off"
+       * — the tier and the switches land, the bolt stays dark. It is volatile
+       * (`src/config.js`) like `gear`, and it is never gated: the tier gates the
+       * switches it derives, not the switch on the bolt.
+       *
        * `stepBudget` is out for a different reason: 0 is both "no cap" and the
        * default, so writing it would silently drop a cap someone configured.
        *
@@ -1280,6 +1288,7 @@ window.__ModuleLoader__.load({
        */
       const saveAsDefault = () => {
         const patch = {
+          enabled: store.enabled === true,
           gear: gearTier(store.gear),
           outputDiscipline: !gated && store.discipline ? 'late' : false,
           workspaceMap: !gated && store.inventory,
