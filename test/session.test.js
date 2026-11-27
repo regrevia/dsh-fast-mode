@@ -55,7 +55,9 @@ function preStep(ctx, agent) {
     kind: 'enter',
     messages: [{ id: 'sys', role: 'system', content: [] }, ...claimed, { id: 'last', role: 'assistant', content: [] }],
   }
-  const payload = { agent: { id: agent.id, session: { header: { cwd: agent.cwd } } }, messages: claimed }
+  const header = { cwd: agent.cwd }
+  if (agent.parentSession !== undefined) header.parentSession = agent.parentSession
+  const payload = { agent: { id: agent.id, session: { header } }, messages: claimed }
   return ctx.fire('agent/pre-step', payload, async () => decision).then(out => ({ out, decision }))
 }
 
@@ -151,6 +153,50 @@ test('an entry wins over the configured default, on every knob at once', async (
 
     const inherited = await preStep(ctx, { id: 'session-default', cwd: root })
     assert.equal(inherited.out, inherited.decision, 'the other conversation has no map and no cap')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a subagent follows the conversation that dispatched it, entry and all', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'fm-session-child-'))
+  try {
+    await writeFile(join(root, 'README.md'), '# fixture\n')
+
+    // The shared defaults are off. Only one conversation was clicked on, and it
+    // wrote an entry; a subagent's own id is a bare UUID that no panel can ever
+    // write, so the only way the child can start on is by inheriting.
+    const ctx = fakeContext()
+    apply(ctx, {
+      ...BASE,
+      enabled: false,
+      workspaceMap: false,
+      sessions: JSON.stringify({ 'session-parent': { enabled: true, map: true } }),
+    })
+
+    const child = await preStep(ctx, { id: '9f3c1a44-0b21-4d7e-9c55-2ad0f1c8b7e6', cwd: root, parentSession: 'session-parent' })
+    assert.match(noticesOf(child.out), /README\.md/, 'the dispatch the user turned on runs on')
+
+    const orphan = await preStep(ctx, { id: '1b0d77e2-5c9a-4f33-8e10-77c4a2b6d001', cwd: root })
+    assert.equal(orphan.out, orphan.decision, 'a subagent with no parent in the header keeps the shared default')
+
+    const stranger = await preStep(ctx, { id: 'c4a8e901-3f27-4b6d-a1c8-90e5d3b7f2aa', cwd: root, parentSession: 'session-other' })
+    assert.equal(stranger.out, stranger.decision, 'and one from another conversation is not pulled on by it')
+
+    const parent = await preStep(ctx, { id: 'session-parent', cwd: root })
+    assert.match(noticesOf(parent.out), /README\.md/, 'the conversation itself is unchanged by the child rule')
+
+    // Turning the parent off turns everything it dispatches off with it, which is
+    // the half a global default gets wrong: father off, child on.
+    const off = fakeContext()
+    apply(off, {
+      ...BASE,
+      enabled: true,
+      workspaceMap: true,
+      sessions: JSON.stringify({ 'session-parent': { enabled: false } }),
+    })
+    const muted = await preStep(off, { id: 'e7c22051-8a4d-4b19-bf60-1c9d5a3e8877', cwd: root, parentSession: 'session-parent' })
+    assert.equal(muted.out, muted.decision, 'a muted conversation dispatches muted work')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

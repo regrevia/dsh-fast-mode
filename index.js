@@ -115,7 +115,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.46'
+export const VERSION = '1.7.47'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -284,6 +284,26 @@ function traceSettings(ctx, config) {
 function agentKey(agent) {
   const id = agent && typeof agent === 'object' ? agent.id : undefined
   return typeof id === 'string' ? id : GLOBAL_AGENT
+}
+
+/**
+ * The conversation that spawned this agent, when there is one.
+ *
+ * A subagent's own id is a bare UUID with no `sessions` entry, so resolving its
+ * config from the id alone reads the shared default and ignores the conversation
+ * the work belongs to. `dsh-subagent` writes `header.parentSession` on every
+ * session it creates (`origin: 'subagent'`), and that is the id the panel wrote
+ * when the user clicked the bolt — inherit from there instead of from a global.
+ * Absent for a main conversation, and absent for a fork, which stops its own
+ * chain: those keep resolving exactly as before.
+ *
+ * @param {unknown} agent
+ * @returns {string|undefined}
+ */
+function agentParentId(agent) {
+  const header = agent && typeof agent === 'object' ? agent.session?.header : undefined
+  const id = header && typeof header === 'object' ? header.parentSession : undefined
+  return typeof id === 'string' && id.length > 0 ? id : undefined
 }
 
 /**
@@ -472,8 +492,10 @@ export function apply(ctx, rawConfig) {
    * without a reload.
    *
    * @param {string|undefined} sessionId
+   * @param {string|undefined} [parentId] the conversation a subagent was
+   *   dispatched from, used only when this session has no entry of its own.
    */
-  const configFor = (sessionId) => {
+  const configFor = (sessionId, parentId) => {
     const assigned = assignment.gearFor(sessionId)
     // A running experiment outranks the UI on purpose: the arms are assigned by
     // session hash, and a panel click that quietly overrode the arm would empty
@@ -482,7 +504,14 @@ export function apply(ctx, rawConfig) {
       // No experiment: the conversation's own entry wins, field by field, and
       // its absence means "inherit". Every panel control writes into that entry,
       // which is what keeps one tab's prose or step cap from touching another.
+      // A subagent has no entry of its own, so the second lookup is what makes
+      // it follow the conversation it was dispatched from: parent off means
+      // subagent off, parent on means subagent on, and no new toggle appears
+      // anywhere. When the parent has no entry either — the usual case, since
+      // only a clicked bolt writes one — both lookups miss and the shared
+      // defaults answer, which is the documented fallback.
       const own = configOverridesFor(rawConfig?.sessions, sessionId)
+        ?? configOverridesFor(rawConfig?.sessions, parentId)
       return own === undefined ? resolveConfig(rawConfig) : resolveConfig(rawConfig, own)
     }
     // The control arm is an assignment like any other: the mode is off because
@@ -551,7 +580,7 @@ export function apply(ctx, rawConfig) {
     budgetFor: (exec) => {
       const agent = agentKey(exec?.agent)
       const sid = agent === GLOBAL_AGENT ? undefined : agent
-      const cfg = configFor(sid)
+      const cfg = configFor(sid, agentParentId(exec?.agent))
       // Switched off means switched off: the guard used to fall through to the
       // gear table and keep cancelling calls after the user turned the mode off,
       // because `stallGuard` defaults to true in the schema. The switch is the
@@ -596,7 +625,7 @@ export function apply(ctx, rawConfig) {
     let cfg = null
     try {
       const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
-      cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent))
       if (!cfg.enabled || !cfg.readCache) return next()
       target = cacheableReadTarget(exec)
     } catch {
@@ -683,7 +712,7 @@ export function apply(ctx, rawConfig) {
     if (!decision || decision.kind !== 'enter') return decision
     try {
       const sid = agentKey(payload?.agent)
-      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(payload?.agent))
       if (!cfg.enabled) return decision
       const notices = []
       if (conflictPending) {
@@ -803,7 +832,7 @@ export function apply(ctx, rawConfig) {
           try {
             const scope = context && typeof context === 'object' ? (context.scope ?? context.agent) : undefined
             const sid = scope && typeof scope === 'object' ? scope.id : undefined
-            const live = configFor(typeof sid === 'string' ? sid : undefined)
+            const live = configFor(typeof sid === 'string' ? sid : undefined, agentParentId(scope))
             if (!live.enabled || live.guidance === false) return ''
             // `auto` quotes the width it actually computed for this session, so
             // the sentence the model reads and the number the scheduler enforces
@@ -925,7 +954,7 @@ export function apply(ctx, rawConfig) {
     const final = await next()
     try {
       const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
-      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid)
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent))
       if (cfg.enabled && cfg.compactResults && final && final.isError !== true) {
         const text = singleTextContent(final.content)
         if (text !== null) {
@@ -961,7 +990,7 @@ export function apply(ctx, rawConfig) {
 
     const sid = agentKey(payload?.agent)
     const agent = sid === GLOBAL_AGENT ? undefined : sid
-    const cfg = configFor(agent)
+    const cfg = configFor(agent, agentParentId(payload?.agent))
     const baseEffort = resolved?.reasoningEffort
     const route = routeOf(resolved)
 
