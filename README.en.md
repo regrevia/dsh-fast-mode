@@ -44,7 +44,7 @@ dsh plugin install dsh-fast-mode
 
 Click the bolt in a conversation. Right-click it for the panel — five rows, two tiers, each affecting that conversation only.
 
-What the panel writes is that conversation's entry, and a subagent follows the conversation that dispatched it: parent on means the work it hands out runs on, parent off means that work runs off too. When the parent has no entry of its own — which is every conversation nobody has clicked — the subagent starts from the shared default.
+What the panel writes is that conversation's entry, and a subagent follows the conversation that dispatched it: parent on means the work it hands out runs on, parent off means that work runs off too, and when the chain is deeper than one level (a subagent that dispatched its own work) the walk keeps climbing to the conversation someone actually clicked. When the parent has no entry of its own — which is every conversation nobody has clicked — the subagent starts from the shared default.
 
 ## What the five switches do
 

@@ -17,8 +17,14 @@ import test from 'node:test'
 
 import { apply } from '../index.js'
 
-/** Minimal stand-in for a Cordis context: registers handlers, fires them. */
-function fakeContext() {
+/**
+ * Minimal stand-in for a Cordis context: registers handlers, fires them.
+ *
+ * @param {Record<string, any>} [headers] session id → header, for the agents
+ *   service the parent walk climbs through. Omitting it means the service is
+ *   absent, which is what an install without `dsh-agent` looks like.
+ */
+function fakeContext(headers) {
   const handlers = new Map()
   return {
     handlers,
@@ -29,8 +35,13 @@ function fakeContext() {
     inject() {
       return undefined
     },
-    get() {
-      return undefined
+    get(name) {
+      if (name !== 'agents' || headers === undefined) return undefined
+      return {
+        get(id) {
+          return Object.hasOwn(headers, id) ? { session: { header: headers[id] } } : undefined
+        },
+      }
     },
     logger: { info: () => {} },
     fire(event, ...args) {
@@ -56,7 +67,15 @@ function preStep(ctx, agent) {
     messages: [{ id: 'sys', role: 'system', content: [] }, ...claimed, { id: 'last', role: 'assistant', content: [] }],
   }
   const header = { cwd: agent.cwd }
-  if (agent.parentSession !== undefined) header.parentSession = agent.parentSession
+  // `dsh-subagent` writes both fields together, and the walk keys off `origin`
+  // to tell a dispatched subagent from a fork (which stamps neither). Passing
+  // `origin: null` drops it, which is the shape a forked session really has.
+  if (agent.parentSession !== undefined) {
+    header.parentSession = agent.parentSession
+    header.origin = 'subagent'
+  }
+  if (agent.origin === null) delete header.origin
+  else if (agent.origin !== undefined) header.origin = agent.origin
   const payload = { agent: { id: agent.id, session: { header } }, messages: claimed }
   return ctx.fire('agent/pre-step', payload, async () => decision).then(out => ({ out, decision }))
 }
@@ -197,6 +216,62 @@ test('a subagent follows the conversation that dispatched it, entry and all', as
     })
     const muted = await preStep(off, { id: 'e7c22051-8a4d-4b19-bf60-1c9d5a3e8877', cwd: root, parentSession: 'session-parent' })
     assert.equal(muted.out, muted.decision, 'a muted conversation dispatches muted work')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('the walk climbs a chain of dispatches to the conversation a panel can write', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'fm-session-chain-'))
+  try {
+    await writeFile(join(root, 'README.md'), '# fixture\n')
+
+    // A subagent's parent is itself a subagent: two bare UUIDs deep, only the
+    // top of the chain is a real conversation with an entry. The direct parent
+    // alone would read the shared default and stay off.
+    const chain = {
+      '2a6f5d10-8c34-4e97-b0a1-6d2f8e4c9b73': { origin: 'subagent', parentSession: 'session-root' },
+      'session-root': { cwd: root },
+    }
+    const ctx = fakeContext(chain)
+    apply(ctx, {
+      ...BASE,
+      enabled: false,
+      workspaceMap: false,
+      sessions: JSON.stringify({ 'session-root': { enabled: true, map: true } }),
+    })
+
+    const grandchild = await preStep(ctx, {
+      id: 'b81e0c62-4f19-4a75-9d38-1e6b7a05c294',
+      cwd: root,
+      parentSession: '2a6f5d10-8c34-4e97-b0a1-6d2f8e4c9b73',
+    })
+    assert.match(noticesOf(grandchild.out), /README\.md/, 'two levels down still finds the clicked conversation')
+
+    // A fork stamps neither field, so it is not a link in this chain: no walk
+    // happens and it keeps the shared default, exactly like a main conversation.
+    const forked = await preStep(ctx, {
+      id: 'd3c7b948-2e60-4b18-8a73-95f1c0d6e427',
+      cwd: root,
+      parentSession: 'session-root',
+      origin: null,
+    })
+    assert.equal(forked.out, forked.decision, 'a fork does not inherit through a field a fork never writes')
+
+    // A cycle cannot hang the request: `visited` ends the walk instead of
+    // spinning, and what it resolves to is the last id it saw — a bare UUID with
+    // no entry, so the shared default applies and the decision is untouched.
+    const cyclic = fakeContext({
+      '5b0a1f83-7d24-4c69-9e51-3a8d2f7b1c06': { origin: 'subagent', parentSession: 'session-loop' },
+      'session-loop': { origin: 'subagent', parentSession: '5b0a1f83-7d24-4c69-9e51-3a8d2f7b1c06' },
+    })
+    apply(cyclic, { ...BASE, enabled: false, workspaceMap: false, sessions: JSON.stringify({}) })
+    const looped = await preStep(cyclic, {
+      id: '5b0a1f83-7d24-4c69-9e51-3a8d2f7b1c06',
+      cwd: root,
+      parentSession: 'session-loop',
+    })
+    assert.equal(looped.out, looped.decision, 'a cycle resolves instead of spinning')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

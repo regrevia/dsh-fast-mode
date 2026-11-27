@@ -115,7 +115,7 @@ const TAG = '[fast-mode]'
  * Shipped identity of this build. Traced into the debug log so a stale install is
  * visible at a glance, and pinned by a test against `package.json`.
  */
-export const VERSION = '1.7.47'
+export const VERSION = '1.7.48'
 const GLOBAL_AGENT = '__global__'
 
 /**
@@ -286,24 +286,50 @@ function agentKey(agent) {
   return typeof id === 'string' ? id : GLOBAL_AGENT
 }
 
+/** The live session header of an agent, or `undefined` if it cannot be read. */
+function headerOf(agent) {
+  const header = agent && typeof agent === 'object' ? agent.session?.header : undefined
+  return header && typeof header === 'object' ? header : undefined
+}
+
 /**
- * The conversation that spawned this agent, when there is one.
+ * The main conversation this agent's work belongs to, when it is not main.
  *
  * A subagent's own id is a bare UUID with no `sessions` entry, so resolving its
  * config from the id alone reads the shared default and ignores the conversation
  * the work belongs to. `dsh-subagent` writes `header.parentSession` on every
- * session it creates (`origin: 'subagent'`), and that is the id the panel wrote
- * when the user clicked the bolt — inherit from there instead of from a global.
- * Absent for a main conversation, and absent for a fork, which stops its own
- * chain: those keep resolving exactly as before.
+ * session it creates, always together with `origin: 'subagent'`, and that parent
+ * id is the one the panel wrote when the user clicked the bolt — inherit from
+ * there instead of from a global.
+ *
+ * The walk climbs while the header still looks like a subagent, because a nested
+ * subagent's parent is itself a bare UUID with no entry either; the topmost
+ * session on the chain is the one a panel write can reach. `visited` terminates a
+ * cycle, and a header that cannot be read ends the walk at the last id found.
+ *
+ * A fork carries neither field: `dsh-session` rejects any `origin` other than
+ * `'subagent'`, so a forked conversation has no `origin` at all and stops its own
+ * chain here. Main conversations and forks keep resolving exactly as before.
  *
  * @param {unknown} agent
+ * @param {(id: string) => object|undefined} [resolveHeader] header lookup by session id
  * @returns {string|undefined}
  */
-function agentParentId(agent) {
-  const header = agent && typeof agent === 'object' ? agent.session?.header : undefined
-  const id = header && typeof header === 'object' ? header.parentSession : undefined
-  return typeof id === 'string' && id.length > 0 ? id : undefined
+function agentParentId(agent, resolveHeader) {
+  let header = headerOf(agent)
+  if (header === undefined) return undefined
+  const visited = new Set()
+  let resolved
+  while (header.origin === 'subagent') {
+    const parentId = header.parentSession
+    if (typeof parentId !== 'string' || parentId.length === 0 || visited.has(parentId)) break
+    visited.add(parentId)
+    resolved = parentId
+    const parent = resolveHeader?.(parentId)
+    if (parent === undefined) break
+    header = parent
+  }
+  return resolved
 }
 
 /**
@@ -384,6 +410,17 @@ function cacheableReadTarget(exec) {
  */
 export function apply(ctx, rawConfig) {
   const initial = resolveConfig(rawConfig)
+
+  // Walking past the first parent needs the *grandparent's* header, which only
+  // the agents service holds. Without it the chain stops at the direct parent —
+  // still the right id for the ordinary one-level dispatch, and never a crash.
+  const headerOfSession = (id) => {
+    try {
+      return headerOf(ctx.get('agents')?.get(id))
+    } catch {
+      return undefined
+    }
+  }
 
   // Traceability before everything else: "the module never loaded" and "the
   // module loaded but is switched off" look identical from the UI, and that
@@ -580,7 +617,7 @@ export function apply(ctx, rawConfig) {
     budgetFor: (exec) => {
       const agent = agentKey(exec?.agent)
       const sid = agent === GLOBAL_AGENT ? undefined : agent
-      const cfg = configFor(sid, agentParentId(exec?.agent))
+      const cfg = configFor(sid, agentParentId(exec?.agent, headerOfSession))
       // Switched off means switched off: the guard used to fall through to the
       // gear table and keep cancelling calls after the user turned the mode off,
       // because `stallGuard` defaults to true in the schema. The switch is the
@@ -625,7 +662,7 @@ export function apply(ctx, rawConfig) {
     let cfg = null
     try {
       const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
-      cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent))
+      cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent, headerOfSession))
       if (!cfg.enabled || !cfg.readCache) return next()
       target = cacheableReadTarget(exec)
     } catch {
@@ -712,7 +749,7 @@ export function apply(ctx, rawConfig) {
     if (!decision || decision.kind !== 'enter') return decision
     try {
       const sid = agentKey(payload?.agent)
-      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(payload?.agent))
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(payload?.agent, headerOfSession))
       if (!cfg.enabled) return decision
       const notices = []
       if (conflictPending) {
@@ -832,7 +869,7 @@ export function apply(ctx, rawConfig) {
           try {
             const scope = context && typeof context === 'object' ? (context.scope ?? context.agent) : undefined
             const sid = scope && typeof scope === 'object' ? scope.id : undefined
-            const live = configFor(typeof sid === 'string' ? sid : undefined, agentParentId(scope))
+            const live = configFor(typeof sid === 'string' ? sid : undefined, agentParentId(scope, headerOfSession))
             if (!live.enabled || live.guidance === false) return ''
             // `auto` quotes the width it actually computed for this session, so
             // the sentence the model reads and the number the scheduler enforces
@@ -954,7 +991,7 @@ export function apply(ctx, rawConfig) {
     const final = await next()
     try {
       const sid = exec ? agentKey(exec.agent) : GLOBAL_AGENT
-      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent))
+      const cfg = configFor(sid === GLOBAL_AGENT ? undefined : sid, agentParentId(exec?.agent, headerOfSession))
       if (cfg.enabled && cfg.compactResults && final && final.isError !== true) {
         const text = singleTextContent(final.content)
         if (text !== null) {
@@ -990,7 +1027,7 @@ export function apply(ctx, rawConfig) {
 
     const sid = agentKey(payload?.agent)
     const agent = sid === GLOBAL_AGENT ? undefined : sid
-    const cfg = configFor(agent, agentParentId(payload?.agent))
+    const cfg = configFor(agent, agentParentId(payload?.agent, headerOfSession))
     const baseEffort = resolved?.reasoningEffort
     const route = routeOf(resolved)
 

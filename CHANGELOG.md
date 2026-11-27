@@ -1,18 +1,29 @@
-## 1.7.47（子代理继承派发它的那个会话，不再读全局默认）
+## 1.7.48（父 id 沿派发链上溯：嵌套子代理、fork 与成环都有确定结果）
 
-**改行为。** 只动解析，注入侧还是一个字符串都没改。
+**改行为。** 承接 1.7.47，同样只动解析，注入侧一个字符串都没改。
 
-子会话的 id 是裸 UUID（`9f3c1a44-…`），面板写的永远是 `session-<uuid>`，所以子代理从来没有过自己的 `sessions` 条目。`configFor` 查不到就落回 `resolveConfig(rawConfig)`，也就是共享默认值——于是「我在这个会话里点开了闪电，派出去的活按 fast 跑」做不到：父会话开着，子代理按全局默认关着跑。
+1.7.47 只看了直接父会话。派发链真的不止一层：子代理自己也派活时，它的父是同
+样的裸 UUID，同样没有 `sessions` 条目，于是「往上找一层」在一层深的情况下仍然
+落到共享默认值——链顶端那个用户点过的会话还是够不着。
 
-现在 `configFor(sessionId, parentId)` 在自己的条目查不到时，再按 `header.parentSession` 查一次**父会话**的条目：
+现在 `agentParentId(agent, resolveHeader)` 沿 `header.parentSession` 一路往上，
+直到某个会话不再像子代理：
 
-- 父会话开 → 子代理开；父会话关 → 子代理关。这也是 #6 那条全局默认修不掉的一半：共享默认值是全局的，父会话手动点灭之后，子代理仍会读到 `enabled: true`。
-- 父会话自己也没有条目（大多数情况——只有点过闪电的会话才有条目）→ 两次都查不到，落回共享默认值，与 1.7.46 完全一致。
-- `header.parentSession` 是 `dsh-subagent` 写在每个子会话上的字段（`origin: 'subagent'`），主会话没有这个字段，所以主会话的解析路径一个字都没变。
+- 上溯条件是 `origin === 'subagent'`，不是「有 `parentSession` 就往上」。`dsh-subagent`
+  建子会话时两个字段一起写；`dsh-session` 只接受 `'subagent'` 这一种 origin，所以
+  fork 两个字段都没有，它就是链条的终点，行为与 1.7.46、1.7.47 一致。
+- `visited` 记录走过的 id，成环时停在最后一个正常解析出的 id 上，不会转圈。
+- 中间某一层的 header 读不到（`agents` 服务缺失，或那个会话已经不在）→ 停在
+  上一个拿到手的 id。一层派发不依赖这个服务，依然正确。
+- 中间会话的 header 从 `ctx.get('agents')?.get(id)` 取，包在 `try/catch` 里；
+  取不到就是 `undefined`，不是抛错。没有新增 inject。
 
-父 id 从已经传进钩子的 agent 对象上读（`agent.session.header.parentSession`），不新增 `agents` 注入；六处只传 id 的 `configFor` 调用点现在一起把 agent 传下去。
+`test/session.test.js` 新增一条用例专门走两级派发：`fakeContext` 现在可以喂一份
+会话 id → header 的表，模拟 `agents` 服务；孙会话经中间那个裸 UUID 找到顶端会话
+的条目。同一条用例还钉住两件此前没测过的事：fork（带 `parentSession` 但不带
+`origin`）不继承，行为和主会话一样；成环的表也能解析出结果而不是挂住。
 
-回归测试在 `test/session.test.js`：父会话开而共享默认关 → 子代理真的注入了；孤儿会话与别人派来的子代理仍按共享默认；父会话关 → 它派出的活也关。把 `??` 那半行去掉，这条用例立刻红。
+`gh` 上 #7 已用 1.7.47 那版关闭，这一版是它的补完。
 
 ## 1.7.46（「设为默认」补上 `enabled`，新会话真的按存的这组值起步）
 
